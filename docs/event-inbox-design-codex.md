@@ -170,7 +170,7 @@ func (s *Store) BeginRecovery(ctx context.Context, workspace, owner string) (*Re
 func (s *Store) FinishRecovery(ctx context.Context, ticket RecoveryTicket, out RecoveryOutcome) error
 ```
 
-跨包类型与 [系统架构接口](system-architecture-codex.md) 对齐：RunInput、RunOutcome、InputEvent、TaskSnapshot、SessionSnapshot、Budget、SessionStep、Directive 和 BoundaryHook 定义在 executor；controller 定义 AgentRunner 消费方接口，以及持久化 Event、Claim 等记录。调用 Run 前将记录转换为输入视图；OnBoundary 在同一短事务内检查控制状态、附加事件后，返回转换后的 executor.InputEvent，保留 event_id、顺序与任务关联。AttachSteer 仍返回 controller.Event 供内部使用。executor 不导入 controller，不复制两套 BoundaryHook 或 Directive。
+跨包类型与 [系统架构接口](system-architecture-codex-latest.md) 对齐：RunInput、RunOutcome、InputEvent、TaskSnapshot、SessionSnapshot、Budget、SessionStep、Directive 和 BoundaryHook 定义在 executor；controller 定义 AgentRunner 消费方接口，以及持久化 Event、Claim 等记录。调用 Run 前将记录转换为输入视图；OnBoundary 在同一短事务内检查控制状态、附加事件后，返回转换后的 executor.InputEvent，保留 event_id、顺序与任务关联。AttachSteer 仍返回 controller.Event 供内部使用。executor 不导入 controller，不复制两套 BoundaryHook 或 Directive。
 
 AppendResult 包含原 event_id 和 inserted 标志。Claim 包含 workspace_id、owner_id、epoch、run_id、session_id、事件列表及当前租约期限。ClaimResult 没有就绪工作时 Claim 为 nil；RecoveryNeeded 为 true 时调用独立恢复流程，NextWakeAt 仅为调度提示，不授予执行权。ErrLeaseLost 表示调用者必须停止发起新动作，不允许按普通瞬时错误重试提交。
 

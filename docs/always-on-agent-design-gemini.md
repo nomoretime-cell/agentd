@@ -9,21 +9,23 @@
 
 ## 本地设计文档索引（`-gemini` 后缀）
 
-1. [系统总体架构与模块边界设计](docs/01-architecture-design-gemini.md)
+1. [系统总体架构与模块边界设计](#architecture-design)
    - 第一性原理与抗模型迭代分割线
    - 四大正交模块（`Pulse & Bus`、`Thin Harness`、`Workspace & Ledger`、`Guarded Sandbox`）职责与严格边界
    - 凌晨无人值守异步审批挂起与恢复时序
    - “反设计”清单与模型跨档升级推演矩阵
-2. [参考基准与社区最佳实践调研笔记](docs/02-industry-references-gemini.md)
+2. [参考基准与社区最佳实践调研笔记](#industry-references)
    - Anthropic《Building always-on agents》五大原语拆解
    - Anthropic《Scaling Managed Agents》脑手分离与零密钥沙箱要点
    - `Pi-coding-agent`、`OpenClaw` 与原生协议直连实践总结
-3. [核心数据表、接口契约与工作区规范](docs/03-contracts-and-schemas-gemini.md)
+3. [核心数据表、接口契约与工作区规范](#contracts-and-schemas)
    - 本地目录布局与权限红线
    - SQLite WAL 核心表结构（`inbox_events`、`timers`、`outbox_messages`、`pending_approvals`、`topic_leases`）
    - 7 个不变原子工具契约、`policy.yaml` 与 `IDENTITY.md` / `MEMORY.md` 初始模板
 
 ---
+
+<a id="architecture-design"></a>
 
 # Always-On Agent 系统架构设计文档（`agentd`）
 
@@ -273,6 +275,8 @@ sequenceDiagram
 
 ---
 
+<a id="industry-references"></a>
+
 # 参考基准与社区最佳实践调研笔记
 
 本文档沉淀 `agentd` 架构设计背后的核心文献与开源社区最佳实践依据，作为后续演进时的决策参考。
@@ -326,6 +330,8 @@ sequenceDiagram
 * **经验总结**：与其给模型封装 50 个脆弱的专用 Python 工具函数（例如针对某个网站的点击包装器或阉割版 GitHub API 包装器），不如直接暴露底层标准 CLI（如 `gh`、`curl`、`jq`）或原始协议（如浏览器 CDP），配合按需查阅的简短 Markdown 技能说明。因为前沿模型在预训练阶段已深度学习过标准协议与 Unix 工具链，能够原生组合脚本并自主根据报错恢复。
 
 ---
+
+<a id="contracts-and-schemas"></a>
 
 # 核心数据表、接口契约与工作区规范（实现蓝图）
 
