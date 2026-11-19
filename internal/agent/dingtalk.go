@@ -27,6 +27,8 @@ var dingTalkSecretField = regexp.MustCompile(`("session_webhook"\s*:\s*")[^"]*"`
 var dingTalkSecretURL = regexp.MustCompile(`https://oapi\.dingtalk\.com/robot/sendBySession[^\s"<>\\]*`)
 
 type DingTalkConfig struct {
+	AllowAllGroups       bool     `yaml:"allow_all_groups"`
+	ProgressMessages     bool     `yaml:"progress_messages"`
 	Enabled              bool     `yaml:"enabled"`
 	ClientID             string   `yaml:"client_id"`
 	ClientSecret         string   `yaml:"client_secret"`
@@ -48,19 +50,20 @@ func (c DingTalkConfig) validate() error {
 	return nil
 }
 
-// Conversation allowlist empty means direct messages only. Group access must be
-// explicit AND mention the bot; the configured owner alone may submit tasks.
+// The owner must mention the bot in a group, including when all groups are enabled.
 func (c DingTalkConfig) permits(sender, conversation, kind string, mentioned bool) bool {
 	if !c.Enabled || c.DiscoveryOnly || sender == "" || sender != c.AllowedSender || conversation == "" {
 		return false
 	}
-	if kind != "1" && kind != "2" {
+	listed := slices.Contains(c.AllowedConversations, conversation)
+	switch kind {
+	case "1":
+		return len(c.AllowedConversations) == 0 || listed
+	case "2":
+		return mentioned && (c.AllowAllGroups || listed)
+	default:
 		return false
 	}
-	if kind == "2" && (!mentioned || len(c.AllowedConversations) == 0) {
-		return false
-	}
-	return len(c.AllowedConversations) == 0 || slices.Contains(c.AllowedConversations, conversation)
 }
 
 type DingTalkRoute struct {
@@ -131,7 +134,13 @@ func (s *Service) acceptDingTalk(ctx context.Context, f dingTalkFrame) dingTalkA
 		s.log.Info("dingtalk discovery (no task accepted)", "sender_staff_id", m.Sender, "conversation_id", m.ConversationID, "conversation_type", m.ConversationType)
 		return ack
 	}
-	if !c.permits(m.Sender, m.ConversationID, m.ConversationType, m.Mentioned) || m.MsgType != "text" {
+	if !c.permits(m.Sender, m.ConversationID, m.ConversationType, m.Mentioned) {
+		if m.ConversationType == "2" && c.Enabled && m.Sender == c.AllowedSender {
+			s.log.Info("dingtalk group message filtered", "conversation_id", m.ConversationID, "mentioned", m.Mentioned, "allowlisted", slices.Contains(c.AllowedConversations, m.ConversationID), "allow_all_groups", c.AllowAllGroups)
+		}
+		return ack
+	}
+	if m.MsgType != "text" {
 		return ack
 	}
 	text := strings.TrimSpace(m.Text.Content)

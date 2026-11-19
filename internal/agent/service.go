@@ -49,6 +49,17 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.OpenCodeBinary != "" {
+		if !filepath.IsAbs(cfg.OpenCodeBinary) {
+			cfg.OpenCodeBinary = filepath.Join(root, cfg.OpenCodeBinary)
+		}
+		if fi, e := os.Stat(cfg.OpenCodeBinary); e != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0111 == 0 {
+			return nil, errors.New("opencode_binary must point to an installed executable")
+		}
+		if !strings.HasSuffix(cfg.Model.Endpoint, "/chat/completions") {
+			return nil, errors.New("OpenCode requires a model endpoint ending in /chat/completions")
+		}
+	}
 	for _, name := range []string{"data", "data/deliveries", "data/outputs", "workspace", "workspace/notes", "workspace/skills", "workspace/scratch"} {
 		path := filepath.Join(root, name)
 		if err = os.MkdirAll(path, 0700); err != nil {

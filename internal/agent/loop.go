@@ -27,8 +27,10 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 	if err != nil {
 		return out, err
 	}
+	var route *DingTalkRoute
 	if target != "" {
-		if _, err := s.dingTalkRoute(ctx, s.read, target); err != nil {
+		route, err = s.dingTalkRoute(ctx, s.read, target)
+		if err != nil {
 			return out, err
 		}
 	}
@@ -38,6 +40,11 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 	if target == "" {
 		messages = append(messages, s.loadSession()...)
 	} else {
+		hist, err := s.chatHistory(ctx, route, batch[0].ID)
+		if err != nil {
+			return out, err
+		}
+		messages = append(messages, hist...)
 		messages[0].Content += "\nThis is a DingTalk IM task. Respond in the user language. Your final answer will be delivered automatically to the originating conversation. send_message also targets only that conversation. Do not send progress messages with send_message; use it only for the final result. Timers are unavailable on this channel. Never claim a tool operation succeeded without a successful receipt."
 	}
 	var input strings.Builder
@@ -64,6 +71,9 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 		}
 	}
 	messages = append(messages, Message{Role: "user", Content: input.String()})
+	if s.cfg.OpenCodeBinary != "" {
+		return s.executeOpenCode(ctx, batch[0], route, messages, out)
+	}
 	ordinal := 0
 	for step := 0; step < s.cfg.Limits.MaxSteps; step++ {
 		if e := ctx.Err(); e != nil {

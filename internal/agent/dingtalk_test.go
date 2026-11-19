@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -563,5 +564,100 @@ func TestDingTalkEndpointValidation(t *testing.T) {
 		if e == nil || conn != nil || strings.Contains(e.Error(), "secret-ticket") {
 			t.Fatal("untrusted endpoint accepted or ticket exposed")
 		}
+	}
+}
+
+func TestDingTalkProgressBeforeCompletion(t *testing.T) {
+	cfg := dtConfig()
+	cfg.DingTalk.ProgressMessages = true
+	cfg.DeliveryIntervalMS = 0
+	finish := make(chan struct{})
+	model := modelFunc(func(ctx context.Context, _ []Message, _ []Tool) (Message, error) {
+		select {
+		case <-ctx.Done():
+			return Message{}, ctx.Err()
+		case <-finish:
+			return Message{Role: "assistant", Content: "最终结果"}, nil
+		}
+	})
+	s := openTest(t, cfg, model)
+	delivered := make(chan string, 4)
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct{ Text struct{ Content string } }
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		delivered <- payload.Text.Content
+		fmt.Fprint(w, `{"errcode":0}`)
+	}))
+	defer receiver.Close()
+	routeDTToLocal(s, receiver)
+	peer := openDTStream(t, s)
+	m := dtMessage()
+	sendDT(t, s, peer, m)
+	sendDT(t, s, peer, m)
+	startDTWorkers(s)
+	expect := func(want string) {
+		t.Helper()
+		select {
+		case got := <-delivered:
+			if got != want {
+				t.Fatalf("got %q, want %q", got, want)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("missing delivery", want)
+		}
+	}
+	select {
+	case got := <-delivered:
+		if !slices.Contains(dingTalkProgressPhrases[:], got) {
+			t.Fatalf("unexpected progress message: %q", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("missing progress message")
+	}
+	if count(t, s, "SELECT count(*) FROM inbox WHERE status='running'") != 1 {
+		t.Fatal("expected running event")
+	}
+	close(finish)
+	expect("最终结果")
+	waitFor(t, time.Second, func() bool { return count(t, s, "SELECT count(*) FROM outbox WHERE status='sent'") == 2 })
+	// Simulate an outstanding 429 retry reaching the dispatcher after the final reply.
+	_, err := s.db.Exec("UPDATE outbox SET status='pending',deliver_at=0 WHERE dedup_key='progress:1'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, time.Second, func() bool { return count(t, s, "SELECT count(*) FROM outbox WHERE dedup_key='progress:1'") == 0 })
+	if len(delivered) != 0 {
+		t.Fatal("stale progress was delivered")
+	}
+}
+
+func TestDingTalkOwnerInNewGroup(t *testing.T) {
+	cfg := dtConfig()
+	cfg.DingTalk.AllowAllGroups = true
+	cfg.DingTalk.AllowedConversations = []string{"owner-private-chat"}
+	s := openTest(t, cfg, finalModel())
+	m := dtMessage()
+	m.ConversationID = "new-group"
+	ctx := context.Background()
+	// A new chat ID is eligible only for group callbacks from the owner with a mention.
+	for _, tc := range []struct {
+		kind, sender string
+		mention      bool
+	}{
+		{"1", "owner", true}, {"2", "stranger", true}, {"2", "owner", false},
+	} {
+		m.ConversationType, m.Sender, m.Mentioned = tc.kind, tc.sender, tc.mention
+		s.acceptDingTalk(ctx, dtFrame(m))
+		if count(t, s, "SELECT count(*) FROM inbox") != 0 {
+			t.Fatal("unexpected admission", tc)
+		}
+	}
+	m.ConversationType, m.Sender, m.Mentioned = "2", "owner", true
+	s.acceptDingTalk(ctx, dtFrame(m))
+	route, err := s.dingTalkRoute(ctx, s.read, "dingtalk:1")
+	if err != nil || route.ConversationID != "new-group" {
+		t.Fatalf("new group not routable: %v", err)
 	}
 }

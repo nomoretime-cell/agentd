@@ -12,6 +12,7 @@ import (
 )
 
 type Config struct {
+	OpenCodeBinary     string               `yaml:"opencode_binary"`
 	DingTalk           DingTalkConfig       `yaml:"dingtalk"`
 	Listen             string               `yaml:"listen"`
 	Model              ModelConfig          `yaml:"model"`

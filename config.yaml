@@ -1,3 +1,5 @@
+# Set this to the installed OpenCode v2 executable to use persistent executor sessions.
+opencode_binary: ""
 listen: "127.0.0.1:8090"
 model:
   endpoint: "http://localhost:8080/v1/chat/completions"
@@ -46,9 +48,11 @@ actions: {}
 
 # DingTalk IM: copy this file to ignored config.local.yaml before adding secrets.
 dingtalk:
+  progress_messages: true
   enabled: false
   client_id: ""
   client_secret: ""
   discovery_only: true
   allowed_sender: ""
-  allowed_conversations: [] # empty = direct messages only; groups require explicit IDs
+  allow_all_groups: false # true accepts owner mentions in any group the bot has joined
+  allowed_conversations: [] # explicit chat IDs; empty allows owner direct messages

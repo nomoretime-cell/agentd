@@ -41,7 +41,8 @@ func (s *Service) enqueueTx(ctx context.Context, tx *sql.Tx, n Notification) err
 	if e = tx.QueryRowContext(ctx, "SELECT target,content FROM outbox WHERE dedup_key=?", n.Key).Scan(&target, &content); e != nil {
 		return e
 	}
-	if target != n.Target || content != n.Content {
+	// A retried progress hint keeps the wording originally queued for this event.
+	if target != n.Target || (content != n.Content && !strings.HasPrefix(n.Key, "progress:")) {
 		return fmt.Errorf("%w: notification changed on replay", ErrConflict)
 	}
 	return nil
@@ -86,6 +87,19 @@ func (s *Service) deliverOne(ctx context.Context) error {
 	if e != nil {
 		s.mu.Unlock()
 		return e
+	}
+	// An expired progress hint should never follow the final answer, including after a 429 or restart.
+	if eventID, progress := strings.CutPrefix(n.Key, "progress:"); progress {
+		res, err := s.db.ExecContext(ctx, "DELETE FROM outbox WHERE id=? AND NOT EXISTS (SELECT 1 FROM inbox WHERE id=? AND status='running')", n.ID, eventID)
+		if err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		removed, err := res.RowsAffected()
+		if removed != 0 || err != nil {
+			s.mu.Unlock()
+			return err
+		}
 	}
 	target, ok := s.cfg.Targets[n.Target]
 	if strings.HasPrefix(n.Target, "dingtalk:") {

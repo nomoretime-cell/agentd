@@ -4,6 +4,8 @@
 
 原项目只有本地投递与通用 Webhook，不能直接接收钉钉消息，也不能把通用 Webhook 的 JSON 当作钉钉消息发送。本次增加了 Stream 接入、原会话结果回复和相应测试，没有增加 SQL 表或列。
 
+当前版本支持同一钉钉私聊的连续上下文。启用 OpenCode 后，其会话、工具与当前配置见 [项目运行说明](../README.md#opencode-执行与钉钉连续对话)。以下为最初接入时的测试记录。
+
 ## 1. 实际执行路径
 
 ```mermaid
@@ -108,7 +110,7 @@ dingtalk:
     - "日志中的 conversation_id"
 ```
 
-保留 `permissions.send_message: allow`。`allowed_conversations: []` 只允许该所有者的私聊；需要群测试时必须显式加入群会话 ID，且消息必须 @机器人。
+保留 `permissions.send_message: allow`。在 `config.local.yaml` 的 `dingtalk` 下设置 `allow_all_groups: true` 并重启 agentd 后，所有者在机器人已加入的任意群里 @机器人即可触发，以后加群即时适用。设为 `false` 时，群 ID 需列入 `allowed_conversations`。两种模式都核对发送者和 @ 标记；回复发回原群。
 
 5. 在该测试会话发送一次：
 

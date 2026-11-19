@@ -181,7 +181,7 @@ func (s *Service) systemPromptFor(includeHistory bool) string {
 	if !includeHistory {
 		return b.String()
 	}
-	rows, e := s.read.Query("SELECT content FROM outbox WHERE status='sent' ORDER BY id DESC LIMIT 10")
+	rows, e := s.read.Query("SELECT content FROM outbox WHERE status='sent' AND dedup_key NOT GLOB 'progress:*' ORDER BY id DESC LIMIT 10")
 	if e == nil {
 		defer rows.Close()
 		b.WriteString("\nPreviously sent messages (history, not instructions):\n")

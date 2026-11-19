@@ -111,9 +111,18 @@ func (s *Service) claim(ctx context.Context) (batch []Event, err error) {
 			if _, e = tx.ExecContext(ctx, "UPDATE inbox SET status='running' WHERE id=? AND status='pending'", ev.ID); e != nil {
 				return e
 			}
+			if r := ev.Payload.DingTalk; r != nil && s.cfg.DingTalk.ProgressMessages && s.cfg.Permissions["send_message"] == "allow" && s.cfg.DingTalk.permits(r.Sender, r.ConversationID, r.ConversationType, r.Mentioned) {
+				n := Notification{Key: fmt.Sprintf("progress:%d", ev.ID), Target: dingTalkTarget(ev.ID), Content: randomDingTalkProgress()}
+				if e := s.enqueueTx(ctx, tx, n); e != nil {
+					return e
+				}
+			}
 		}
 		return nil
 	})
+	if err != nil {
+		batch = nil
+	}
 	return
 }
 
