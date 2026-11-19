@@ -1,0 +1,54 @@
+listen: "127.0.0.1:8090"
+model:
+  endpoint: "http://localhost:8080/v1/chat/completions"
+  name: "/Users/yejibing/models/Qwen3.8-27B-4bit"
+  max_tokens: 2048
+  timeout_seconds: 120
+limits:
+  run_seconds: 240
+  tool_seconds: 15
+  max_steps: 12
+  max_input_bytes: 16384
+  max_output_bytes: 16384
+  max_batch: 20
+  max_history_messages: 24
+  max_runs_per_hour: 120
+  retry_base_ms: 1000
+  debounce_ms: 1000
+  poll_ms: 250
+  approval_seconds: 3600
+timezone: "Asia/Shanghai"
+quiet_hours:
+  start: "23:00"
+  end: "08:00"
+delivery_interval_ms: 1000
+default_target: local
+targets:
+  local:
+    kind: local
+permissions:
+  read_file: allow
+  write_file: allow
+  edit_file: allow
+  set_timer: allow
+  send_message: allow
+  bash: deny
+# Named HTTP operations are invoked through bash's `action` variant; never by
+# handing production credentials or unrestricted network access to a shell.
+actions: {}
+# Example (enable only after configuring a real, intended destination):
+# actions:
+#   create_ticket:
+#     mode: ask
+#     url: https://example.invalid/tickets
+#     method: POST
+#     bearer_token: replace-in-config.local.yaml
+
+# DingTalk IM: copy this file to ignored config.local.yaml before adding secrets.
+dingtalk:
+  enabled: false
+  client_id: ""
+  client_secret: ""
+  discovery_only: true
+  allowed_sender: ""
+  allowed_conversations: [] # empty = direct messages only; groups require explicit IDs

@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export GOROOT="$ROOT/.tools/go"
+export GOPATH="$ROOT/.cache/gopath"
+export GOMODCACHE="$ROOT/.cache/gomod"
+export GOCACHE="$ROOT/.cache/go-build"
+export GOTMPDIR="$ROOT/.cache/tmp"
+export TMPDIR="$ROOT/.cache/tmp"
+export GOTOOLCHAIN=local
+export PATH="$GOROOT/bin:$PATH"
+mkdir -p "$GOPATH" "$GOMODCACHE" "$GOCACHE" "$GOTMPDIR"
+if [ ! -x "$GOROOT/bin/go" ]; then
+  echo 'Run ./scripts/bootstrap first.' >&2
+  exit 1
+fi
+cd "$ROOT"
+exec "$GOROOT/bin/go" "$@"

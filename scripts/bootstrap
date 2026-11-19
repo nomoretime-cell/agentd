@@ -1,0 +1,27 @@
+#!/bin/sh
+# Installs a pinned, checksum-verified Go toolchain entirely inside this project.
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export TMPDIR="$ROOT/.cache/tmp"
+mkdir -p "$ROOT/.tools" "$TMPDIR"
+python3 - "$ROOT" <<'PY'
+import hashlib,json,pathlib,platform,sys,tarfile,urllib.request
+root=pathlib.Path(sys.argv[1]); version='go1.27.4'
+if (root/'.tools/go/bin/go').exists(): sys.exit(0)
+osname={'Darwin':'darwin','Linux':'linux'}[platform.system()]
+arch={'arm64':'arm64','aarch64':'arm64','x86_64':'amd64'}[platform.machine()]
+releases=json.load(urllib.request.urlopen('https://go.dev/dl/?mode=json&include=all',timeout=30))
+release=next(r for r in releases if r['version']==version)
+item=next(f for f in release['files'] if f['os']==osname and f['arch']==arch and f['kind']=='archive')
+archive=root/'.tools/go.tar.gz'
+urllib.request.urlretrieve('https://go.dev/dl/'+item['filename'],archive)
+if hashlib.sha256(archive.read_bytes()).hexdigest()!=item['sha256']: raise SystemExit('Go archive checksum mismatch')
+with tarfile.open(archive) as tf:
+    for member in tf.getmembers():
+        p=pathlib.PurePosixPath(member.name)
+        if p.is_absolute() or '..' in p.parts or p.parts[0]!='go' or member.issym() or member.islnk():
+            raise SystemExit('Unexpected archive entry: '+member.name)
+    tf.extractall(root/'.tools')
+print('Installed',version,'inside',root/'.tools')
+PY
+"$ROOT/scripts/go" mod download

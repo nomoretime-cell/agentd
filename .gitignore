@@ -1,0 +1,12 @@
+.tools/
+.cache/
+bin/
+data/
+config.local.yaml
+workspace/MEMORY.md
+workspace/notes/*
+workspace/scratch/*
+!workspace/notes/.gitkeep
+!workspace/scratch/.gitkeep
+*.test
+coverage.out
