@@ -661,3 +661,82 @@ func TestDingTalkOwnerInNewGroup(t *testing.T) {
 		t.Fatalf("new group not routable: %v", err)
 	}
 }
+
+func TestScheduledOwnerNewsReceipt(t *testing.T) {
+	s := openTest(t, dtConfig(), finalModel())
+	var authCalls, sendCalls int
+	var limited bool
+	s.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var body string
+		switch r.URL.Path {
+		case "/v1.0/oauth2/accessToken":
+			authCalls++
+			body = `{"accessToken":"fake-test-token","expireIn":7200}`
+		case "/v1.0/robot/oToMessages/batchSend":
+			sendCalls++
+			var req struct {
+				RobotCode        string
+				UserIds          []string
+				MsgKey, MsgParam string
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RobotCode != s.cfg.DingTalk.ClientID || len(req.UserIds) != 1 || req.UserIds[0] != s.cfg.DingTalk.AllowedSender || req.MsgKey != "sampleText" || r.Header.Get("x-acs-dingtalk-access-token") != "fake-test-token" {
+				t.Fatal("incorrect proactive recipient or credentials")
+			}
+			body = `{"processQueryKey":"receipt"}`
+			if limited {
+				body = `{"flowControlledStaffIdList":["owner"]}`
+			}
+		default:
+			t.Fatal("unexpected endpoint")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	n := Notification{Target: s.newsTarget(), Content: "AI news"}
+	if got := s.deliverOwnerNews(context.Background(), n); got != "sent" {
+		t.Fatal(got)
+	}
+	limited = true
+	if got := s.deliverOwnerNews(context.Background(), n); got != "pending" {
+		t.Fatal(got)
+	}
+	n.Target = "group"
+	if s.deliverOwnerNews(context.Background(), n) != "failed" || authCalls != 1 || sendCalls != 2 {
+		t.Fatal("recipient restriction or token cache failed")
+	}
+}
+
+func TestDingTalkQuotedMessageReachesModel(t *testing.T) {
+	cfg := dtConfig()
+	cfg.Limits.DebounceMS = 0
+	s := openTest(t, cfg, modelFunc(func(_ context.Context, m []Message, _ []Tool) (Message, error) {
+		input := m[len(m)-1].Content
+		for _, want := range []string{"介绍第三条", "第三条：引用测试文章"} {
+			if !strings.Contains(input, want) {
+				t.Fatalf("missing %q in model input", want)
+			}
+		}
+		if strings.Contains(input, "private-download-code") {
+			t.Fatal("raw quoted metadata leaked")
+		}
+		return Message{Role: "assistant", Content: "已读引用"}, nil
+	}))
+	f := dtFrame(dtMessage())
+	var data map[string]any
+	if err := json.Unmarshal([]byte(f.Data), &data); err != nil {
+		t.Fatal(err)
+	}
+	data["text"] = map[string]any{"content": "介绍第三条", "isReplyMsg": true, "repliedMsg": map[string]any{"msgType": "text", "content": map[string]string{"text": "第三条：引用测试文章", "downloadCode": "private-download-code"}}}
+	raw, _ := json.Marshal(data)
+	f.Data = string(raw)
+	ctx := context.Background()
+	if s.acceptDingTalk(ctx, f).Code != 200 {
+		t.Fatal("callback rejected")
+	}
+	batch, e := s.claim(ctx)
+	if e != nil || len(batch) != 1 {
+		t.Fatal("claim failed", e)
+	}
+	if _, e = s.execute(ctx, batch); e != nil {
+		t.Fatal(e)
+	}
+}

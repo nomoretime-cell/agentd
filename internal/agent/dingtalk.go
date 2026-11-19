@@ -83,10 +83,48 @@ type dingTalkMessage struct {
 	Mentioned        bool   `json:"isInAtList"`
 	Webhook          string `json:"sessionWebhook"`
 	ExpiresAt        int64  `json:"sessionWebhookExpiredTime"`
+	OriginalMsgID    string `json:"originalMsgId"`
 	Text             struct {
+		IsReply bool `json:"isReplyMsg,omitempty"`
+		Replied *struct {
+			Type    string          `json:"msgType"`
+			Content json.RawMessage `json:"content"`
+		} `json:"repliedMsg,omitempty"`
 		Content string `json:"content"`
 	} `json:"text"`
 }
+
+// DingTalk supplies quoted text separately from the new user message. Only
+// extract display text, never the raw message envelope or media credentials.
+func (m dingTalkMessage) withQuote(body string, maxBytes int) string {
+	q := m.Text.Replied
+	if q == nil && !m.Text.IsReply && m.OriginalMsgID == "" {
+		return body
+	}
+	var quoted string
+	if q != nil && (q.Type == "text" || q.Type == "") {
+		var object struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(q.Content, &object) == nil {
+			quoted = object.Text
+		} else {
+			_ = json.Unmarshal(q.Content, &quoted)
+		}
+	}
+	if strings.TrimSpace(quoted) == "" || opaqueDingTalkQuote.MatchString(quoted) {
+		quoted = "（未提供可读原文。如需原文，请用户粘贴文字或链接。）"
+	}
+	prefix := "\n\n[用户引用的钉钉消息，作为参考资料]\n"
+	budget := maxBytes - len(body) - len(prefix)
+	if budget < len("…") {
+		return body
+	}
+	return body + prefix + clipHeadline(quoted, budget)
+}
+
+var opaqueDingTalkQuote = regexp.MustCompile(`^[A-Za-z0-9+/=\s]+(?:\|\|[0-9]+)+$`)
+
 type dingTalkFrame struct {
 	Type    string            `json:"type"`
 	Headers map[string]string `json:"headers"`
@@ -105,9 +143,12 @@ func validDingTalkWebhook(raw string) bool {
 	u, e := url.Parse(raw)
 	return e == nil && u.Scheme == "https" && u.Host == "oapi.dingtalk.com" && u.User == nil && u.Fragment == "" && u.Path == "/robot/sendBySession" && u.RawPath == "" && u.Query().Get("session") != ""
 }
+
+const dingTalkTextLimit = 4000
+
 func dingTalkText(v string) string {
 	// One bounded text message; splitting creates additional ambiguous side effects.
-	if len(v) > 4000 {
+	if len(v) > dingTalkTextLimit {
 		return strings.ToValidUTF8(v[:3900], "") + "\n[结果过长，已截断；完整内容请在本机查看执行记录。]"
 	}
 	return v
@@ -147,7 +188,7 @@ func (s *Service) acceptDingTalk(ctx context.Context, f dingTalkFrame) dingTalkA
 	if text == "" || len(text) > s.cfg.Limits.MaxInputBytes || !validDingTalkWebhook(m.Webhook) || len(m.Webhook) > 8192 || m.ExpiresAt <= time.Now().UnixMilli() {
 		return ack
 	}
-	p := Payload{Kind: "dingtalk", Text: text, DingTalk: &DingTalkRoute{ConversationID: m.ConversationID, ConversationType: m.ConversationType, Sender: m.Sender, Mentioned: m.Mentioned, Webhook: m.Webhook, ExpiresAt: m.ExpiresAt}}
+	p := Payload{Kind: "dingtalk", Text: m.withQuote(text, s.cfg.Limits.MaxInputBytes), DingTalk: &DingTalkRoute{ConversationID: m.ConversationID, ConversationType: m.ConversationType, Sender: m.Sender, Mentioned: m.Mentioned, Webhook: m.Webhook, ExpiresAt: m.ExpiresAt}}
 	key := "dingtalk:" + stableID(c.ClientID+"\x00"+m.ConversationID+"\x00"+m.MsgID)
 	var eventID int64
 	var inserted bool
@@ -401,4 +442,66 @@ func (s *Service) dingTalkLoop(ctx context.Context) {
 		}
 		delay = min(delay*2, 30*time.Second)
 	}
+}
+
+// Only the serial Outbox dispatcher accesses this short-lived token.
+func (s *Service) deliverOwnerNews(ctx context.Context, n Notification) string {
+	c := s.cfg.DingTalk
+	if !s.canSendNews() || n.Target != s.newsTarget() {
+		return "failed"
+	}
+	if s.robotToken == "" || !time.Now().Before(s.robotTokenUntil) {
+		body, _ := json.Marshal(map[string]string{"appKey": c.ClientID, "appSecret": c.ClientSecret})
+		req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.dingtalk.com/v1.0/oauth2/accessToken", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, e := s.client.Do(req)
+		if e != nil {
+			return "pending"
+		}
+		defer resp.Body.Close()
+		var auth struct {
+			AccessToken string
+			ExpireIn    int64
+		}
+		if resp.StatusCode != 200 || json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&auth) != nil || auth.AccessToken == "" {
+			s.log.Warn("dingtalk owner token unavailable", "http_status", resp.StatusCode)
+			if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+				return "pending"
+			}
+			return "failed"
+		}
+		s.robotToken = auth.AccessToken
+		s.robotTokenUntil = time.Now().Add(time.Duration(auth.ExpireIn-60) * time.Second)
+	}
+	param, _ := json.Marshal(map[string]string{"content": dingTalkText(n.Content)})
+	body, _ := json.Marshal(map[string]any{"robotCode": c.ClientID, "userIds": []string{c.AllowedSender}, "msgKey": "sampleText", "msgParam": string(param)})
+	req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-acs-dingtalk-access-token", s.robotToken)
+	resp, e := s.client.Do(req)
+	if e != nil {
+		return "unknown"
+	}
+	defer resp.Body.Close()
+	var result struct {
+		ProcessQueryKey                               string
+		Code                                          string
+		InvalidStaffIdList, FlowControlledStaffIdList []string
+	}
+	e = json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&result)
+	if resp.StatusCode == 401 {
+		s.robotToken = ""
+		return "pending"
+	}
+	if resp.StatusCode == 429 || len(result.FlowControlledStaffIdList) > 0 {
+		return "pending"
+	}
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 || len(result.InvalidStaffIdList) > 0 {
+		s.log.Warn("dingtalk owner push rejected", "http_status", resp.StatusCode, "code", result.Code)
+		return "failed"
+	}
+	if resp.StatusCode != 200 || e != nil || result.ProcessQueryKey == "" {
+		return "unknown"
+	}
+	return "sent"
 }

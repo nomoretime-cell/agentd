@@ -56,3 +56,15 @@ make dingtalk-live
 OpenCode 负责推理和工具循环，每轮可以调用内置 websearch，搜索词通过 TinyFish 查询。文件、通知、定时器及命名动作由本机临时 MCP 接口转交 agentd，沿用工作区权限、审批与动作账本。钉钉回复仍由 Outbox 投递。搜索可直接发“请联网搜索 Go 官方网站，给出来源链接”。
 
 `GET /v1/status` 的 `executor` 显示当前执行器。运行 `tail -f data/agentd.log` 可查看 `opencode run` 的事件号和会话号，以及 `opencode tool` 的工具名和结果状态。真实模型和搜索测试使用临时工作区，可运行 `AGENTD_OC_LIVE=1 ./scripts/go test -v ./internal/agent -run '^TestLiveOpenCodeChat$' -count=1`。
+
+## 钉钉 AI 资讯定时私聊
+
+内置任务 ID 为 `ai-news-private`。它按发布时间选取可访问的 TechCrunch AI、Google AI 和量子位 RSS 中的新增文章，通过钉钉应用主动单聊接口发送给 `dingtalk.allowed_sender`。每个整点检查一次，有多少新增就推送多少，按发布时间从新到旧排列。超出单条消息长度时分条发送，无新增时保持静默。去重依据为同一接收人的历史投递链接，忽略 URL 片段和 UTM 跟踪参数。首次简报之前发布的旧文章不会补发。所有来源均不可用时跳过该轮。这个订阅按设定时间全天投递，依赖 agentd 运行、网络和机器人的主动单聊权限。
+
+在项目目录使用本机管理接口启用、修改频率或关闭。下面的命令为每小时整点一次，将 `active` 改成 `false` 即可停止后续触发。
+
+```sh
+curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
+  -H "Authorization: Bearer $(cat data/api-token)" -H 'Content-Type: application/json' \
+  -d '{"id":"ai-news-private","cron_expr":"0 * * * *","active":true,"prompt":"AI 资讯私聊"}'
+```

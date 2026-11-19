@@ -20,6 +20,10 @@ func (s *Service) enqueueTx(ctx context.Context, tx *sql.Tx, n Notification) err
 		if _, e := s.dingTalkRoute(ctx, tx, n.Target); e != nil {
 			return e
 		}
+	} else if strings.HasPrefix(n.Target, "dingtalk-owner:") {
+		if n.Target != s.newsTarget() || !s.canSendNews() || !strings.HasPrefix(n.Key, "ai-news:") {
+			return ErrDenied
+		}
 	} else if _, ok := s.cfg.Targets[n.Target]; !ok {
 		return ErrDenied
 	}
@@ -106,13 +110,17 @@ func (s *Service) deliverOne(ctx context.Context) error {
 		target = Target{Kind: "dingtalk"}
 		ok = true
 	}
+	if n.Target == s.newsTarget() && strings.HasPrefix(n.Key, "ai-news:") {
+		target = Target{Kind: "owner-news"}
+		ok = true
+	}
 	if !ok {
 		_, e = s.db.ExecContext(ctx, "UPDATE outbox SET status='failed' WHERE id=?", n.ID)
 		s.mu.Unlock()
 		return e
 	}
 	// Approval cards bypass quiet hours; ordinary model-generated notifications cannot claim urgency.
-	if !strings.HasPrefix(n.Key, "approval:") && target.Kind != "dingtalk" {
+	if !strings.HasPrefix(n.Key, "approval:") && target.Kind != "dingtalk" && target.Kind != "owner-news" {
 		due := s.quietUntil(now)
 		if due.After(now) {
 			_, e = s.db.ExecContext(ctx, "UPDATE outbox SET deliver_at=? WHERE id=?", due.UnixMilli(), n.ID)
@@ -130,8 +138,12 @@ func (s *Service) deliverOne(ctx context.Context) error {
 	retries := n.Retries
 	due := n.DeliverAt
 	switch target.Kind {
-	case "dingtalk":
-		status = s.deliverDingTalk(ctx, n)
+	case "dingtalk", "owner-news":
+		if target.Kind == "owner-news" {
+			status = s.deliverOwnerNews(ctx, n)
+		} else {
+			status = s.deliverDingTalk(ctx, n)
+		}
 		s.log.Info("dingtalk delivery result", "outbox_id", n.ID, "target", n.Target, "status", status)
 		if status == "pending" {
 			retries++

@@ -19,6 +19,8 @@ import (
 )
 
 type Service struct {
+	robotToken        string
+	robotTokenUntil   time.Time
 	cfg               Config
 	root              string
 	db, read          *sql.DB
