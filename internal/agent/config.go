@@ -6,12 +6,20 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
+type NewsFeed struct {
+	Name     string `yaml:"name"`
+	URL      string `yaml:"url"`
+	Language string `yaml:"language"`
+}
+
 type Config struct {
+	NewsFeeds          []NewsFeed           `yaml:"news_feeds"`
 	OpenCodeBinary     string               `yaml:"opencode_binary"`
 	DingTalk           DingTalkConfig       `yaml:"dingtalk"`
 	Listen             string               `yaml:"listen"`
@@ -63,7 +71,11 @@ type Operation struct {
 }
 
 func DefaultConfig() Config {
-	return Config{Listen: "127.0.0.1:8090", Model: ModelConfig{Endpoint: "http://localhost:8080/v1/chat/completions", MaxTokens: 2048, TimeoutSeconds: 120}, Limits: Limits{RunSeconds: 240, ToolSeconds: 15, MaxSteps: 12, MaxInputBytes: 16384, MaxOutputBytes: 16384, MaxBatch: 20, MaxHistoryMessages: 24, MaxRunsPerHour: 120, RetryBaseMS: 1000, DebounceMS: 1000, PollMS: 250, ApprovalSeconds: 3600}, Timezone: "UTC", DefaultTarget: "local", Targets: map[string]Target{"local": {Kind: "local"}}, Permissions: map[string]string{"read_file": "allow", "write_file": "allow", "edit_file": "allow", "set_timer": "allow", "send_message": "allow", "bash": "deny"}, Actions: map[string]Operation{}}
+	return Config{NewsFeeds: []NewsFeed{
+		{"量子位", "https://www.qbitai.com/feed", "zh"},
+		{"TechCrunch AI", "https://techcrunch.com/category/artificial-intelligence/feed/", "en"},
+		{"Google AI", "https://blog.google/innovation-and-ai/technology/ai/rss/", "en"},
+	}, Listen: "127.0.0.1:8090", Model: ModelConfig{Endpoint: "http://localhost:8080/v1/chat/completions", MaxTokens: 2048, TimeoutSeconds: 120}, Limits: Limits{RunSeconds: 240, ToolSeconds: 15, MaxSteps: 12, MaxInputBytes: 16384, MaxOutputBytes: 16384, MaxBatch: 20, MaxHistoryMessages: 24, MaxRunsPerHour: 120, RetryBaseMS: 1000, DebounceMS: 1000, PollMS: 250, ApprovalSeconds: 3600}, Timezone: "UTC", DefaultTarget: "local", Targets: map[string]Target{"local": {Kind: "local"}}, Permissions: map[string]string{"read_file": "allow", "write_file": "allow", "edit_file": "allow", "set_timer": "allow", "send_message": "allow", "bash": "deny"}, Actions: map[string]Operation{}}
 }
 func LoadConfig(path string) (Config, error) {
 	c := DefaultConfig()
@@ -80,6 +92,13 @@ func LoadConfig(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	names := make(map[string]bool)
+	for _, feed := range c.NewsFeeds {
+		if feed.Name == "" || strings.ContainsAny(feed.Name, "\r\n") || names[feed.Name] || validateURL(feed.URL) != nil || !strings.HasPrefix(feed.URL, "https://") {
+			return fmt.Errorf("invalid or duplicate news feed %q", feed.Name)
+		}
+		names[feed.Name] = true
+	}
 	if err := c.DingTalk.validate(); err != nil {
 		return err
 	}

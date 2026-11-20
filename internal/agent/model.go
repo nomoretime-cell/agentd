@@ -48,7 +48,10 @@ func NewHTTPModel(cfg ModelConfig) *HTTPModel {
 	return &HTTPModel{cfg: cfg, client: &http.Client{Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 func (m *HTTPModel) Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error) {
-	body := map[string]any{"model": m.cfg.Name, "messages": messages, "max_tokens": m.cfg.MaxTokens, "stream": false, "temperature": 0, "tools": tools, "tool_choice": "auto", "parallel_tool_calls": false, "chat_template_kwargs": map[string]any{"enable_thinking": false}}
+	body := map[string]any{"model": m.cfg.Name, "messages": messages, "max_tokens": m.cfg.MaxTokens, "stream": false, "temperature": 0, "chat_template_kwargs": map[string]any{"enable_thinking": false}}
+	if len(tools) > 0 {
+		body["tools"], body["tool_choice"], body["parallel_tool_calls"] = tools, "auto", false
+	}
 	b, e := json.Marshal(body)
 	if e != nil {
 		return Message{}, e

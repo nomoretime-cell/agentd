@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Send one real DingTalk sample for a news-source change and wait for its receipt."""
+import argparse
+import json
+import sqlite3
+import time
+import urllib.request
+from pathlib import Path
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("source", help="configured news feed name")
+parser.add_argument("change", help="stable identifier for this change; reuse on retry")
+parser.add_argument("--listen", default="127.0.0.1:8090")
+args = parser.parse_args()
+root = Path(__file__).resolve().parent.parent
+data = root / "data"
+token = (data / "api-token").read_text().strip()
+payload = {"key": "news-test:" + args.source + ":" + args.change, "source": args.source}
+request = urllib.request.Request(
+    "http://" + args.listen + "/v1/news/test",
+    data=json.dumps(payload).encode(),
+    headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+)
+with urllib.request.urlopen(request, timeout=10) as response:
+    event = json.load(response)
+print(f"Inbox #{event['id']}", flush=True)
+with sqlite3.connect((data / "state.db").as_uri() + "?mode=ro", uri=True) as db:
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        row = db.execute("SELECT id,status FROM outbox WHERE dedup_key=?", (event["outbox_key"],)).fetchone()
+        if row and row[1] in ("sent", "failed", "unknown"):
+            print(f"Outbox #{row[0]}  {row[1]}")
+            raise SystemExit(0 if row[1] == "sent" else 1)
+        state = db.execute("SELECT status FROM inbox WHERE id=?", (event["id"],)).fetchone()
+        if state and state[0] == "dead":
+            raise SystemExit("Test event failed. See data/agentd.log.")
+        time.sleep(1)
+raise SystemExit("No confirmed receipt yet. Recheck with the same change identifier.")

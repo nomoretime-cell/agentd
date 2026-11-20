@@ -17,7 +17,15 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 	if key == "" || len(key) > 256 {
 		return 0, false, errors.New("key must contain 1..256 bytes")
 	}
-	if p.Kind != "message" && p.Kind != "action_request" {
+	if p.Kind == "news_test" {
+		if !s.canSendNews() {
+			return 0, false, ErrDenied
+		}
+		if _, ok := s.testNewsFeed(p.Name); !ok {
+			return 0, false, errors.New("unknown news source")
+		}
+	}
+	if p.Kind != "message" && p.Kind != "action_request" && p.Kind != "news_test" {
 		return 0, false, errors.New("unsupported external event kind")
 	}
 	if strings.TrimSpace(p.Text) == "" && p.Kind == "message" {

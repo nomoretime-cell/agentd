@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -34,6 +35,17 @@ func (s *Service) Handler() http.Handler {
 		}
 		id, new, e := s.Append(r.Context(), req.Key, Payload{Kind: "message", Text: req.Text})
 		respond(w, map[string]any{"id": id, "inserted": new}, e)
+	})
+	mux.HandleFunc("POST /v1/news/test", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Key    string `json:"key"`
+			Source string `json:"source"`
+		}
+		if !decodeHTTP(w, r, &req) {
+			return
+		}
+		id, inserted, err := s.Append(r.Context(), req.Key, Payload{Kind: "news_test", Name: req.Source})
+		respond(w, map[string]any{"id": id, "inserted": inserted, "outbox_key": fmt.Sprintf("ai-news:test:%d", id)}, err)
 	})
 	mux.HandleFunc("POST /v1/action-requests", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

@@ -56,3 +56,17 @@ dingtalk:
   allowed_sender: ""
   allow_all_groups: false # true accepts owner mentions in any group the bot has joined
   allowed_conversations: [] # explicit chat IDs; empty allows owner direct messages
+
+# AI newsletter RSS subscriptions. Non-Chinese titles are translated locally.
+news_feeds:
+  - {name: 量子位, language: zh, url: "https://www.qbitai.com/feed"}
+  - {name: TechCrunch AI, language: en, url: "https://techcrunch.com/category/artificial-intelligence/feed/"}
+  - {name: Google AI, language: en, url: "https://blog.google/innovation-and-ai/technology/ai/rss/"}
+  - {name: Anthropic, language: en, url: "https://www.anthropic.com/news"}
+  - {name: OpenAI, language: en, url: "https://openai.com/news/rss.xml"}
+  - {name: Hugging Face, language: en, url: "https://huggingface.co/blog/feed.xml"}
+  - {name: MIT News AI, language: en, url: "https://news.mit.edu/rss/topic/artificial-intelligence2"}
+  - {name: AWS 机器学习, language: en, url: "https://aws.amazon.com/blogs/machine-learning/feed/"}
+  - {name: NVIDIA 生成式 AI, language: en, url: "https://blogs.nvidia.com/blog/category/generative-ai/feed/"}
+  - {name: MIT 科技评论 AI, language: en, url: "https://www.technologyreview.com/topic/artificial-intelligence/feed/"}
+  - {name: 法国世界报 AI, language: fr, url: "https://www.lemonde.fr/intelligence-artificielle/rss_full.xml"}
