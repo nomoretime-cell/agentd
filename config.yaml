@@ -70,3 +70,18 @@ news_feeds:
   - {name: NVIDIA 生成式 AI, language: en, url: "https://blogs.nvidia.com/blog/category/generative-ai/feed/"}
   - {name: MIT 科技评论 AI, language: en, url: "https://www.technologyreview.com/topic/artificial-intelligence/feed/"}
   - {name: 法国世界报 AI, language: fr, url: "https://www.lemonde.fr/intelligence-artificielle/rss_full.xml"}
+
+# One IM provider per process. Existing configs without im use DingTalk.
+im:
+  provider: dingtalk  # dingtalk | wecom
+wecom:
+  bot_id: ""
+  secret: ""
+  owner_userid: ""
+  discovery_only: false
+  progress_messages: true
+  allow_all_groups: false # true accepts member mentions in every joined internal group
+  allowed_groups: []  # internal group chatids when allow_all_groups is false
+  group_leads: {}     # optional: "chatid": "responsible_userid"
+  group_owner_tools: false # true grants every admitted group member the owner DM tool policy
+  team_knowledge: ""  # role and materials approved for all enabled groups

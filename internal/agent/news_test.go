@@ -68,7 +68,7 @@ func TestNewsDigestAllItemsAcrossParts(t *testing.T) {
 	}
 	var all strings.Builder
 	for _, n := range parts {
-		if len(n.Content) > dingTalkTextLimit || !utf8.ValidString(n.Content) {
+		if len(n.Content) > imTextLimit || !utf8.ValidString(n.Content) {
 			t.Fatal("invalid message part")
 		}
 		all.WriteString(n.Content)

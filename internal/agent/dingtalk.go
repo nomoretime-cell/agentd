@@ -14,7 +14,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"strconv"
+
 	"strings"
 	"time"
 
@@ -66,14 +66,6 @@ func (c DingTalkConfig) permits(sender, conversation, kind string, mentioned boo
 	}
 }
 
-type DingTalkRoute struct {
-	ConversationID   string `json:"conversation_id"`
-	ConversationType string `json:"conversation_type"`
-	Sender           string `json:"sender"`
-	Mentioned        bool   `json:"mentioned"`
-	Webhook          string `json:"session_webhook"`
-	ExpiresAt        int64  `json:"expires_at"`
-}
 type dingTalkMessage struct {
 	MsgID            string `json:"msgId"`
 	MsgType          string `json:"msgtype"`
@@ -112,15 +104,10 @@ func (m dingTalkMessage) withQuote(body string, maxBytes int) string {
 			_ = json.Unmarshal(q.Content, &quoted)
 		}
 	}
-	if strings.TrimSpace(quoted) == "" || opaqueDingTalkQuote.MatchString(quoted) {
-		quoted = "（未提供可读原文。如需原文，请用户粘贴文字或链接。）"
+	if opaqueDingTalkQuote.MatchString(quoted) {
+		quoted = ""
 	}
-	prefix := "\n\n[用户引用的钉钉消息，作为参考资料]\n"
-	budget := maxBytes - len(body) - len(prefix)
-	if budget < len("…") {
-		return body
-	}
-	return body + prefix + clipHeadline(quoted, budget)
+	return appendIMQuote(body, quoted, "钉钉", maxBytes)
 }
 
 var opaqueDingTalkQuote = regexp.MustCompile(`^[A-Za-z0-9+/=\s]+(?:\|\|[0-9]+)+$`)
@@ -136,22 +123,10 @@ type dingTalkACK struct {
 	Message string            `json:"message"`
 	Data    string            `json:"data"`
 }
-type dingTalkTargetKey struct{}
 
-func dingTalkTarget(id int64) string { return "dingtalk:" + strconv.FormatInt(id, 10) }
 func validDingTalkWebhook(raw string) bool {
 	u, e := url.Parse(raw)
 	return e == nil && u.Scheme == "https" && u.Host == "oapi.dingtalk.com" && u.User == nil && u.Fragment == "" && u.Path == "/robot/sendBySession" && u.RawPath == "" && u.Query().Get("session") != ""
-}
-
-const dingTalkTextLimit = 4000
-
-func dingTalkText(v string) string {
-	// One bounded text message; splitting creates additional ambiguous side effects.
-	if len(v) > dingTalkTextLimit {
-		return strings.ToValidUTF8(v[:3900], "") + "\n[结果过长，已截断；完整内容请在本机查看执行记录。]"
-	}
-	return v
 }
 
 // ACK 200 means durable acceptance, NOT task completion. Policy refusals and
@@ -175,7 +150,7 @@ func (s *Service) acceptDingTalk(ctx context.Context, f dingTalkFrame) dingTalkA
 		s.log.Info("dingtalk discovery (no task accepted)", "sender_staff_id", m.Sender, "conversation_id", m.ConversationID, "conversation_type", m.ConversationType)
 		return ack
 	}
-	if !c.permits(m.Sender, m.ConversationID, m.ConversationType, m.Mentioned) {
+	if s.cfg.provider() != "dingtalk" || !c.permits(m.Sender, m.ConversationID, m.ConversationType, m.Mentioned) {
 		if m.ConversationType == "2" && c.Enabled && m.Sender == c.AllowedSender {
 			s.log.Info("dingtalk group message filtered", "conversation_id", m.ConversationID, "mentioned", m.Mentioned, "allowlisted", slices.Contains(c.AllowedConversations, m.ConversationID), "allow_all_groups", c.AllowAllGroups)
 		}
@@ -188,7 +163,7 @@ func (s *Service) acceptDingTalk(ctx context.Context, f dingTalkFrame) dingTalkA
 	if text == "" || len(text) > s.cfg.Limits.MaxInputBytes || !validDingTalkWebhook(m.Webhook) || len(m.Webhook) > 8192 || m.ExpiresAt <= time.Now().UnixMilli() {
 		return ack
 	}
-	p := Payload{Kind: "dingtalk", Text: m.withQuote(text, s.cfg.Limits.MaxInputBytes), DingTalk: &DingTalkRoute{ConversationID: m.ConversationID, ConversationType: m.ConversationType, Sender: m.Sender, Mentioned: m.Mentioned, Webhook: m.Webhook, ExpiresAt: m.ExpiresAt}}
+	p := Payload{Kind: "dingtalk", Text: m.withQuote(text, s.cfg.Limits.MaxInputBytes), DingTalk: &IMRoute{ConversationID: m.ConversationID, ConversationType: m.ConversationType, Sender: m.Sender, Mentioned: m.Mentioned, Webhook: m.Webhook, ExpiresAt: m.ExpiresAt}}
 	key := "dingtalk:" + stableID(c.ClientID+"\x00"+m.ConversationID+"\x00"+m.MsgID)
 	var eventID int64
 	var inserted bool
@@ -236,67 +211,12 @@ func (s *Service) acceptDingTalk(ctx context.Context, f dingTalkFrame) dingTalkA
 	return ack
 }
 
-type rowQuery interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
-func (s *Service) dingTalkRoute(ctx context.Context, q rowQuery, target string) (*DingTalkRoute, error) {
-	id, e := strconv.ParseInt(strings.TrimPrefix(target, "dingtalk:"), 10, 64)
-	if e != nil || id <= 0 {
-		return nil, ErrDenied
-	}
-	var raw string
-	if e = q.QueryRowContext(ctx, "SELECT payload FROM inbox WHERE id=?", id).Scan(&raw); e != nil {
-		return nil, e
-	}
-	var p Payload
-	if json.Unmarshal([]byte(raw), &p) != nil || p.DingTalk == nil {
-		return nil, ErrDenied
-	}
-	r := p.DingTalk
-	if !s.cfg.DingTalk.permits(r.Sender, r.ConversationID, r.ConversationType, r.Mentioned) || !validDingTalkWebhook(r.Webhook) {
-		return nil, ErrDenied
-	}
-	return r, nil
-}
-func (s *Service) replyTarget(ctx context.Context, ev Event) (string, error) {
-	if ev.Payload.DingTalk != nil {
-		return dingTalkTarget(ev.ID), nil
-	}
-	if ev.Payload.Kind != "approval" {
-		return "", nil
-	}
-	var key string
-	if e := s.read.QueryRowContext(ctx, "SELECT dedup_key FROM actions WHERE id=?", ev.Payload.ActionID).Scan(&key); e != nil {
-		return "", e
-	}
-	parts := strings.Split(key, ":")
-	if len(parts) < 3 || parts[0] != "ev" {
-		return "", nil
-	}
-	id, e := strconv.ParseInt(parts[1], 10, 64)
-	if e != nil {
-		return "", e
-	}
-	var raw string
-	if e = s.read.QueryRowContext(ctx, "SELECT payload FROM inbox WHERE id=?", id).Scan(&raw); e != nil {
-		return "", e
-	}
-	var p Payload
-	if e = json.Unmarshal([]byte(raw), &p); e != nil {
-		return "", e
-	}
-	if p.DingTalk != nil {
-		return dingTalkTarget(id), nil
-	}
-	return "", nil
-}
 func (s *Service) deliverDingTalk(ctx context.Context, n Notification) string {
-	r, e := s.dingTalkRoute(ctx, s.read, n.Target)
+	r, e := s.imRoute(ctx, s.read, n.Target)
 	if e != nil || r.ExpiresAt <= time.Now().UnixMilli() || s.cfg.Permissions["send_message"] != "allow" {
 		return "failed"
 	}
-	body, _ := json.Marshal(map[string]any{"msgtype": "text", "text": map[string]string{"content": dingTalkText(n.Content)}})
+	body, _ := json.Marshal(map[string]any{"msgtype": "text", "text": map[string]string{"content": imText(n.Content)}})
 	req, e := http.NewRequestWithContext(ctx, http.MethodPost, r.Webhook, bytes.NewReader(body))
 	if e != nil {
 		return "failed"
@@ -473,7 +393,7 @@ func (s *Service) deliverOwnerNews(ctx context.Context, n Notification) string {
 		s.robotToken = auth.AccessToken
 		s.robotTokenUntil = time.Now().Add(time.Duration(auth.ExpireIn-60) * time.Second)
 	}
-	param, _ := json.Marshal(map[string]string{"content": dingTalkText(n.Content)})
+	param, _ := json.Marshal(map[string]string{"content": imText(n.Content)})
 	body, _ := json.Marshal(map[string]any{"robotCode": c.ClientID, "userIds": []string{c.AllowedSender}, "msgKey": "sampleText", "msgParam": string(param)})
 	req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

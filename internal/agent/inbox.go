@@ -11,13 +11,17 @@ import (
 )
 
 func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, inserted bool, err error) {
-	if p.DingTalk != nil {
+	if p.DingTalk != nil || p.WeCom != nil {
 		return 0, false, ErrDenied
 	}
 	if key == "" || len(key) > 256 {
 		return 0, false, errors.New("key must contain 1..256 bytes")
 	}
 	if p.Kind == "news_test" {
+		if s.cfg.provider() == "wecom" {
+			p.NewsTarget = s.newsTarget()
+			key = "wecom:" + stableID(p.NewsTarget+"\x00"+key)
+		}
 		if !s.canSendNews() {
 			return 0, false, ErrDenied
 		}
@@ -77,7 +81,16 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 func (s *Service) claim(ctx context.Context) (batch []Event, err error) {
 	// Caller holds s.mu. Dead heads deliberately block until an authenticated operator resolves them.
 	err = transaction(ctx, s.db, func(tx *sql.Tx) error {
-		rows, e := tx.QueryContext(ctx, "SELECT id,dedup_key,payload,available_at,status,retries FROM inbox WHERE status IN ('pending','running','dead') ORDER BY id LIMIT ?", s.cfg.Limits.MaxBatch)
+		// An outstanding approval belongs to the channel that created its action.
+		// Keep old-channel work queued until that provider is selected again.
+		rows, e := tx.QueryContext(ctx, `SELECT id,dedup_key,payload,available_at,status,retries FROM inbox AS i
+WHERE status IN ('pending','running','dead') AND json_extract(payload,'$.kind') != ?
+AND (json_extract(payload,'$.kind') NOT IN ('news_test','ai_news') OR COALESCE(json_extract(payload,'$.news_target'),'')=?)
+AND (json_extract(payload,'$.kind') != 'approval' OR NOT EXISTS (
+ SELECT 1 FROM actions a JOIN inbox origin ON origin.id=CAST(substr(a.dedup_key,4) AS INTEGER)
+ WHERE a.id=json_extract(i.payload,'$.action_id') AND a.dedup_key GLOB 'ev:[0-9]*:*'
+ AND json_extract(origin.payload,'$.kind')=?))
+ORDER BY id LIMIT ?`, s.cfg.inactiveProvider(), s.newsScope(), s.cfg.inactiveProvider(), s.cfg.Limits.MaxBatch)
 		if e != nil {
 			return e
 		}
@@ -119,8 +132,8 @@ func (s *Service) claim(ctx context.Context) (batch []Event, err error) {
 			if _, e = tx.ExecContext(ctx, "UPDATE inbox SET status='running' WHERE id=? AND status='pending'", ev.ID); e != nil {
 				return e
 			}
-			if r := ev.Payload.DingTalk; r != nil && s.cfg.DingTalk.ProgressMessages && s.cfg.Permissions["send_message"] == "allow" && s.cfg.DingTalk.permits(r.Sender, r.ConversationID, r.ConversationType, r.Mentioned) {
-				n := Notification{Key: fmt.Sprintf("progress:%d", ev.ID), Target: dingTalkTarget(ev.ID), Content: randomDingTalkProgress()}
+			if s.progressFor(ev.Payload) && s.cfg.Permissions["send_message"] == "allow" {
+				n := Notification{Key: fmt.Sprintf("progress:%d", ev.ID), Target: ev.Payload.imTarget(ev.ID), Content: randomIMProgress()}
 				if e := s.enqueueTx(ctx, tx, n); e != nil {
 					return e
 				}
@@ -209,8 +222,8 @@ func (s *Service) returnBatch(ctx context.Context, batch []Event, failure bool) 
 					status = "dead"
 				}
 			}
-			if status == "dead" && ev.Payload.DingTalk != nil {
-				if e := s.enqueueTx(ctx, tx, Notification{Key: fmt.Sprintf("failure:%d", ev.ID), Target: dingTalkTarget(ev.ID), Content: "任务执行失败（已达到重试上限），请联系本机管理员查看 Inbox 死信并处理。"}); e != nil {
+			if status == "dead" && s.permitsIM(ev.Payload) {
+				if e := s.enqueueTx(ctx, tx, Notification{Key: fmt.Sprintf("failure:%d", ev.ID), Target: ev.Payload.imTarget(ev.ID), Content: "任务执行失败（已达到重试上限），请联系本机管理员查看 Inbox 死信并处理。"}); e != nil {
 					return e
 				}
 			}

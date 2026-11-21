@@ -74,3 +74,14 @@ curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
   -H "Authorization: Bearer $(cat data/api-token)" -H 'Content-Type: application/json' \
   -d '{"id":"ai-news-private","cron_expr":"0 * * * *","active":true,"prompt":"AI 资讯私聊"}'
 ```
+
+## 企业微信团队模式
+
+在 `config.local.yaml` 设置 `im.provider: wecom` 并重启，即选择企业微信智能机器人长连接。设置为 `dingtalk` 可切回；省略时沿用钉钉及其 `enabled` 配置。一次只启动一个渠道连接，两端共用本机 SQLite、Inbox、OpenCode、本地模型、Outbox 和新闻定时器。旧渠道的待投递消息保留原目标。
+
+1. 在企业微信创建 **智能机器人 → API 模式 → 长连接**，从后台取得 Bot ID、Secret，并将机器人加入试点内部群。agentd 主动连接企微，不需要公网回调入口。[企微官方长连接协议](https://developer.work.weixin.qq.com/document/path/101463)
+2. 从 [配置模板](config.yaml) 复制 `im` 和 `wecom` 两段到本地配置。填入 `bot_id`、`secret`。若还不知道用户或群 ID，先打开 `discovery_only`，重启后给机器人发私聊并在群里 @ 一次。`tail -f data/agentd.log` 中的 `wecom discovery` 会显示回调的 `userid`、`chatid`。发现模式只记录标识。
+3. 将本人回调的 `userid` 写入 `owner_userid`，将 `wecom.allow_all_groups` 设为 `true` 后，机器人加入的每个内部群都会自动开放给该群所有成员 @ 提问，新群无需登记或重启。若只开放指定群，设为 `false` 并将群 ID 写入 `allowed_groups`。在 `team_knowledge` 中填写数字员工的角色和可公开给这些群的团队资料（支持 YAML 多行文本）。设置 `discovery_only: false` 后重启。`GET /v1/status` 中检查 `im_provider` 和 `wecom.connected`。
+4. 所有者在私聊中可以使用个人工作区及已授权工具。启用群内的任何成员均可 @ 机器人提问，每位成员在每个群的对话历史独立。默认群聊只使用团队资料和对话历史。显式设置 `wecom.group_owner_tools: true` 并重启后，所有获准群的所有成员都可调用所有者私聊可用的工具，包括 OpenCode 联网搜索和个人工作区读写（例如 `MEMORY.md` 和 `notes/`），结果会发回原群。全局工具策略、文件写入范围和 IM 渠道限制仍然适用。普通未 @ 的群消息是否可见取决于企微回调；此接入处理机器人收到的文本和文本引用。
+5. 需要提醒固定负责人的群可配置 `group_leads: {"群chatid": "负责人userid"}`。原群的结果消息会带指定成员的提及标记，处理中的进度消息不提醒。所有者也可以在群里 @ 机器人后发送 `/提醒 bob 总结今天的问题`，为该任务明确指定 userid。模型生成的提及标记按普通文字处理。用第二位成员的企微客户端验收是否出现实际 @ 提醒。
+6. 小时新闻发到当前渠道所有者的**私聊**。先由接收人在企微与机器人发起一次会话，再运行 `./scripts/news-push-test Anthropic wecom-first-run`。检查 Outbox 的 `sent` 和手机收到的中文测试消息。对同一渠道同一次测试重跑使用相同标识。企微长连接发送成功回执表示平台受理；发送途中断连记为 `unknown`，由管理员核对。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Send one real DingTalk sample for a news-source change and wait for its receipt."""
+"""Send one real sample to the active IM provider for a news-source change and wait for its receipt."""
 import argparse
 import json
 import sqlite3

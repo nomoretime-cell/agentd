@@ -33,16 +33,23 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 	if err != nil {
 		return out, err
 	}
-	var route *DingTalkRoute
+	var route *IMRoute
 	if target != "" {
-		route, err = s.dingTalkRoute(ctx, s.read, target)
+		route, err = s.imRoute(ctx, s.read, target)
 		if err != nil {
 			return out, err
 		}
 	}
 	out.ReplyTarget = target
-	ctx = context.WithValue(ctx, dingTalkTargetKey{}, target)
-	messages := []Message{{Role: "system", Content: s.systemPromptFor(target == "")}}
+	ctx = context.WithValue(ctx, imTargetKey{}, target)
+	var prompt string
+	if route.team() {
+		ctx = context.WithValue(ctx, teamTurnKey{}, true)
+		prompt = "你是群内团队助手。结合团队资料和当前可用工具回答问题。需要实时信息时使用可用的联网搜索并注明来源，没有依据时明确说明。团队资料：\n" + s.cfg.WeCom.TeamKnowledge
+	} else {
+		prompt = s.systemPromptFor(target == "")
+	}
+	messages := []Message{{Role: "system", Content: prompt}}
 	if target == "" {
 		messages = append(messages, s.loadSession()...)
 	} else {
@@ -51,7 +58,9 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 			return out, err
 		}
 		messages = append(messages, hist...)
-		messages[0].Content += "\nThis is a DingTalk IM task. Respond in the user language. Your final answer will be delivered automatically to the originating conversation. send_message also targets only that conversation. Do not send progress messages with send_message; use it only for the final result. Timers are unavailable on this channel. Never claim a tool operation succeeded without a successful receipt."
+		if !s.restrictTeamTools(ctx) {
+			messages[0].Content += "\nThis is an IM task. Respond in the user language. Your final answer will be delivered automatically to the originating conversation. send_message also targets only that conversation. Do not send progress messages with send_message; use it only for the final result. Timers are unavailable on this channel. Never claim a tool operation succeeded without a successful receipt."
+		}
 	}
 	var input strings.Builder
 	for _, ev := range batch {
@@ -96,24 +105,14 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 		if total > 128<<10 {
 			return out, errors.New("context budget exceeded")
 		}
-		msg, e := s.model.Complete(ctx, messages, toolDefinitions())
+		msg, e := s.model.Complete(ctx, messages, s.turnTools(ctx))
 		if e != nil {
 			return out, e
 		}
 		messages = append(messages, msg)
 		if len(msg.ToolCalls) == 0 {
 			out.Messages = messages
-			if target != "" && len(out.Notifications) == 0 && s.cfg.Permissions["send_message"] == "allow" {
-				content := strings.TrimSpace(msg.Content)
-				if content == "" {
-					content = "本次处理已结束，模型未返回可展示的文本；请在本机查看执行记录。"
-				}
-				content = s.redact(content)
-				if len(content) > s.cfg.Limits.MaxOutputBytes {
-					content = strings.ToValidUTF8(content[:s.cfg.Limits.MaxOutputBytes], "")
-				}
-				out.Notifications = append(out.Notifications, Notification{Key: fmt.Sprintf("reply:%d", batch[0].ID), Target: target, Content: content})
-			}
+			s.addIMAnswer(&out, batch[0].ID, msg.Content)
 			return out, nil
 		}
 		if len(msg.ToolCalls) > 8 {
@@ -153,6 +152,9 @@ func decodeArgs(raw string, v any) error {
 	return nil
 }
 func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint string, out *Outcome) (string, *Action, error) {
+	if s.restrictTeamTools(ctx) {
+		return "", nil, ErrDenied
+	}
 	name := call.Function.Name
 	// Named HTTP operations use their own explicit policy, not shell permissions.
 	if name != "bash" && s.cfg.Permissions[name] != "allow" {
@@ -213,8 +215,8 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		}
 		return "file edited", nil, s.workspaceWrite(a.Path, strings.Replace(string(b), a.Old, a.New, 1), a.Expected)
 	case "set_timer":
-		if target, _ := ctx.Value(dingTalkTargetKey{}).(string); target != "" {
-			return "", nil, errors.New("DingTalk session webhooks expire; scheduled channel replies are not supported. No timer was created.")
+		if target, _ := ctx.Value(imTargetKey{}).(string); target != "" {
+			return "", nil, errors.New("Scheduled IM replies are unavailable. No timer was created.")
 		}
 		var a struct {
 			ID     string `json:"id"`
@@ -256,7 +258,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if a.Target == "" {
 			a.Target = s.cfg.DefaultTarget
 		}
-		if target, _ := ctx.Value(dingTalkTargetKey{}).(string); target != "" {
+		if target, _ := ctx.Value(imTargetKey{}).(string); target != "" {
 			if a.Target != s.cfg.DefaultTarget && a.Target != "current" {
 				return "", nil, ErrDenied
 			}

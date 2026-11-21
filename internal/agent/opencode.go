@@ -19,15 +19,20 @@ import (
 
 // Reconstruct turns from committed inputs and actually sent replies, including
 // conversations which predate OpenCode. No session webhook enters the prompt.
-func (s *Service) chatHistory(ctx context.Context, r *DingTalkRoute, before int64) ([]Message, error) {
+func (s *Service) chatHistory(ctx context.Context, r *IMRoute, before int64) ([]Message, error) {
+	channel := "dingtalk"
+	if r.BotID != "" {
+		channel = "wecom"
+	}
+	path := "$." + channel + "."
 	rows, err := s.read.QueryContext(ctx, `WITH prior AS (
  SELECT id,json_extract(payload,'$.text') AS content FROM inbox WHERE status='done' AND id<?
- AND json_extract(payload,'$.dingtalk.conversation_id')=? AND json_extract(payload,'$.dingtalk.sender')=?
+ AND json_extract(payload,?)=? AND json_extract(payload,?)=? AND COALESCE(json_extract(payload,?),'')=? AND COALESCE(json_extract(payload,?),'')=?
  ORDER BY id DESC LIMIT ?
  ), messages AS (
  SELECT id,0 AS ordinal,'user' AS role,content FROM prior UNION ALL
- SELECT i.id,o.id,'assistant',o.content FROM prior i JOIN outbox o ON o.target='dingtalk:'||i.id AND o.status='sent' AND o.dedup_key NOT GLOB 'progress:*'
- ) SELECT role,content FROM messages ORDER BY id DESC,ordinal DESC LIMIT ?`, before, r.ConversationID, r.Sender, s.cfg.Limits.MaxHistoryMessages, s.cfg.Limits.MaxHistoryMessages)
+ SELECT i.id,o.id,'assistant',o.content FROM prior i JOIN outbox o ON o.target=?||':'||i.id AND o.status='sent' AND o.dedup_key NOT GLOB 'progress:*'
+ ) SELECT role,content FROM messages ORDER BY id DESC,ordinal DESC LIMIT ?`, before, path+"conversation_id", r.ConversationID, path+"sender", r.Sender, path+"bot_id", r.BotID, path+"conversation_type", r.ConversationType, s.cfg.Limits.MaxHistoryMessages, channel, s.cfg.Limits.MaxHistoryMessages)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +90,7 @@ func (t *ocTurn) mcp(w http.ResponseWriter, r *http.Request) {
 		result = ocMap{}
 	case "tools/list":
 		list := []ocMap{}
-		for _, d := range toolDefinitions() {
+		for _, d := range t.s.turnTools(t.ctx) {
 			name := d.Function.Name
 			if name == "bash" && len(t.s.cfg.Actions) > 0 || t.s.cfg.Permissions[name] == "allow" {
 				list = append(list, ocMap{"name": name, "description": d.Function.Description, "inputSchema": d.Function.Parameters})
@@ -116,13 +121,19 @@ func (t *ocTurn) mcp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, ocMap{"jsonrpc": "2.0", "id": req.ID, "result": result})
 }
 
-func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *DingTalkRoute, messages []Message, out Outcome) (Outcome, error) {
+func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute, messages []Message, out Outcome) (Outcome, error) {
 	key := "local"
-	if route != nil {
+	if route != nil && route.BotID == "" {
 		key = "dingtalk\x00" + s.cfg.DingTalk.ClientID + "\x00" + route.ConversationID + "\x00" + route.Sender
+	}
+	if route != nil && route.BotID != "" {
+		key = strings.Join([]string{"wecom", route.BotID, route.ConversationType, route.ConversationID, route.Sender}, "\x00")
 	}
 	sid := "ses_" + stableID(key)
 	base := filepath.Join(s.root, "data", "opencode")
+	if route.team() {
+		base = filepath.Join(base, "team", sid)
+	}
 	dir := filepath.Join(base, "projects", sid)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return out, err
@@ -130,21 +141,25 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *DingTalk
 	turnCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	turn := &ocTurn{s: s, ctx: turnCtx, event: ev, out: out, stop: cancel}
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		return out, err
-	}
-	secret := randomID()
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/"+secret || r.Header.Get("Origin") != "" {
-			http.NotFound(w, r)
-			return
+	mcpURL := ""
+	if !s.restrictTeamTools(ctx) {
+		ln, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			return out, err
 		}
-		turn.mcp(w, r)
-	}), ReadHeaderTimeout: 5 * time.Second}
-	go srv.Serve(ln)
-	defer srv.Close()
-	config := s.openCodeConfig("http://" + ln.Addr().String() + "/" + secret)
+		secret := randomID()
+		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/"+secret || r.Header.Get("Origin") != "" {
+				http.NotFound(w, r)
+				return
+			}
+			turn.mcp(w, r)
+		}), ReadHeaderTimeout: 5 * time.Second}
+		go srv.Serve(ln)
+		defer srv.Close()
+		mcpURL = "http://" + ln.Addr().String() + "/" + secret
+	}
+	config := s.openCodeConfig(mcpURL)
 	raw, err := json.Marshal(config)
 	if err != nil {
 		return out, err
@@ -230,20 +245,26 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *DingTalk
 		return out, err
 	}
 	out.Messages = append(messages, Message{Role: "assistant", Content: answer})
-	if route != nil && len(out.Notifications) == 0 && s.cfg.Permissions["send_message"] == "allow" {
-		answer = s.redact(answer)
-		if len(answer) > s.cfg.Limits.MaxOutputBytes {
-			answer = strings.ToValidUTF8(answer[:s.cfg.Limits.MaxOutputBytes], "")
-		}
-		out.Notifications = append(out.Notifications, Notification{Key: fmt.Sprintf("reply:%d", ev.ID), Target: out.ReplyTarget, Content: answer})
-	}
+	s.addIMAnswer(&out, ev.ID, answer)
 	return out, nil
 }
 func (s *Service) openCodeConfig(mcpURL string) ocMap {
-	rules := []ocMap{{"action": "*", "resource": "*", "effect": "deny"}, {"action": "websearch", "resource": "*", "effect": "allow"}, {"action": "agentd_*", "resource": "*", "effect": "allow"}}
+	rules := []ocMap{{"action": "*", "resource": "*", "effect": "deny"}}
+	system := "Answer using the supplied team materials and conversation."
+	if mcpURL != "" {
+		rules = append(rules, ocMap{"action": "websearch", "resource": "*", "effect": "allow"}, ocMap{"action": "agentd_*", "resource": "*", "effect": "allow"})
+		system = "Use websearch for online searches and cite the returned URLs. Use agentd tools for workspace operations."
+	}
 	provider := ocMap{"package": "@opencode/ai/providers/openai-compatible", "settings": ocMap{"baseURL": strings.TrimSuffix(s.cfg.Model.Endpoint, "/chat/completions")}, "models": ocMap{"local": ocMap{"modelID": s.cfg.Model.Name, "capabilities": ocMap{"tools": true}, "body": ocMap{"chat_template_kwargs": ocMap{"enable_thinking": false}, "max_tokens": s.cfg.Model.MaxTokens}}}}
 	if s.cfg.Model.APIKey != "" {
 		provider["headers"] = ocMap{"Authorization": "Bearer " + s.cfg.Model.APIKey}
 	}
-	return ocMap{"model": "host/local", "update": "disable", "share": "disabled", "snapshots": false, "websearch": ocMap{"provider": "tinyfish"}, "providers": ocMap{"host": provider}, "agents": ocMap{"agentd": ocMap{"mode": "primary", "steps": s.cfg.Limits.MaxSteps, "system": "Use websearch for online searches and cite the returned URLs. Use agentd tools for workspace operations.", "permissions": rules}}, "mcp": ocMap{"servers": ocMap{"agentd": ocMap{"type": "remote", "url": mcpURL, "oauth": false, "codemode": false}}}}
+	config := ocMap{"model": "host/local", "update": "disable", "share": "disabled", "snapshots": false,
+		"providers": ocMap{"host": provider},
+		"agents":    ocMap{"agentd": ocMap{"mode": "primary", "steps": s.cfg.Limits.MaxSteps, "system": system, "permissions": rules}}}
+	if mcpURL != "" {
+		config["websearch"] = ocMap{"provider": "tinyfish"}
+		config["mcp"] = ocMap{"servers": ocMap{"agentd": ocMap{"type": "remote", "url": mcpURL, "oauth": false, "codemode": false}}}
+	}
+	return config
 }

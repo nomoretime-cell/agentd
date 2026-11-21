@@ -285,7 +285,7 @@ func TestDingTalkPersistenceFailureAndPing(t *testing.T) {
 		t.Fatalf("invalid pong %+v", ack)
 	}
 }
-func TestDingTalkRouteAndToolRestrictions(t *testing.T) {
+func TestIMRouteAndToolRestrictions(t *testing.T) {
 	s := openTest(t, dtConfig(), finalModel())
 	m := dtMessage()
 	s.acceptDingTalk(context.Background(), dtFrame(m))
@@ -301,11 +301,11 @@ func TestDingTalkRouteAndToolRestrictions(t *testing.T) {
 	m.ExpiresAt += 10000
 	m.Webhook = "https://oapi.dingtalk.com/robot/sendBySession?session=refreshed"
 	s.acceptDingTalk(context.Background(), dtFrame(m))
-	r, e := s.dingTalkRoute(context.Background(), s.read, "dingtalk:1")
+	r, e := s.imRoute(context.Background(), s.read, "dingtalk:1")
 	if e != nil || r.Webhook != m.Webhook {
 		t.Fatal("webhook refresh failed", e)
 	}
-	ctx := context.WithValue(context.Background(), dingTalkTargetKey{}, "dingtalk:1")
+	ctx := context.WithValue(context.Background(), imTargetKey{}, "dingtalk:1")
 	out := Outcome{}
 	_, _, e = s.tool(ctx, "test", call("send_message", `{"target":"another-user","content":"leak"}`).ToolCalls[0], "", &out)
 	if !errors.Is(e, ErrDenied) {
@@ -610,7 +610,7 @@ func TestDingTalkProgressBeforeCompletion(t *testing.T) {
 	}
 	select {
 	case got := <-delivered:
-		if !slices.Contains(dingTalkProgressPhrases[:], got) {
+		if !slices.Contains(imProgressPhrases[:], got) {
 			t.Fatalf("unexpected progress message: %q", got)
 		}
 	case <-time.After(3 * time.Second):
@@ -656,7 +656,7 @@ func TestDingTalkOwnerInNewGroup(t *testing.T) {
 	}
 	m.ConversationType, m.Sender, m.Mentioned = "2", "owner", true
 	s.acceptDingTalk(ctx, dtFrame(m))
-	route, err := s.dingTalkRoute(ctx, s.read, "dingtalk:1")
+	route, err := s.imRoute(ctx, s.read, "dingtalk:1")
 	if err != nil || route.ConversationID != "new-group" {
 		t.Fatalf("new group not routable: %v", err)
 	}

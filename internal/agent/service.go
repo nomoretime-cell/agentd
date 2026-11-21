@@ -41,6 +41,8 @@ type Service struct {
 	lastSend          time.Time
 	starts            []time.Time
 	dingTalkConnected bool
+	wecomConn         *wecomConnection
+	wecomURL          string
 }
 
 func Open(root string, cfg Config, model Model) (s *Service, err error) {
@@ -83,7 +85,7 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 		lock.Close()
 		return nil, errors.New("another agentd instance owns this data directory")
 	}
-	s = &Service{cfg: cfg, root: root, lock: lock, model: model, wake: make(chan struct{}, 1), log: slog.Default(), client: &http.Client{Timeout: time.Duration(cfg.Limits.ToolSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	s = &Service{wecomURL: "wss://openws.work.weixin.qq.com", cfg: cfg, root: root, lock: lock, model: model, wake: make(chan struct{}, 1), log: slog.Default(), client: &http.Client{Timeout: time.Duration(cfg.Limits.ToolSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	defer func() {
 		if err != nil {
 			s.Close()
@@ -144,7 +146,9 @@ func (s *Service) Start(parent context.Context) {
 	ctx, cancel := context.WithCancel(parent)
 	s.cancel = cancel
 	loops := []func(context.Context){s.workerLoop, s.timerLoop, s.outboxLoop}
-	if s.cfg.DingTalk.Enabled {
+	if s.cfg.provider() == "wecom" {
+		loops = append(loops, s.wecomLoop)
+	} else if s.cfg.DingTalk.Enabled {
 		loops = append(loops, s.dingTalkLoop)
 	}
 	for _, f := range loops {
@@ -259,7 +263,7 @@ func (s *Service) logErr(op string, e error) {
 func (s *Service) redact(v string) string {
 	v = dingTalkSecretField.ReplaceAllString(v, `${1}[redacted]"`)
 	v = dingTalkSecretURL.ReplaceAllString(v, "[dingtalk-webhook-redacted]")
-	for _, secret := range []string{s.token, s.cfg.Model.APIKey, s.cfg.DingTalk.ClientSecret} {
+	for _, secret := range []string{s.token, s.cfg.Model.APIKey, s.cfg.DingTalk.ClientSecret, s.cfg.WeCom.Secret} {
 		if secret != "" {
 			v = strings.ReplaceAll(v, secret, "[redacted]")
 		}

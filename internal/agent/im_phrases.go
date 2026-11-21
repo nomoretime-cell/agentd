@@ -2,8 +2,8 @@ package agent
 
 import "math/rand/v2"
 
-// Original, general-purpose acknowledgements for a newly claimed DingTalk message.
-var dingTalkProgressPhrases = [...]string{
+// Original, general-purpose acknowledgements for a newly claimed IM message.
+var imProgressPhrases = [...]string{
 	"稍等，我看看", "好的，我来看看", "收到，我看一下", "等我一下，我来看看", "好，我先看一眼",
 	"我来仔细看看", "稍等一下，我看着呢", "嗯，我先看看", "我来瞧瞧", "给我一点时间，我看看",
 	"我先理一理", "好，我来理一下", "收到，我先理理思路", "等我一下，我捋一捋", "我来梳理一下",
@@ -26,6 +26,6 @@ var dingTalkProgressPhrases = [...]string{
 	"我来看看这条消息", "好嘞，我看看", "行，给我一点时间看看", "好，我认真想想", "收到，让我仔细琢磨一下",
 }
 
-func randomDingTalkProgress() string {
-	return dingTalkProgressPhrases[rand.IntN(len(dingTalkProgressPhrases))]
+func randomIMProgress() string {
+	return imProgressPhrases[rand.IntN(len(imProgressPhrases))]
 }

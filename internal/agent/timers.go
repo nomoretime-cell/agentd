@@ -87,11 +87,12 @@ func (s *Service) fireTimers(ctx context.Context) error {
 			return e
 		}
 		for _, t := range list {
-			kind := "timer"
+			payload := Payload{Kind: "timer", Text: t.Prompt}
 			if t.ID == newsTimerID {
-				kind = "ai_news"
+				payload.Kind = "ai_news"
+				payload.NewsTarget = s.newsScope()
 			}
-			_, _, e = insertEvent(ctx, tx, fmt.Sprintf("timer:%s:%d", t.ID, t.FireAt), Payload{Kind: kind, Text: t.Prompt}, now.UnixMilli())
+			_, _, e = insertEvent(ctx, tx, fmt.Sprintf("timer:%s:%d", t.ID, t.FireAt), payload, now.UnixMilli())
 			if e != nil {
 				return e
 			}

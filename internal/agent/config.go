@@ -19,6 +19,10 @@ type NewsFeed struct {
 }
 
 type Config struct {
+	IM struct {
+		Provider string `yaml:"provider"`
+	} `yaml:"im"`
+	WeCom              WeComConfig          `yaml:"wecom"`
 	NewsFeeds          []NewsFeed           `yaml:"news_feeds"`
 	OpenCodeBinary     string               `yaml:"opencode_binary"`
 	DingTalk           DingTalkConfig       `yaml:"dingtalk"`
@@ -71,7 +75,7 @@ type Operation struct {
 }
 
 func DefaultConfig() Config {
-	return Config{NewsFeeds: []NewsFeed{
+	return Config{WeCom: WeComConfig{ProgressMessages: true}, NewsFeeds: []NewsFeed{
 		{"量子位", "https://www.qbitai.com/feed", "zh"},
 		{"TechCrunch AI", "https://techcrunch.com/category/artificial-intelligence/feed/", "en"},
 		{"Google AI", "https://blog.google/innovation-and-ai/technology/ai/rss/", "en"},
@@ -99,8 +103,17 @@ func (c Config) Validate() error {
 		}
 		names[feed.Name] = true
 	}
-	if err := c.DingTalk.validate(); err != nil {
-		return err
+	switch c.provider() {
+	case "dingtalk":
+		if err := c.DingTalk.validate(); err != nil {
+			return err
+		}
+	case "wecom":
+		if err := c.WeCom.validate(); err != nil {
+			return err
+		}
+	default:
+		return errors.New("im.provider must be dingtalk or wecom")
 	}
 	host, _, err := net.SplitHostPort(c.Listen)
 	if err != nil {

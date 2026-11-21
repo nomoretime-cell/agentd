@@ -135,7 +135,7 @@ func (s *Service) newsTest(ctx context.Context, ev Event) (Outcome, error) {
 	}
 	header := "【新闻推送测试】" + feed.Name + "\n"
 	footer := "\n" + latest.Date.Format("2006-01-02") + " · " + latest.Link
-	budget := min(dingTalkTextLimit, s.cfg.Limits.MaxOutputBytes) - len(header) - len(footer)
+	budget := min(imTextLimit, s.cfg.Limits.MaxOutputBytes) - len(header) - len(footer)
 	if budget < len("…") {
 		return out, fmt.Errorf("news sample link exceeds message limit")
 	}
@@ -205,7 +205,7 @@ func (s *Service) newsDigest(ctx context.Context, ev Event, items []newsItem) (O
 		// the initial polls had no articles or the model was offline.
 		var firstKey string
 		if err := s.read.QueryRowContext(ctx, `SELECT COALESCE((SELECT dedup_key FROM inbox
-			WHERE dedup_key GLOB 'timer:ai-news-private:*' ORDER BY id LIMIT 1),'')`).Scan(&firstKey); err != nil {
+			WHERE dedup_key GLOB 'timer:ai-news-private:*' AND COALESCE(json_extract(payload,'$.news_target'),'')=? ORDER BY id LIMIT 1),'')`, s.newsScope()).Scan(&firstKey); err != nil {
 			return out, err
 		}
 		if _, due, ok := strings.Cut(firstKey, "timer:"+newsTimerID+":"); ok {
@@ -234,7 +234,7 @@ func (s *Service) newsDigest(ctx context.Context, ev Event, items []newsItem) (O
 	var b strings.Builder
 	loc, _ := time.LoadLocation(s.cfg.Timezone)
 	header := fmt.Sprintf("AI 资讯 · %s\n", time.Now().In(loc).Format("01-02 15:04"))
-	limit := min(dingTalkTextLimit, s.cfg.Limits.MaxOutputBytes)
+	limit := min(imTextLimit, s.cfg.Limits.MaxOutputBytes)
 	flush := func() {
 		if b.Len() == 0 {
 			return
@@ -333,8 +333,23 @@ func (s *Service) translateHeadlines(ctx context.Context, items []newsItem) erro
 	return nil
 }
 
-func (s *Service) newsTarget() string { return "dingtalk-owner:" + s.cfg.DingTalk.AllowedSender }
+// Legacy DingTalk timer and test events have no news_target in their payload.
+func (s *Service) newsScope() string {
+	if s.cfg.provider() == "wecom" {
+		return s.newsTarget()
+	}
+	return ""
+}
+func (s *Service) newsTarget() string {
+	if s.cfg.provider() == "wecom" {
+		return "wecom-owner:" + stableID(s.cfg.WeCom.BotID) + ":" + s.cfg.WeCom.Owner
+	}
+	return "dingtalk-owner:" + s.cfg.DingTalk.AllowedSender
+}
 func (s *Service) canSendNews() bool {
+	if s.cfg.provider() == "wecom" {
+		return !s.cfg.WeCom.DiscoveryOnly && s.cfg.WeCom.Owner != "" && s.cfg.Permissions["send_message"] == "allow"
+	}
 	return s.cfg.DingTalk.Enabled && !s.cfg.DingTalk.DiscoveryOnly && s.cfg.DingTalk.AllowedSender != "" && s.cfg.Permissions["send_message"] == "allow"
 }
 
