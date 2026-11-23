@@ -14,6 +14,7 @@ make build
 - 模型：`http://localhost:8080/v1/chat/completions`，模型名称见 `config.yaml`。
 - API 密钥：首次启动生成 `data/api-token`，除健康检查外均需 Bearer Token。
 - 默认投递：保存到 `data/deliveries/`；普通通知遵循配置中的夜间静默时段。
+- 运行状态：目前位于仓库下的 `data/` 和 `workspace/`（`-root .`）。计划迁入仓库下的 `.agentd/`，迁移前本文命令中的路径保持不变，见[运行状态目录与路径约定](docs/storage-layout.md)。
 - Go 工具链、依赖、构建缓存和测试数据均保存在项目 `.tools/`、`.cache/` 中。
 
 ```sh
@@ -56,6 +57,7 @@ curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
 - [运行、API、权限与故障恢复](docs/implementation-codex.md)
 - [第一阶段架构基线（已实现）](docs/stage-1-architecture-baseline.md)
 - [第二阶段：记忆模块设计（部分实现）](docs/stage-2-memory-design.md)
+- [运行状态目录与路径约定（目标布局，迁移未实施）](docs/storage-layout.md)
 - [早期设计草稿（已归档）](docs/archive/README.md)
 - [原始文章架构解析](docs/README.md)
 
