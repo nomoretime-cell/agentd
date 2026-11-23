@@ -1,4 +1,11 @@
-# agentd 五大原语最简系统设计（Minimal Complete Edition）
+# agentd 第一阶段架构基线：五大原语最简系统设计
+
+> **文档状态：第一阶段设计基线（已实现，2026-11）。** 本文定义第一阶段的架构边界：1 个进程、1 个业务包、5 个组件、4 张表、6 个工具。后续阶段在此基础上演进，原文保留不改，变更记录在后续阶段文档中。
+>
+> - **后续阶段**：[第二阶段：记忆模块设计（草案）](stage-2-memory-design.md)。它将取代本文中 Memory 组件的部分：§1 表格中的 Memory 行、§3 中的 `workspace/` 目录与 `session.jsonl`，以及 §4.2 第 4 条。
+> - **实现后的偏差**：第一阶段完成后新增了钉钉和企微 IM 渠道、新闻推送、OpenCode 执行器（`im.go`、`dingtalk.go`、`wecom.go`、`news.go`、`opencode.go` 等），本文没有覆盖。这些新增中，有一部分把具体渠道和业务的判断写进了 Inbox、Outbox 和执行循环，偏离了本文"渠道只是 Outbox 的投递目标"的边界，待后续阶段修正。
+
+**原标题**：agentd 五大原语最简系统设计（Minimal Complete Edition）
 
 > **设计目标**：完整保留 **Event Inbox、Timers、Memory、Permissions、Outbox** 五大核心原语（具备独立周期任务、可写记忆、按需静默/通知、非阻塞审批与外部写防重），同时将单机实现的包结构、表数量和字段数保持在精简可维护的水平。
 > **系统规模**：**1 个 Go 进程 · 1 个业务包 `internal/agent` · 4 张表（共 26 个字段）· 6 个基础工具**。

@@ -42,7 +42,9 @@ make dingtalk-live
 
 - [钉钉接入、验证结果与真实会话联调](docs/dingtalk-validation-codex.md)
 - [运行、API、权限与故障恢复](docs/implementation-codex.md)
-- [本次实现依据的最简设计](docs/system-architecture-minimal-gemini-latest.md)
+- [第一阶段架构基线（已实现）](docs/stage-1-architecture-baseline.md)
+- [第二阶段：记忆模块设计（草案）](docs/stage-2-memory-design.md)
+- [早期设计草稿（已归档）](docs/archive/README.md)
 - [原始文章架构解析](docs/README.md)
 
 默认禁止任意 shell；外部写操作通过配置好的命名 HTTP 操作执行，支持人工审批和结果未知保护。完整实现范围、沙箱平台限制及设计取舍见运行文档。

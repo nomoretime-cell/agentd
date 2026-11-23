@@ -1,6 +1,6 @@
 # agentd Go 实现与运行说明
 
-实现依据：[五组件最简设计](system-architecture-minimal-gemini-latest.md)。核心代码位于一个 `internal/agent` 包，数据库为四张表、26 个业务字段。运行平台是 macOS / Linux；没有 Redis、外部数据库或容器依赖。模型通过 OpenAI 兼容的 Chat Completions API 连接。
+实现依据：[第一阶段架构基线](stage-1-architecture-baseline.md)。核心代码位于一个 `internal/agent` 包，数据库为四张表、26 个业务字段。运行平台是 macOS / Linux；没有 Redis、外部数据库或容器依赖。模型通过 OpenAI 兼容的 Chat Completions API 连接。
 
 **启动与本地依赖**
 
