@@ -68,7 +68,7 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 			return nil, errors.New("OpenCode requires a model endpoint ending in /chat/completions")
 		}
 	}
-	for _, name := range []string{"data", "data/deliveries", "data/outputs", "data/sessions", "data/memory", "data/gate", "data/knowledge/raw", "data/knowledge/tmp", "workspace", "workspace/notes", "workspace/skills-drafts", "workspace/knowledge/md", "workspace/skills", "workspace/scratch"} {
+	for _, name := range []string{"data", "data/deliveries", "data/outputs", "data/sessions", "data/memory", "data/gate", "data/knowledge/raw", "data/knowledge/tmp", "workspace", "workspace/knowledge/md", "workspace/skills", "workspace/scratch"} {
 		path := filepath.Join(root, name)
 		if err = os.MkdirAll(path, 0700); err != nil {
 			return nil, err
@@ -90,11 +90,11 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 		return nil, errors.New("another agentd instance owns this data directory")
 	}
 	s = &Service{cfg: cfg, root: root, lock: lock, model: model, wake: make(chan struct{}, 1), log: slog.Default(), client: &http.Client{Timeout: time.Duration(cfg.Limits.ToolSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
-	defer func() {
+	defer func(opened *Service) {
 		if err != nil {
-			s.Close()
+			opened.Close()
 		}
-	}()
+	}(s)
 	s.im = newIMChannel(s)
 	s.convert = s.runConverter
 	s.life, s.endLife = context.WithCancel(context.Background())
@@ -123,6 +123,18 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 	// mistake its half-moved workspace for a new one.
 	if err = s.finishPromotion(); err != nil {
 		return nil, err
+	}
+	// Promotion moves these directories as units. Recreate them only after
+	// recovery, otherwise an empty destination can hide a pending rename.
+	for _, tree := range memoryTrees {
+		dir := filepath.Join(root, "workspace", tree)
+		if err = os.MkdirAll(dir, 0700); err != nil {
+			return nil, err
+		}
+		info, e := os.Lstat(dir)
+		if e != nil || !info.IsDir() {
+			return nil, fmt.Errorf("invalid managed memory directory %s", tree)
+		}
 	}
 	// Templates are copied once and then belong to the operator and the model.
 	for _, name := range []string{"MEMORY.md", "IDENTITY.md"} {

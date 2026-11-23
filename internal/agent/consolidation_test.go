@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -251,6 +252,50 @@ func TestConsolidationArchivesRetiredNotes(t *testing.T) {
 	}
 }
 
+func TestHeldRetirements(t *testing.T) {
+	for _, edit := range []bool{false, true} {
+		t.Run("changed="+strconv.FormatBool(edit), func(t *testing.T) {
+			retire := func(path string) func(*Service) Message {
+				return func(s *Service) Message { return writeCall(path, "retired: merged", hashOf(t, s, path)) }
+			}
+			s, _ := consolidationService(t, retire("notes/a"), retire("notes/b"))
+			for _, n := range []string{"a", "b", "c", "d", "e"} {
+				if err := s.workspaceWrite("notes/"+n, "original "+n, "absent"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := consolidate(s); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.prepareCandidate(); !errors.Is(err, ErrConflict) {
+				t.Fatalf("second candidate while held: %v", err)
+			}
+			if edit {
+				if err := s.workspaceWrite("notes/new", "keep", "absent"); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.MemoryControl("promote"); !errors.Is(err, ErrConflict) || current(t, s, "notes/new") != "keep" {
+					t.Fatalf("stale promotion: %v", err)
+				}
+				return
+			}
+			if err := s.MemoryControl("promote"); err != nil {
+				t.Fatal(err)
+			}
+			for _, n := range []string{"a", "b"} {
+				paths, err := filepath.Glob(filepath.Join(s.root, "workspace", archivePrefix, n+".*"))
+				if err != nil || len(paths) != 1 {
+					t.Fatalf("archive for %s: %v, %v", n, paths, err)
+				}
+				b, err := os.ReadFile(paths[0])
+				if err != nil || string(b) != "original "+n {
+					t.Fatalf("lost archived note %s", n)
+				}
+			}
+		})
+	}
+}
+
 // A run stopped by its step limit is still checked; what it finished counts.
 func TestConsolidationPromotesPartialRun(t *testing.T) {
 	day := todaySessions()
@@ -272,6 +317,12 @@ func TestConsolidationPromotesPartialRun(t *testing.T) {
 // A crash part way through promotion is completed at the next start, before
 // templates could fill the half-moved workspace.
 func TestPromotionCompletesAfterCrash(t *testing.T) {
+	for moves := 1; moves <= 6; moves++ {
+		t.Run(strconv.Itoa(moves), func(t *testing.T) { checkInterruptedPromotion(t, moves) })
+	}
+}
+
+func checkInterruptedPromotion(t *testing.T, moves int) {
 	root := t.TempDir()
 	s, err := Open(root, testConfig(), finalModel())
 	if err != nil {
@@ -281,7 +332,7 @@ func TestPromotionCompletesAfterCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	cand := filepath.Join(root, candidateDir)
-	if err = writeMemory(cand, map[string]string{"MEMORY.md": "NEW INDEX\n", "notes/a.md": "new"}); err != nil {
+	if err = writeMemory(cand, map[string]string{"MEMORY.md": "NEW INDEX\n", "notes/a.md": "new", "skills-drafts/test.md": "draft"}); err != nil {
 		t.Fatal(err)
 	}
 	version := filepath.Join(versionsDir, "20260101T000000.000000000Z")
@@ -289,19 +340,27 @@ func TestPromotionCompletesAfterCrash(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(root, promotingMarker), b, 0600); err != nil {
 		t.Fatal(err)
 	}
-	// Crash after the first move: the current index is already in the version.
+	// Reopen after each possible prefix of the six filesystem renames.
 	if err = os.MkdirAll(filepath.Join(root, version), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.Rename(filepath.Join(root, "workspace/MEMORY.md"), filepath.Join(root, version, "MEMORY.md")); err != nil {
-		t.Fatal(err)
+	names := []string{"MEMORY.md", "notes", "skills-drafts"}
+	for i := 0; i < moves; i++ {
+		from, to := filepath.Join(root, "workspace"), filepath.Join(root, version)
+		if i >= len(names) {
+			from, to = cand, filepath.Join(root, "workspace")
+		}
+		name := names[i%len(names)]
+		if err = os.Rename(filepath.Join(from, name), filepath.Join(to, name)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	s, err = Open(root, testConfig(), finalModel())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if current(t, s, "MEMORY.md") != "NEW INDEX\n" || current(t, s, "notes/a.md") != "new" {
+	if current(t, s, "MEMORY.md") != "NEW INDEX\n" || current(t, s, "notes/a.md") != "new" || current(t, s, "skills-drafts/test.md") != "draft" {
 		t.Fatal("promotion not completed")
 	}
 	if fileExists(filepath.Join(root, promotingMarker)) || !fileExists(filepath.Join(root, version, "notes")) {
@@ -376,9 +435,17 @@ func TestConsolidationEndToEnd(t *testing.T) {
 	rec = map[string]any{"type": "run", "inputs": []map[string]any{{"text": "群里的秘密计划不要外传"}}}
 	runScope{Role: defaultRole, Principal: "group-1", Conversation: "g"}.stamp(rec)
 	s.appendTranscript(rec)
+	if err := s.saveSession([]Message{{Role: "user", Content: "ordinary question"}}); err != nil {
+		t.Fatal(err)
+	}
 	s.Start(context.Background())
 	fireConsolidation(t, s)
 	waitFor(t, 5*time.Second, func() bool { return count(t, s, "SELECT count(*) FROM inbox WHERE status='done'") == 1 })
+	s.cancel()
+	s.wg.Wait()
+	if got := s.loadSession(); len(got) != 1 || got[0].Content != "ordinary question" {
+		t.Fatal("maintenance changed ordinary chat history")
+	}
 	if current(t, s, "notes/style.md") != note {
 		t.Fatalf("memory not promoted; metrics: %v", lastMetric(t, s))
 	}

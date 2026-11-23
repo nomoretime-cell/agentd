@@ -118,6 +118,9 @@ func writeMemory(dir string, files map[string]string) error {
 func (s *Service) prepareCandidate() error {
 	s.memoryMu.Lock()
 	defer s.memoryMu.Unlock()
+	if fileExists(filepath.Join(s.root, heldDir)) || fileExists(filepath.Join(s.root, promotingMarker)) {
+		return fmt.Errorf("%w: previous memory promotion is pending", ErrConflict)
+	}
 	dir := filepath.Join(s.root, candidateDir)
 	if e := os.RemoveAll(dir); e != nil {
 		return e
@@ -126,7 +129,16 @@ func (s *Service) prepareCandidate() error {
 	if e != nil {
 		return e
 	}
-	return writeMemory(dir, cur)
+	if e = writeMemory(dir, cur); e != nil {
+		return e
+	}
+	return atomicWrite(filepath.Join(dir, "base.sha256"), []byte(memoryDigest(cur)), 0600)
+}
+
+func memoryDigest(files map[string]string) string {
+	// JSON orders map keys and delimits both paths and their contents.
+	b, _ := json.Marshal(files)
+	return digest(b)
 }
 
 // review is the host's verdict on a candidate.
@@ -409,7 +421,14 @@ func (s *Service) finishConsolidation(ev Event, out Outcome, runErr error) (Outc
 		metric["result"] = "unchanged"
 		s.recordConsolidation(metric)
 		return out, s.setAside("")
-	case r.Hold != "":
+	}
+	for _, p := range r.Retired {
+		cand[archivePrefix+strings.TrimPrefix(p, "notes/")+"."+time.Now().UTC().Format("20060102T150405.000000000Z")] = cur[p]
+	}
+	if e = writeMemory(filepath.Join(s.root, candidateDir), cand); e != nil {
+		return out, e
+	}
+	if r.Hold != "" {
 		metric["result"], metric["hold"] = "held", r.Hold
 		s.recordConsolidation(metric)
 		if e = s.setAside(heldDir); e != nil {
@@ -418,13 +437,7 @@ func (s *Service) finishConsolidation(ev Event, out Outcome, runErr error) (Outc
 		out.Notifications = append(out.Notifications, Notification{Key: fmt.Sprintf("memory-held:%d", ev.ID), Target: s.cfg.DefaultTarget, Content: "Memory consolidation is held for review: it " + r.Hold + ". Promote it with POST /v1/memory/promote or drop it with POST /v1/memory/discard.", DeliverAt: time.Now().UnixMilli()})
 		return out, nil
 	}
-	for _, p := range r.Retired {
-		cand[archivePrefix+strings.TrimPrefix(p, "notes/")+"."+time.Now().UTC().Format("20060102T150405Z")] = cur[p]
-	}
-	if e = writeMemory(filepath.Join(s.root, candidateDir), cand); e != nil {
-		return out, e
-	}
-	if e = s.promote(candidateDir); e != nil {
+	if e = s.promoteCandidate(); e != nil {
 		return out, e
 	}
 	metric["result"] = "promoted"
@@ -474,12 +487,32 @@ type promotion struct {
 	Version string `json:"version"`
 }
 
-// promote makes src the current memory and keeps the replaced memory as a new
-// version. A marker records the move, so a crash part way is completed by
-// finishPromotion at the next start.
-func (s *Service) promote(src string) error {
+func (s *Service) promoteCandidate() error {
 	s.memoryMu.Lock()
 	defer s.memoryMu.Unlock()
+	return s.promoteLocked(candidateDir)
+}
+
+func (s *Service) promoteLocked(src string) error {
+	if fileExists(filepath.Join(s.root, promotingMarker)) {
+		return fmt.Errorf("%w: unfinished memory promotion", ErrConflict)
+	}
+	if src == candidateDir || src == heldDir {
+		base, err := os.ReadFile(filepath.Join(s.root, src, "base.sha256"))
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: missing candidate baseline; discard and regenerate", ErrConflict)
+		}
+		if err != nil {
+			return err
+		}
+		cur, err := readMemory(filepath.Join(s.root, "workspace"))
+		if err != nil {
+			return err
+		}
+		if memoryDigest(cur) != string(base) {
+			return fmt.Errorf("%w: memory changed since consolidation; discard and regenerate", ErrConflict)
+		}
+	}
 	p := promotion{Source: src, Version: path.Join(versionsDir, time.Now().UTC().Format("20060102T150405.000000000Z"))}
 	b, _ := json.Marshal(p)
 	if e := atomicWrite(filepath.Join(s.root, promotingMarker), b, 0600); e != nil {
@@ -564,6 +597,8 @@ func (s *Service) pruneVersions() error {
 // discard a held candidate, or roll memory back to the previous version.
 // Each change keeps the memory it replaces as a version, so it can be undone.
 func (s *Service) MemoryControl(op string) error {
+	s.memoryMu.Lock()
+	defer s.memoryMu.Unlock()
 	if s.consolidating.Load() {
 		return fmt.Errorf("%w: a consolidation is running", ErrConflict)
 	}
@@ -572,7 +607,7 @@ func (s *Service) MemoryControl(op string) error {
 		if !fileExists(filepath.Join(s.root, heldDir)) {
 			return fmt.Errorf("%w: no held consolidation", ErrConflict)
 		}
-		return s.promote(heldDir)
+		return s.promoteLocked(heldDir)
 	case "discard":
 		return os.RemoveAll(filepath.Join(s.root, heldDir))
 	case "rollback":
@@ -583,7 +618,7 @@ func (s *Service) MemoryControl(op string) error {
 		if len(names) == 0 {
 			return fmt.Errorf("%w: no earlier version", ErrConflict)
 		}
-		return s.promote(path.Join(versionsDir, names[len(names)-1]))
+		return s.promoteLocked(path.Join(versionsDir, names[len(names)-1]))
 	}
 	return errors.New("operation must be promote, discard or rollback")
 }

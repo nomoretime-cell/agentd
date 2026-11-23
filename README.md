@@ -51,7 +51,7 @@ make dingtalk-live
   - **先改候选，检查通过才生效**（[设计](docs/design/02-stage-2-memory.md#整理的安全机制)）：整理只改 `data/memory/candidate/` 里的副本。宿主检查每条新增或改动的笔记都带有逐字出自运行记录的原话（`evidence`），没有删除笔记或历史，索引不超限。通过后替换当前记忆，旧版本保留在 `data/memory/versions/`。检查失败则本次作废；改动过大则等待确认。
   - **沉淀做法**：整理发现被纠正过的做法、反复出现的任务或验证有效的流程时，起草 skill 到 `skills-drafts/<name>/`；"以后总是/不要"类规则写成 `skills-drafts/identity/PROPOSAL.md`。草稿在批准前不会被任何普通运行看到。用 `GET /v1/drafts` 查看，`POST /v1/drafts/{name}/approve` 批准（skill 进入每次运行的 skill 目录，规则追加到 IDENTITY.md），或 `POST /v1/drafts/{name}/reject -d '{"reason":"..."}'` 驳回。
   - **启用**：配置并开启 `strong_model` 后，用下面的命令建定时器（每天 3:30）。建议启用后头一周每天看一眼 `data/memory/consolidation.jsonl`：`rejected` 多说明模型没按格式写证据，`held` 多说明一次改得太多。
-  - 处理结果：`POST /v1/memory/promote`（采用待确认的整理）、`/discard`（丢弃）、`/rollback`（回到上一版本，可再次回滚撤销）。`GET /v1/status` 的 `memory` 显示是否有待确认的整理和版本数；每次整理的结果记在 `data/memory/consolidation.jsonl`。把定时器的 `active` 改为 `false` 即可停用。
+  - 处理结果：`POST /v1/memory/promote`（采用待确认的整理；若期间修改了记忆或旧候选缺少基线，会返回 409，可丢弃后重新整理）、`/discard`（丢弃）、`/rollback`（回到上一版本，可再次回滚撤销）。`GET /v1/status` 的 `memory` 显示是否有待确认的整理和版本数；每次整理的结果记在 `data/memory/consolidation.jsonl`。把定时器的 `active` 改为 `false` 即可停用。
 
 ```sh
 curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \

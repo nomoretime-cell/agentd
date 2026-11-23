@@ -23,6 +23,7 @@
     │   ├── deliveries/  outputs/  opencode/
     │   ├── memory/                      # 整理的候选、待确认、被拒版本与历史版本，模型不可见
     │   │   ├── candidate/  held/  rejected/  versions/<时间戳>/
+    │   │   │   # candidate / held 内的 base.sha256 记录生成候选时的记忆快照摘要
     │   │   └── promoting.json  consolidation.jsonl   # 提升进行中的标记；每次整理一行指标
     │   ├── gate/                        # 闸门：decisions.jsonl 决定记录；versions/ 被替换的 skill 与 IDENTITY.md
     │   ├── knowledge/                   # 导入：raw/ 原文件、manifest.json 清单、imports.jsonl 导入记录、tmp/ 转换工作区

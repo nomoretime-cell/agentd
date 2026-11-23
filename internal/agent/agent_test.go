@@ -254,7 +254,7 @@ func TestApprovalEndToEndAndReplay(t *testing.T) {
 	defer remote.Close()
 	c := testConfig()
 	c.Actions["ticket"] = Operation{Mode: "ask", URL: remote.URL, Method: "POST", BearerToken: "test-secret"}
-	s := openTest(t, c, notifyModel())
+	s := openTest(t, c, finalModel())
 	server := httptest.NewServer(s.Handler())
 	defer server.Close()
 	s.Start(context.Background())
@@ -275,6 +275,9 @@ func TestApprovalEndToEndAndReplay(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("remote action executed %d times", calls.Load())
+	}
+	if count(t, s, "SELECT count(*) FROM outbox WHERE dedup_key=? AND target=? AND content LIKE ?", "action-result:"+id, c.DefaultTarget, "%ticket-1%") != 1 {
+		t.Fatal("missing local approval receipt after silent model completion")
 	}
 	if strings.Contains(a.Args, "test-secret") {
 		t.Fatal("credential in action ledger")

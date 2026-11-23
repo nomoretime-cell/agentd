@@ -11,7 +11,7 @@
 | 五原语（Inbox、Timers、Memory、Permissions、Outbox） | ✅ 已实现 | [第一阶段基线](01-stage-1-architecture.md) |
 | 原始运行记录 `data/sessions/` | ✅ 已实现 | 每次运行自动记录 |
 | 在线写记忆（"边做边记"） | ✅ 已实现 | 模型在普通运行中写 `MEMORY.md`、`notes/`，代码只限上限 |
-| 整理（"事后复盘"） | ✅ 已实现，待实际运行验证 | 配置 `strong_model` 后建定时器启用；只用 strong 档、只读 owner/local 记录；候选 → 检查 → 提升，可回滚 |
+| 整理（"事后复盘"） | ✅ 已实现，待实际运行验证 | 配置 `strong_model` 后建定时器启用；只用 strong 档、只读 owner/local 记录；提升前核对候选基线，可回滚；已测试逐步中断恢复与待审期间并发修改 |
 | 生成 skill（"沉淀做法"） | ✅ 已实现 | 整理起草到 `skills-drafts/`，所有者经 `/v1/drafts` 批准或驳回；规则提议批准后进 IDENTITY.md |
 | knowledge 导入与检索 | ✅ 已实现 | `/v1/knowledge/import` 导入文件或目录，索引进入每次运行，`search` 覆盖 |
 | 多角色、付费等级 | ❌ 未设计 | 只有目录约定，见 [路径约定](90-convention-storage-layout.md) |

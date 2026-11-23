@@ -52,7 +52,7 @@ JSON 请求必须包含 Content-Type: application/json，并携带认证。未�
 | GET /v1/drafts | 等待审核的 skill 草稿与规则提议，含批准时会遇到的问题 |
 | POST /v1/drafts/{name}/approve | 批准：skill 安装到 `workspace/skills/<name>/`（旧版本留在 `data/gate/versions/`）；`identity` 草稿追加到 IDENTITY.md |
 | POST /v1/drafts/{name}/reject | `{reason}` 必填；草稿与理由移到 `skills-drafts/.rejected/`，供下次整理参考 |
-| POST /v1/memory/{op} | 记忆整理结果：`promote` 提升待确认的候选，`discard` 丢弃它，`rollback` 回到上一版本（当前版本留作版本，可再次回滚撤销）。整理运行中返回 409 |
+| POST /v1/memory/{op} | 记忆整理结果：`promote` 提升待确认的候选，`discard` 丢弃它，`rollback` 回到上一版本（当前版本留作版本，可再次回滚撤销）。整理运行中、候选缺少基线或当前记忆已变化时返回 409。过期候选需 discard 后重新整理 |
 | POST /v1/events/{id}/resolve | `{operation:"retry" / "skip"}`：重试 dead 或显式跳过 dead/pending |
 | POST /v1/action-requests | `{key,name,arguments,text}`：提交已配置的命名外部动作 |
 | POST /v1/actions/{id}/decision | `{decision:"approve" / "reject"}` |
@@ -104,7 +104,7 @@ actions:
 
 **动作、审批和故障恢复**
 
-allow 外部写与 ask 获批写都先登记 actions，再将 approved 原子改为 executing，随后才发起远端请求；成功回填 succeeded/result。执行意图键绑定原事件和命名操作，不绑定可能被模型重排的工具序号；同一原事件内每种命名写操作只接受一组冻结参数，重复相同调用复用回执，改变参数则拒绝继续。如需用同一操作执行多个不同写入，应提交独立事件。审批恢复中的相同操作仍复用原动作键。相同未核对的写意图也不能通过新事件绕过 unknown。
+allow 外部写与 ask 获批写都先登记 actions，再将 approved 原子改为 executing，随后才发起远端请求；成功回填 succeeded/result。执行意图键绑定原事件和命名操作，不绑定可能被模型重排的工具序号；同一原事件内每种命名写操作只接受一组冻结参数，重复相同调用复用回执，改变参数则拒绝继续。如需用同一操作执行多个不同写入，应提交独立事件。审批恢复中的相同操作仍复用原动作键。本地默认投递目标允许通知时，若模型在恢复后直接结束，宿主会向本地 Outbox 写入带动作 ID 去重的执行回执。相同未核对的写意图也不能通过新事件绕过 unknown。
 
 ask 将 pending_approval、审批通知和输入完成在一个事务中提交，结束本轮。批准/拒绝接口校验现状态与到期时间并生成稳定事件。批准后校验当前配置、冻结目的地址和有效期，执行一次，再让模型根据事实继续。拒绝与过期同样生成恢复事件。自动 allow 动作也给出未来有效期；没有采用设计中“expires_at=当前时间”的字面写法，否则统一的到期校验会立即拒绝它。
 

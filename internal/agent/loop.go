@@ -112,6 +112,19 @@ func (s *Service) execute(ctx context.Context, batch []Event) (out Outcome, err 
 				return out, e
 			}
 			ctx = context.WithValue(ctx, resumedActionKey{}, a)
+			// A local approval has a host receipt even when the model finishes
+			// silently. Stage it with the outcome, once, at commit time.
+			if target == "" && s.cfg.Targets[s.cfg.DefaultTarget].Kind == "local" && s.cfg.Permissions["send_message"] == "allow" {
+				defer func() {
+					if err == nil && out.Approval == nil && len(out.Notifications) == 0 {
+						content := s.redact(fmt.Sprintf("Action %s: %s\n%s", a.Name, a.Status, a.Result))
+						if len(content) > s.cfg.Limits.MaxOutputBytes {
+							content = strings.ToValidUTF8(content[:s.cfg.Limits.MaxOutputBytes], "")
+						}
+						out.Notifications = append(out.Notifications, Notification{Key: "action-result:" + a.ID, Target: s.cfg.DefaultTarget, Content: content})
+					}
+				}()
+			}
 			fmt.Fprintf(&input, "Action %s is %s. Host receipt: %s\nResume the original request below. The receipt describes the action only. Complete the steps appropriate to this status. If a notification was requested, call send_message with the actual outcome before finishing. Do not repeat the action.\nOriginal context: %s\n", a.ID, a.Status, a.Result, a.Hint)
 		}
 		if ev.Payload.Kind == "action_request" {
@@ -216,10 +229,16 @@ var (
 	errMaxSteps      = errors.New("maximum model steps reached")
 )
 
-// draftAccess keeps drafts out of every run but critical ones: a draft must
-// not shape behavior before a person approves it.
-func draftAccess(ctx context.Context, p string) error {
-	if strings.HasPrefix(path.Clean(p), draftsPrefix) && !isCritical(ctx) {
+// Maintenance only sees memory and its reference material. Drafts remain private to maintenance.
+func fileAccess(ctx context.Context, p string) error {
+	p = path.Clean(p)
+	if isCritical(ctx) {
+		if isMemoryPath(p) || p == "IDENTITY.md" || strings.HasPrefix(p, "skills/") || strings.HasPrefix(p, "knowledge/") {
+			return nil
+		}
+		return ErrDenied
+	}
+	if strings.HasPrefix(p, draftsPrefix) {
 		return ErrDenied
 	}
 	return nil
@@ -339,7 +358,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 			res, e := s.readPage(map[string]any{"path": s.redact(a.Path), "size": size}, []byte(s.maskedFile(string(page))), a.Offset, int(size))
 			return res, nil, e
 		}
-		if e := draftAccess(ctx, a.Path); e != nil {
+		if e := fileAccess(ctx, a.Path); e != nil {
 			return "", nil, e
 		}
 		b, e := s.workspaceReadIn(s.memoryHome(ctx), a.Path)
@@ -375,7 +394,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if e := decodeArgs(call.Function.Arguments, &a); e != nil {
 			return "", nil, e
 		}
-		if e := draftAccess(ctx, a.Path); e != nil {
+		if e := fileAccess(ctx, a.Path); e != nil {
 			return "", nil, e
 		}
 		e := s.workspaceWriteIn(s.memoryHome(ctx), a.Path, a.Content, a.Expected)
@@ -390,7 +409,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if e := decodeArgs(call.Function.Arguments, &a); e != nil {
 			return "", nil, e
 		}
-		if e := draftAccess(ctx, a.Path); e != nil {
+		if e := fileAccess(ctx, a.Path); e != nil {
 			return "", nil, e
 		}
 		b, e := s.workspaceReadIn(s.memoryHome(ctx), a.Path)

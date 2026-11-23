@@ -210,7 +210,7 @@ func (s *Service) workerLoop(ctx context.Context) {
 			if err != nil {
 				// Do not run a second model turn against uncertain local commit state.
 				s.logErr("pause after commit failure", s.SetPaused(true))
-			} else if !aborted && runErr == nil && outcome.ReplyTarget == "" && len(outcome.Messages) > 0 {
+			} else if !aborted && runErr == nil && outcome.Scope == localScope && outcome.ReplyTarget == "" && len(outcome.Messages) > 0 {
 				s.logErr("session cache", s.saveSession(outcome.Messages))
 			}
 			continue
