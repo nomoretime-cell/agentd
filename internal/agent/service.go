@@ -60,7 +60,7 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 			return nil, errors.New("OpenCode requires a model endpoint ending in /chat/completions")
 		}
 	}
-	for _, name := range []string{"data", "data/deliveries", "data/outputs", "workspace", "workspace/notes", "workspace/skills", "workspace/scratch"} {
+	for _, name := range []string{"data", "data/deliveries", "data/outputs", "data/sessions", "workspace", "workspace/notes", "workspace/skills", "workspace/scratch"} {
 		path := filepath.Join(root, name)
 		if err = os.MkdirAll(path, 0700); err != nil {
 			return nil, err

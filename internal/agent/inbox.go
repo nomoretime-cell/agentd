@@ -184,6 +184,16 @@ func (s *Service) workerLoop(ctx context.Context) {
 			stop()
 			s.activeCancel = nil
 			s.mu.Unlock()
+			status := "done"
+			switch {
+			case aborted:
+				status = "aborted"
+			case runErr != nil:
+				status = "failed"
+			case err != nil:
+				status = "commit_failed"
+			}
+			s.recordRun(batch, outcome, status, runErr)
 			s.logErr("execute", runErr)
 			s.logErr("commit", err)
 			if err != nil {

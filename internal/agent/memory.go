@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 func (s *Service) workspaceRead(name string) ([]byte, error) {
@@ -26,6 +27,9 @@ func (s *Service) workspaceRead(name string) ([]byte, error) {
 	if strings.HasPrefix(name, "outputs/") {
 		dir = filepath.Join(s.root, "data/outputs")
 		name = strings.TrimPrefix(name, "outputs/")
+	} else if strings.HasPrefix(name, "sessions/") {
+		dir = filepath.Join(s.root, "data/sessions")
+		name = strings.TrimPrefix(name, "sessions/")
 	}
 	r, e := os.OpenRoot(dir)
 	if e != nil {
@@ -125,6 +129,84 @@ func (s *Service) workspaceWrite(name, content, expected string) error {
 	defer d.Close()
 	return d.Sync()
 }
+
+// The transcript is the raw, append-only record of every run: inputs, tool
+// calls, results and outcome. Only the host writes it; the model reads it as
+// sessions/<date>.jsonl. Consolidated memory can always be rebuilt from it.
+func (s *Service) appendTranscript(rec map[string]any) {
+	loc, err := time.LoadLocation(s.cfg.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
+	rec["ts"] = now.Format(time.RFC3339)
+	b, err := json.Marshal(rec)
+	if err != nil {
+		s.logErr("transcript", err)
+		return
+	}
+	s.memoryMu.Lock()
+	defer s.memoryMu.Unlock()
+	f, err := os.OpenFile(filepath.Join(s.root, "data/sessions", now.Format("2006-01-02")+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		s.logErr("transcript", err)
+		return
+	}
+	_, err = f.Write(append(b, '\n'))
+	s.logErr("transcript", errors.Join(err, f.Close()))
+}
+
+func (s *Service) recordTool(key string, call ToolCall, result string, pending *Action, err error) {
+	rec := map[string]any{"type": "tool", "key": key, "tool": call.Function.Name, "args": s.bounded(call.Function.Arguments)}
+	// File contents stay in their files; copying reads here would also make
+	// every reread of a transcript grow the next one.
+	if call.Function.Name != "read_file" {
+		rec["result"] = s.bounded(result)
+	}
+	if pending != nil {
+		rec["pending_action"] = pending.ID
+	}
+	if err != nil {
+		rec["error"] = s.bounded(err.Error())
+	}
+	s.appendTranscript(rec)
+}
+
+func (s *Service) recordRun(batch []Event, out Outcome, status string, runErr error) {
+	var inputs []map[string]any
+	for _, ev := range batch {
+		in := map[string]any{"event": ev.ID, "kind": ev.Payload.Kind}
+		if ev.Payload.Text != "" {
+			in["text"] = s.bounded(ev.Payload.Text)
+		}
+		if ev.Payload.Name != "" {
+			in["name"] = ev.Payload.Name
+		}
+		inputs = append(inputs, in)
+	}
+	rec := map[string]any{"type": "run", "status": status, "inputs": inputs}
+	if out.ReplyTarget != "" {
+		rec["reply_target"] = out.ReplyTarget
+	}
+	if n := len(out.Messages); n > 0 && out.Messages[n-1].Role == "assistant" {
+		rec["answer"] = s.bounded(out.Messages[n-1].Content)
+	}
+	var sent []map[string]string
+	for _, n := range out.Notifications {
+		sent = append(sent, map[string]string{"key": n.Key, "target": n.Target, "content": s.bounded(n.Content)})
+	}
+	if sent != nil {
+		rec["notifications"] = sent
+	}
+	if out.Approval != nil {
+		rec["pending_action"] = out.Approval.ID
+	}
+	if runErr != nil {
+		rec["error"] = s.bounded(runErr.Error())
+	}
+	s.appendTranscript(rec)
+}
+
 func (s *Service) loadSession() []Message {
 	s.memoryMu.Lock()
 	defer s.memoryMu.Unlock()

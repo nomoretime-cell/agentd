@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -148,7 +149,8 @@ func decodeArgs(raw string, v any) error {
 	}
 	return nil
 }
-func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint string, out *Outcome) (string, *Action, error) {
+func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint string, out *Outcome) (result string, pending *Action, err error) {
+	defer func() { s.recordTool(key, call, result, pending, err) }()
 	if s.restrictTeamTools(ctx) {
 		return "", nil, ErrDenied
 	}
@@ -168,6 +170,10 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		}
 		if e := decodeArgs(call.Function.Arguments, &a); e != nil {
 			return "", nil, e
+		}
+		// Transcripts hold the owner's private conversations.
+		if isTeamTurn(ctx) && strings.HasPrefix(path.Clean(a.Path), "sessions/") {
+			return "", nil, ErrDenied
 		}
 		b, e := s.workspaceRead(a.Path)
 		if e != nil {
