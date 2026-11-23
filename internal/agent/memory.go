@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -216,7 +217,56 @@ func (s *Service) transcriptRead(name string, offset int64, limit int) (page []b
 	return page, size, nil
 }
 
-func (s *Service) recordTool(key string, call ToolCall, result string, pending *Action, err error) {
+// runScope says whose run a transcript record belongs to. Principal and
+// conversation are host IDs derived with stableID, never platform IDs. Role is
+// "default" until roles exist.
+type runScope struct {
+	Role         string `json:"role"`
+	Principal    string `json:"principal"`
+	Conversation string `json:"conversation"`
+}
+type scopeKey struct{}
+
+const defaultRole = "default"
+
+var (
+	// localScope covers runs that no IM conversation started: API events,
+	// timers and their businesses.
+	localScope = runScope{Role: defaultRole, Principal: "local", Conversation: "local"}
+	// unknownScope marks a run whose origin could not be resolved. It is never
+	// treated as the owner's.
+	unknownScope = runScope{Role: defaultRole, Principal: "unknown", Conversation: "unknown"}
+)
+
+func scopeFrom(ctx context.Context) runScope {
+	if sc, ok := ctx.Value(scopeKey{}).(runScope); ok {
+		return sc
+	}
+	return unknownScope
+}
+
+// scopeFor resolves a run's scope from its first event, for records written
+// when the run ended before execute settled it.
+func (s *Service) scopeFor(ctx context.Context, ev Event) runScope {
+	target, err := s.replyTarget(ctx, ev)
+	if err != nil {
+		return unknownScope
+	}
+	if target == "" {
+		return localScope
+	}
+	route, err := s.imRoute(ctx, s.read, target)
+	if err != nil || route == nil {
+		return unknownScope
+	}
+	return s.imScope(route)
+}
+
+func (sc runScope) stamp(rec map[string]any) {
+	rec["role"], rec["principal"], rec["conversation"] = sc.Role, sc.Principal, sc.Conversation
+}
+
+func (s *Service) recordTool(ctx context.Context, key string, call ToolCall, result string, pending *Action, err error) {
 	if call.Function.Name == "read_file" {
 		var a struct{ Path string }
 		// Recording transcript reads would make each reread grow today's transcript.
@@ -225,6 +275,7 @@ func (s *Service) recordTool(key string, call ToolCall, result string, pending *
 		}
 	}
 	rec := map[string]any{"type": "tool", "key": key, "tool": call.Function.Name, "args": s.bounded(call.Function.Arguments)}
+	scopeFrom(ctx).stamp(rec)
 	// File contents stay in their files; copying reads here would also make
 	// every reread of a transcript grow the next one.
 	if call.Function.Name != "read_file" {
@@ -241,8 +292,9 @@ func (s *Service) recordTool(key string, call ToolCall, result string, pending *
 
 // recordExecutorTool records a tool that an external executor ran on its own,
 // with whatever the executor reported about it.
-func (s *Service) recordExecutorTool(executor string, eventID int64, tool, status, title string, input json.RawMessage, output, failure string) {
+func (s *Service) recordExecutorTool(ctx context.Context, executor string, eventID int64, tool, status, title string, input json.RawMessage, output, failure string) {
 	rec := map[string]any{"type": "tool", "executor": executor, "event": eventID, "tool": tool, "status": status}
+	scopeFrom(ctx).stamp(rec)
 	if title != "" {
 		rec["title"] = s.bounded(title)
 	}
@@ -282,6 +334,11 @@ func (s *Service) recordRun(batch []Event, out Outcome, status string, runErr er
 		inputs = append(inputs, in)
 	}
 	rec := map[string]any{"type": "run", "status": status, "inputs": inputs}
+	sc := out.Scope
+	if sc.Role == "" && len(batch) > 0 {
+		sc = s.scopeFor(context.Background(), batch[0])
+	}
+	sc.stamp(rec)
 	if out.ReplyTarget != "" {
 		rec["reply_target"] = out.ReplyTarget
 	}

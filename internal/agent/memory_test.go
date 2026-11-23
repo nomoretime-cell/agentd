@@ -371,3 +371,74 @@ func TestReadPagesSurviveRedaction(t *testing.T) {
 		t.Fatal("paged file mask differs at a read boundary")
 	}
 }
+
+// Every transcript record names its role, principal and conversation, so
+// records can later be filtered and moved by scope. Platform IDs never appear.
+func TestTranscriptRecordsCarryScope(t *testing.T) {
+	c := dtConfig()
+	c.DingTalk.AllowAllGroups = true
+	m := modelFunc(func(_ context.Context, msgs []Message, _ []Tool) (Message, error) {
+		if msgs[len(msgs)-1].Role == "tool" {
+			return Message{Role: "assistant", Content: "done"}, nil
+		}
+		return call("read_file", `{"path":"MEMORY.md"}`), nil
+	})
+	s := openTest(t, c, m)
+	run := func(key string, p Payload) {
+		t.Helper()
+		raw, _ := json.Marshal(p)
+		if _, err := s.db.Exec("INSERT INTO inbox(dedup_key,payload,available_at) VALUES(?,?,0)", key, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+		batch, err := s.claim(context.Background())
+		if err != nil || len(batch) != 1 {
+			t.Fatal(batch, err)
+		}
+		out, err := s.execute(context.Background(), batch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.recordRun(batch, out, "done", nil)
+		if err = s.commitBatch(context.Background(), batch, out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	route := func(kind, conv string) *IMRoute {
+		return &IMRoute{ConversationID: conv, ConversationType: kind, Sender: c.DingTalk.AllowedSender, Mentioned: true, Webhook: "https://oapi.dingtalk.com/robot/sendBySession?session=x", ExpiresAt: time.Now().Add(time.Hour).UnixMilli()}
+	}
+	run("local", Payload{Kind: "message", Text: "hi"})
+	run("private", Payload{Kind: "dingtalk", Text: "hi", imRoutes: imRoutes{DingTalk: route("1", "PRIVATE_CONV")}})
+	run("group", Payload{Kind: "dingtalk", Text: "hi", imRoutes: imRoutes{DingTalk: route("2", "GROUP_CONV")}})
+
+	raw, _, err := s.transcriptRead("sessions/"+time.Now().UTC().Format("2006-01-02")+".jsonl", 0, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "PRIVATE_CONV") || strings.Contains(string(raw), "GROUP_CONV") {
+		t.Fatal("platform conversation ID in transcript")
+	}
+	var principals []string
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var rec map[string]any
+		if err = json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatal(err)
+		}
+		if rec["role"] != "default" || rec["principal"] == nil || rec["conversation"] == nil || rec["conversation"] == "" {
+			t.Fatalf("record without scope: %v", rec)
+		}
+		principals = append(principals, rec["type"].(string)+":"+rec["principal"].(string))
+	}
+	want := []string{"tool:local", "run:local", "tool:owner", "run:owner", "tool:group-", "run:group-"}
+	if len(principals) != len(want) {
+		t.Fatalf("records %v", principals)
+	}
+	for i := range want {
+		if !strings.HasPrefix(principals[i], want[i]) {
+			t.Fatalf("records %v, want prefixes %v", principals, want)
+		}
+	}
+	other := s.imScope(&IMRoute{ConversationID: "x", ConversationType: "1", Sender: "someone-else"})
+	if !strings.HasPrefix(other.Principal, "user-") {
+		t.Fatalf("other sender scoped as %v", other)
+	}
+}

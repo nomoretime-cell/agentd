@@ -125,6 +125,26 @@ func (r *IMRoute) group() bool {
 	return r != nil && (r.ConversationType == "2" || r.ConversationType == "group")
 }
 
+// imScope names the principal and conversation of an IM run. A group is one
+// principal whoever speaks in it; a private chat belongs to its sender.
+func (s *Service) imScope(r *IMRoute) runScope {
+	provider := s.cfg.provider()
+	sc := runScope{Role: defaultRole, Conversation: stableID(provider + "\x00conversation\x00" + r.ConversationID)}
+	owner := s.cfg.DingTalk.AllowedSender
+	if provider == "wecom" {
+		owner = s.cfg.WeCom.Owner
+	}
+	switch {
+	case r.group():
+		sc.Principal = "group-" + stableID(provider+"\x00group\x00"+r.ConversationID)
+	case r.Sender != "" && r.Sender == owner:
+		sc.Principal = "owner"
+	default:
+		sc.Principal = "user-" + stableID(provider+"\x00user\x00"+r.Sender)
+	}
+	return sc
+}
+
 type sharedTurnKey struct{}
 
 // isSharedTurn reports whether this run's replies are visible to people other than the owner.

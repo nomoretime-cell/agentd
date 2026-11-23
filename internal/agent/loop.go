@@ -20,6 +20,7 @@ type Outcome struct {
 	Timers        []Timer
 	Approval      *Action
 	Messages      []Message
+	Scope         runScope
 }
 
 func timeNow() string { return time.Now().Format(time.RFC3339) }
@@ -41,7 +42,12 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 		}
 	}
 	out.ReplyTarget = target
+	out.Scope = localScope
+	if route != nil {
+		out.Scope = s.imScope(route)
+	}
 	ctx = context.WithValue(ctx, imTargetKey{}, target)
+	ctx = context.WithValue(ctx, scopeKey{}, out.Scope)
 	if route.group() {
 		ctx = context.WithValue(ctx, sharedTurnKey{}, true)
 	}
@@ -200,7 +206,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if err == nil && call.Function.Name != "read_file" {
 			result = s.bounded(result)
 		}
-		s.recordTool(key, call, result, pending, err)
+		s.recordTool(ctx, key, call, result, pending, err)
 	}()
 	if s.restrictTeamTools(ctx) {
 		return "", nil, ErrDenied
