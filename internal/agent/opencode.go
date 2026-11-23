@@ -200,7 +200,10 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 			Type, SessionID string
 			Part            struct {
 				Text, Tool, Reason string
-				State              struct{ Status string }
+				State              struct {
+					Status, Title, Output string
+					Input                 json.RawMessage
+				}
 			}
 		}
 		if json.Unmarshal(scan.Bytes(), &frame) != nil {
@@ -219,7 +222,12 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 		case "text":
 			answer += frame.Part.Text
 		case "tool_use":
-			s.log.Info("opencode tool", "event_id", ev.ID, "tool", frame.Part.Tool, "status", frame.Part.State.Status)
+			st := frame.Part.State
+			s.log.Info("opencode tool", "event_id", ev.ID, "tool", frame.Part.Tool, "status", st.Status)
+			// Host tools reach the transcript through the MCP bridge; record only OpenCode's own.
+			if !strings.HasPrefix(frame.Part.Tool, "agentd_") && (st.Status == "completed" || st.Status == "error") {
+				s.recordExecutorTool("opencode", ev.ID, frame.Part.Tool, st.Status, st.Title, st.Input, st.Output)
+			}
 		case "step_finish":
 			reason = frame.Part.Reason
 		}

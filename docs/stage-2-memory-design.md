@@ -331,8 +331,8 @@ skills 和 knowledge 默认全局共享；敏感资料可按同样方式分目�
 
 | 设计 | agentd 中的实现 | 说明 |
 | --- | --- | --- |
-| `sessions/`（W1 记录） | `data/sessions/YYYY-MM-DD.jsonl`，按天一个文件 | 记录点在工具分发（`tool` 记录）和 worker（`run` 记录），原生循环与 OpenCode 都覆盖。写入前脱敏；`read_file` 只记参数，避免重读记录时让记录自我膨胀 |
-| R3 检索 sessions | 沿用 `read_file`，路径 `sessions/YYYY-MM-DD.jsonl`，只读、可分页 | `search` 工具会成为第 7 个工具，超出预算，留待单独决策。群聊轮次一律拒绝读取，防止群成员看到所有者的私聊 |
+| `sessions/`（W1 记录） | `data/sessions/YYYY-MM-DD.jsonl`，按天一个文件 | 记录点在工具分发（`tool` 记录）和 worker（`run` 记录），原生循环与 OpenCode 都覆盖。OpenCode 自带的工具（如 websearch）按其事件记录名称、状态、输入和截断到 2KB 的输出，事件里没有的内容记录不到。写入前脱敏；`read_file` 只记参数，读取运行记录本身不记录，避免记录自我膨胀 |
+| R3 检索 sessions | 沿用 `read_file`，路径 `sessions/YYYY-MM-DD.jsonl`，只读，按偏移分页读取，不受工作区文件 1 MiB 的上限约束 | `search` 工具会成为第 7 个工具，超出预算，留待单独决策。回复会被其他群成员看到的轮次（钉钉群、企微群）一律拒绝读取，防止群成员看到所有者的私聊 |
 | `memory/<topic>.md` + `MEMORY.md` | `workspace/notes/*.md` + `workspace/MEMORY.md` | 沿用已有目录和写权限，不迁移数据。索引由模型维护：写入超过 200 行或 8KB 时拒绝，装配 prompt 时按同一上限截断 |
 | R1 装配、冻结前缀 | system prompt 中稳定内容在前，当前时间和最近发出的消息在末尾 | agentd 每次运行都是一次短会话，前缀在记忆不变时保持一致，可复用模型服务的前缀缓存 |
 | W4 整理 | `workspace/skills/memory-consolidation/SKILL.md` + 一个定时器 | 整理是一次普通的定时运行，进度记在 `notes/memory-consolidation.md`。目前仍使用默认模型，不符合"关键动作用最强模型"，因此定时器默认不启用，待 2a 完成后再启用 |

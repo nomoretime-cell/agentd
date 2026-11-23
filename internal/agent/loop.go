@@ -40,6 +40,9 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 	}
 	out.ReplyTarget = target
 	ctx = context.WithValue(ctx, imTargetKey{}, target)
+	if route.group() {
+		ctx = context.WithValue(ctx, sharedTurnKey{}, true)
+	}
 	var prompt string
 	if route.team() {
 		ctx = context.WithValue(ctx, teamTurnKey{}, true)
@@ -171,9 +174,17 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if e := decodeArgs(call.Function.Arguments, &a); e != nil {
 			return "", nil, e
 		}
-		// Transcripts hold the owner's private conversations.
-		if isTeamTurn(ctx) && strings.HasPrefix(path.Clean(a.Path), "sessions/") {
-			return "", nil, ErrDenied
+		if strings.HasPrefix(path.Clean(a.Path), "sessions/") {
+			// Transcripts hold the owner's private conversations.
+			if isSharedTurn(ctx) {
+				return "", nil, ErrDenied
+			}
+			page, size, e := s.transcriptRead(a.Path, int64(a.Offset), s.cfg.Limits.MaxOutputBytes/2)
+			if e != nil {
+				return "", nil, e
+			}
+			res, _ := json.Marshal(map[string]any{"path": a.Path, "content": string(page), "next_offset": a.Offset + len(page), "size": size})
+			return string(res), nil, nil
 		}
 		b, e := s.workspaceRead(a.Path)
 		if e != nil {

@@ -116,6 +116,17 @@ func (p Payload) imTarget(id int64) string {
 }
 func (r *IMRoute) team() bool { return r != nil && r.BotID != "" && r.ConversationType == "group" }
 
+// group reports whether the reply is visible to other members of the
+// conversation, on any channel ("2" is a DingTalk group, "group" a WeCom group).
+func (r *IMRoute) group() bool {
+	return r != nil && (r.ConversationType == "2" || r.ConversationType == "group")
+}
+
+type sharedTurnKey struct{}
+
+// isSharedTurn reports whether this run's replies are visible to people other than the owner.
+func isSharedTurn(ctx context.Context) bool { v, _ := ctx.Value(sharedTurnKey{}).(bool); return v }
+
 type teamTurnKey struct{}
 
 func isTeamTurn(ctx context.Context) bool { v, _ := ctx.Value(teamTurnKey{}).(bool); return v }

@@ -71,8 +71,11 @@ func TestTranscriptRecordsRunsAndToolCalls(t *testing.T) {
 	}
 	waitFor(t, 3*time.Second, func() bool { return count(t, s, "SELECT count(*) FROM inbox WHERE status='done'") == 1 })
 	name := "sessions/" + time.Now().UTC().Format("2006-01-02") + ".jsonl"
-	waitFor(t, time.Second, func() bool { b, _ := s.workspaceRead(name); return strings.Contains(string(b), `"type":"run"`) })
-	raw, err := s.workspaceRead(name)
+	waitFor(t, time.Second, func() bool {
+		b, _, _ := s.transcriptRead(name, 0, 1<<20)
+		return strings.Contains(string(b), `"type":"run"`)
+	})
+	raw, _, err := s.transcriptRead(name, 0, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +106,7 @@ func TestTranscriptRecordsRunsAndToolCalls(t *testing.T) {
 	if _, _, err = s.tool(context.Background(), "r1", read, "", &Outcome{}); err != nil {
 		t.Fatal(err)
 	}
-	team := context.WithValue(context.Background(), teamTurnKey{}, true)
+	team := context.WithValue(context.WithValue(context.Background(), teamTurnKey{}, true), sharedTurnKey{}, true)
 	if _, _, err = s.tool(team, "r2", read, "", &Outcome{}); !errors.Is(err, ErrDenied) {
 		t.Fatalf("group turn read a transcript: %v", err)
 	}
@@ -126,5 +129,143 @@ func TestMemoryIndexClippedAtAssembly(t *testing.T) {
 	p := s.systemPrompt()
 	if !strings.Contains(p, fmt.Sprintf("- entry-%d\n", memoryIndexMaxLines)) || strings.Contains(p, fmt.Sprintf("- entry-%d\n", memoryIndexMaxLines+1)) {
 		t.Fatal("index not clipped to its line cap")
+	}
+}
+
+// A DingTalk group reply is visible to the whole group, so a run answering
+// there cannot read the owner's transcripts; the owner's direct chat can.
+func TestTranscriptHiddenFromDingTalkGroup(t *testing.T) {
+	c := dtConfig()
+	c.DingTalk.AllowAllGroups = true
+	day := "sessions/" + time.Now().UTC().Format("2006-01-02") + ".jsonl"
+	var toolResult string
+	m := modelFunc(func(_ context.Context, msgs []Message, _ []Tool) (Message, error) {
+		if last := msgs[len(msgs)-1]; last.Role == "tool" {
+			toolResult = last.Content
+			return Message{Role: "assistant", Content: "done"}, nil
+		}
+		return call("read_file", `{"path":"`+day+`"}`), nil
+	})
+	s := openTest(t, c, m)
+	s.appendTranscript(map[string]any{"type": "run", "status": "done", "answer": "PRIVATE_MARKER"})
+	for i, kind := range []string{"2", "1"} {
+		route := &IMRoute{ConversationID: "conv" + kind, ConversationType: kind, Sender: "owner", Mentioned: true, Webhook: "https://oapi.dingtalk.com/robot/sendBySession?session=x", ExpiresAt: time.Now().Add(time.Hour).UnixMilli()}
+		raw, _ := json.Marshal(Payload{Kind: "dingtalk", Text: "read my transcript", imRoutes: imRoutes{DingTalk: route}})
+		if _, err := s.db.Exec("INSERT INTO inbox(dedup_key,payload,available_at) VALUES(?,?,0)", "dt"+kind, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+		batch, err := s.claim(context.Background())
+		if err != nil || len(batch) != 1 {
+			t.Fatal(batch, err)
+		}
+		out, err := s.execute(context.Background(), batch)
+		if err == nil {
+			err = s.commitBatch(context.Background(), batch, out)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if group := i == 0; group == strings.Contains(toolResult, "PRIVATE_MARKER") {
+			t.Fatalf("conversation type %s: transcript visible=%v", kind, !group)
+		}
+	}
+}
+
+// Transcripts grow all day; any page can be read however large the file is.
+func TestTranscriptPagesPastWorkspaceLimit(t *testing.T) {
+	s := openTest(t, testConfig(), finalModel())
+	line := `{"type":"run","answer":"` + strings.Repeat("长", 300) + `"}` + "\n"
+	big := strings.Repeat(line, (1<<20)/len(line)+50)
+	if err := os.WriteFile(filepath.Join(s.root, "data/sessions/2026-01-01.jsonl"), []byte(big), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var page struct {
+		Content    string
+		NextOffset int `json:"next_offset"`
+		Size       int
+	}
+	read := func(offset int) {
+		res, _, err := s.tool(context.Background(), "r", ToolCall{Function: FunctionCall{Name: "read_file", Arguments: fmt.Sprintf(`{"path":"sessions/2026-01-01.jsonl","offset":%d}`, offset)}}, "", &Outcome{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = json.Unmarshal([]byte(res), &page); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read(0)
+	if page.Size != len(big) || page.Content == "" || !strings.HasSuffix(page.Content, "\n") {
+		t.Fatalf("first page: size=%d len=%d", page.Size, len(page.Content))
+	}
+	read(len(big) - 2*len(line))
+	if page.NextOffset != len(big) || page.Content != line+line {
+		t.Fatal("last page incomplete")
+	}
+}
+
+// Reading a transcript, even today's, does not grow it.
+func TestTranscriptReadIsNotRecorded(t *testing.T) {
+	s := openTest(t, testConfig(), finalModel())
+	day := "sessions/" + time.Now().UTC().Format("2006-01-02") + ".jsonl"
+	s.appendTranscript(map[string]any{"type": "run", "status": "done"})
+	_, before, _ := s.transcriptRead(day, 0, 1)
+	for range 3 {
+		if _, _, err := s.tool(context.Background(), "r", ToolCall{Function: FunctionCall{Name: "read_file", Arguments: `{"path":"` + day + `"}`}}, "", &Outcome{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, after, _ := s.transcriptRead(day, 0, 1); after != before {
+		t.Fatalf("transcript grew from %d to %d bytes by being read", before, after)
+	}
+}
+
+// Blank lines count toward the index cap.
+func TestMemoryIndexCountsBlankLines(t *testing.T) {
+	s := openTest(t, testConfig(), finalModel())
+	old, _ := s.workspaceRead("MEMORY.md")
+	if err := s.workspaceWrite("MEMORY.md", "x"+strings.Repeat("\n", memoryIndexMaxLines+50), digest(old)); err == nil {
+		t.Fatal("index padded with blank lines accepted")
+	}
+}
+
+// Tools that OpenCode runs itself, such as web search, reach the transcript
+// with what OpenCode reported; host tools are recorded once, by the host.
+func TestOpenCodeToolsReachTranscript(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "opencode")
+	script := `#!/bin/sh
+while [ "$1" != "--session" ]; do shift; done
+sid=$2
+cat >/dev/null
+echo '{"type":"step_start","sessionID":"'$sid'"}'
+echo '{"type":"tool_use","sessionID":"'$sid'","part":{"tool":"websearch","state":{"status":"running","input":{"query":"go"}}}}'
+echo '{"type":"tool_use","sessionID":"'$sid'","part":{"tool":"websearch","state":{"status":"completed","title":"Go official site","input":{"query":"go"},"output":"https://go.dev/ SOURCE_MARKER"}}}'
+echo '{"type":"tool_use","sessionID":"'$sid'","part":{"tool":"agentd_read_file","state":{"status":"completed","output":"HOST_TOOL"}}}'
+echo '{"type":"text","sessionID":"'$sid'","part":{"text":"done"}}'
+echo '{"type":"step_finish","sessionID":"'$sid'","part":{"reason":"stop"}}'
+`
+	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := testConfig()
+	c.OpenCodeBinary = bin
+	s := openTest(t, c, nil)
+	if _, _, err := s.Append(context.Background(), "oc", Payload{Kind: "message", Text: "search"}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Duration(c.Limits.DebounceMS) * time.Millisecond * 2)
+	batch, err := s.claim(context.Background())
+	if err != nil || len(batch) != 1 {
+		t.Fatal(batch, err)
+	}
+	if _, err = s.execute(context.Background(), batch); err != nil {
+		t.Fatal(err)
+	}
+	raw, _, err := s.transcriptRead("sessions/"+time.Now().UTC().Format("2006-01-02")+".jsonl", 0, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Count(text, `"executor":"opencode"`) != 1 || !strings.Contains(text, "SOURCE_MARKER") || !strings.Contains(text, `\"query\":\"go\"`) || strings.Contains(text, "HOST_TOOL") {
+		t.Fatalf("opencode tools not recorded as expected:\n%s", text)
 	}
 }

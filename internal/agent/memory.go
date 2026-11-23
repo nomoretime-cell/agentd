@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 func (s *Service) workspaceRead(name string) ([]byte, error) {
@@ -27,9 +28,6 @@ func (s *Service) workspaceRead(name string) ([]byte, error) {
 	if strings.HasPrefix(name, "outputs/") {
 		dir = filepath.Join(s.root, "data/outputs")
 		name = strings.TrimPrefix(name, "outputs/")
-	} else if strings.HasPrefix(name, "sessions/") {
-		dir = filepath.Join(s.root, "data/sessions")
-		name = strings.TrimPrefix(name, "sessions/")
 	}
 	r, e := os.OpenRoot(dir)
 	if e != nil {
@@ -78,7 +76,7 @@ func (s *Service) workspaceWrite(name, content, expected string) error {
 		return errors.New("write exceeds output limit")
 	}
 	if name == "MEMORY.md" {
-		if lines := strings.Count(strings.TrimRight(content, "\n"), "\n") + 1; lines > memoryIndexMaxLines || len(content) > memoryIndexMaxBytes {
+		if lines := lineCount(content); lines > memoryIndexMaxLines || len(content) > memoryIndexMaxBytes {
 			return fmt.Errorf("MEMORY.md would have %d lines and %d bytes; the limit is %d lines and %d bytes. Merge entries and move details into notes/, keeping one line per topic", lines, len(content), memoryIndexMaxLines, memoryIndexMaxBytes)
 		}
 	}
@@ -156,7 +154,61 @@ func (s *Service) appendTranscript(rec map[string]any) {
 	s.logErr("transcript", errors.Join(err, f.Close()))
 }
 
+// transcriptRead returns one page of a transcript without loading the whole
+// file, because transcripts grow all day and have no total size cap. A page
+// ends on a record boundary when one fits.
+func (s *Service) transcriptRead(name string, offset int64, limit int) (page []byte, size int64, err error) {
+	rel, ok := strings.CutPrefix(path.Clean(name), "sessions/")
+	if !ok || rel == "" || strings.Contains(rel, "/") {
+		return nil, 0, ErrDenied
+	}
+	r, err := os.OpenRoot(filepath.Join(s.root, "data/sessions"))
+	if err != nil {
+		return nil, 0, err
+	}
+	defer r.Close()
+	f, err := r.Open(rel)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, 0, ErrDenied
+	}
+	size = info.Size()
+	if offset < 0 || offset > size {
+		return nil, 0, errors.New("invalid offset")
+	}
+	page = make([]byte, min(int64(limit), size-offset))
+	n, err := f.ReadAt(page, offset)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, 0, err
+	}
+	page = page[:n]
+	if offset+int64(n) < size {
+		if i := bytes.LastIndexByte(page, '\n'); i >= 0 {
+			page = page[:i+1]
+		} else {
+			for k := 0; k < utf8.UTFMax && !utf8.Valid(page); k++ {
+				page = page[:len(page)-1]
+			}
+		}
+	}
+	return page, size, nil
+}
+
 func (s *Service) recordTool(key string, call ToolCall, result string, pending *Action, err error) {
+	if call.Function.Name == "read_file" {
+		var a struct{ Path string }
+		// Recording transcript reads would make each reread grow today's transcript.
+		if json.Unmarshal([]byte(call.Function.Arguments), &a) == nil && strings.HasPrefix(path.Clean(a.Path), "sessions/") {
+			return
+		}
+	}
 	rec := map[string]any{"type": "tool", "key": key, "tool": call.Function.Name, "args": s.bounded(call.Function.Arguments)}
 	// File contents stay in their files; copying reads here would also make
 	// every reread of a transcript grow the next one.
@@ -171,6 +223,30 @@ func (s *Service) recordTool(key string, call ToolCall, result string, pending *
 	}
 	s.appendTranscript(rec)
 }
+
+// recordExecutorTool records a tool that an external executor ran on its own,
+// with whatever the executor reported about it.
+func (s *Service) recordExecutorTool(executor string, eventID int64, tool, status, title string, input json.RawMessage, output string) {
+	rec := map[string]any{"type": "tool", "executor": executor, "event": eventID, "tool": tool, "status": status}
+	if title != "" {
+		rec["title"] = s.bounded(title)
+	}
+	if len(input) > 0 {
+		rec["args"] = s.bounded(string(input))
+	}
+	if output != "" {
+		out := s.bounded(output)
+		if len(out) > executorOutputBytes {
+			out = strings.ToValidUTF8(out[:executorOutputBytes], "") + " [truncated]"
+		}
+		rec["result"] = out
+	}
+	s.appendTranscript(rec)
+}
+
+// Executor tool output (search results, fetched pages) is clipped harder than
+// host tool results: the transcript keeps the evidence, not the whole page.
+const executorOutputBytes = 2048
 
 func (s *Service) recordRun(batch []Event, out Outcome, status string, runErr error) {
 	var inputs []map[string]any
@@ -258,6 +334,16 @@ const (
 	memoryIndexMaxLines = 200
 	memoryIndexMaxBytes = 8 << 10
 )
+
+// lineCount counts lines the way they load: every newline ends one, and
+// trailing text without a newline is one more.
+func lineCount(v string) int {
+	n := strings.Count(v, "\n")
+	if v != "" && !strings.HasSuffix(v, "\n") {
+		n++
+	}
+	return n
+}
 
 // clipMemoryIndex applies the write-time cap again when the prompt is built,
 // covering an index edited directly on disk.
