@@ -22,11 +22,10 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 以下约束是设计理念在本仓库的具体落点。改变任何一条，都要在同一变更中说明原因，并更新对应阶段的文档。
 
 1. **规模预算**：1 个 Go 进程，1 个业务包 `internal/agent`，5 个核心组件，4 张 SQLite 业务表，6 个基础工具。
-2. **核心不认识具体渠道和业务。** 核心文件（`inbox.go`、`timers.go`、`outbox.go`、`permissions.go`、`memory.go`、`loop.go`、`store.go`）里不出现具体 IM 平台名或具体业务名。
-   - 渠道只负责平台协议、身份校验和一次发送。钉钉和企微是两个实现，核心通过一个只含所需方法的小接口调用它们。
-   - 业务按事件类型查表分发，执行循环只负责查表。目前只有新闻一个业务，映射表放在它自己的文件里，不设计通用的业务结构。
-   - 已存数据的格式（inbox 载荷字段、投递目标字符串、去重键）保持不变，以保证重放和重启恢复。
-   - **迁移状态：** 历史违例正在集中迁移，涉及 `inbox.go`、`timers.go`、`outbox.go`、`loop.go`、`service.go`、`store.go` 中的渠道与新闻分支。迁移期间不新增违例；迁移完成后，由扫描核心文件的测试守住这条约束，并删除本段。
+2. **核心不认识具体渠道和业务。** 核心文件（`inbox.go`、`timers.go`、`outbox.go`、`permissions.go`、`sandbox.go`、`memory.go`、`loop.go`、`store.go`、`service.go`）里不出现具体 IM 平台名或具体业务名，由 `boundary_test.go` 检查。
+   - **渠道**：只负责平台协议、身份校验和一次发送。核心通过 `im.go` 的 `imChannel` 接口（`deliver`、`owner`、`run`、`connected`）调用，钉钉和企微各一个实现。渠道专属的路由、准入、群聊策略和脱敏也放在 `im.go`。
+   - **业务**：核心只通过三个入口接入：执行循环调 `runBusiness`，`Append` 调 `admitBusiness`，定时器调 `timerEvent`。目前只有新闻一个业务，入口都在 `news.go`，不设计通用的业务结构；出现第二个业务时再抽象。
+   - **数据格式**：已存数据保持不变，包括 inbox 载荷字段、投递目标字符串、去重键，以保证重放和重启恢复。`insertEvent` 按字节比较载荷，`TestPayloadEncodingIsStable` 固定了序列化格式。
 3. **代码管不变量，模型管判断。** 持久化、幂等、恢复、权限、容量上限写在代码里。能用"定时器 + prompt + skill + 工具"表达的流程，不写成 Go 流水线；确需确定性或成本更低的流程（如新闻推送），作为业务处理函数接入，不改核心。
 
 ## 每次新增功能，先确定归属
@@ -46,7 +45,7 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 | Permissions · `permissions.go`、`sandbox.go` | 受控外部动作的授权、冻结参数、审批、执行与核对；本地命令隔离 | 执行器调用宿主工具入口。获批后按原动作记录执行，业务代码复用动作账本。 |
 | Outbox · `outbox.go` | 通知入队、投递时机、重试与结果状态 | 业务返回 `Outcome.Notifications`，批次提交复用 `enqueueTx`；渠道适配器执行一次发送并解释平台回执，Outbox 据此推进状态。 |
 
-执行循环（`loop.go`）、模型和 OpenCode 适配器（`model.go`、`opencode.go`）负责推理与工具分发。HTTP 和 IM 入口负责鉴权、协议转换与路由。`service.go` 协调启动、恢复、暂停和退出，`store.go` 提供数据库结构与事务辅助函数。跨模块事务由发起操作的一方协调，各模块复用同一个 `*sql.Tx` 完成自己的写入。
+执行循环（`loop.go`）、模型和 OpenCode 适配器（`model.go`、`opencode.go`）负责推理与工具分发。HTTP 入口（`http.go`）和 IM 渠道（`im.go`、`dingtalk.go`、`wecom.go`）负责鉴权、协议转换与路由。业务（`news.go`）通过上述三个入口接入。`service.go` 协调启动、恢复、暂停和退出，`store.go` 提供数据库结构与事务辅助函数。跨模块事务由发起操作的一方协调，各模块复用同一个 `*sql.Tx` 完成自己的写入。
 
 ## Go 编写与运行边界
 
