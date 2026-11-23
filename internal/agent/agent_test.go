@@ -508,8 +508,9 @@ func TestModelHTTPAndToolSchema(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
-		if len(body["tools"].([]any)) != 6 {
-			t.Error("expected six tools")
+		// The tool budget is seven (AGENTS.md, 规模预算); a new tool needs a decision.
+		if len(body["tools"].([]any)) != 7 {
+			t.Error("expected seven tools")
 		}
 		fmt.Fprint(w, `{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"x","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"MEMORY.md\"}"}}]}}]}`)
 	}))

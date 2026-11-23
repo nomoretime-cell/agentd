@@ -375,7 +375,7 @@ always-on agent 没有天然的会话边界，需要人为切分，否则冻结�
 | 设计 | agentd 中的实现 | 说明 |
 | --- | --- | --- |
 | `sessions/`（W1 记录） | `data/sessions/YYYY-MM-DD.jsonl`，按天一个文件；每条记录带 `role`、`principal`、`conversation` 作用域字段 | 记录点在工具分发（`tool` 记录）和 worker（`run` 记录），原生循环与 OpenCode 都覆盖。OpenCode 自带的工具（如 websearch）按其事件记录名称、状态、输入，以及截断到 2KB 的输出或失败原因，事件里没有的内容记录不到。写入前脱敏；`read_file` 只记参数，读取运行记录本身不记录，避免记录自我膨胀 |
-| R3 检索 sessions | 沿用 `read_file`，路径 `sessions/YYYY-MM-DD.jsonl`，只读，按偏移分页读取，不受工作区文件 1 MiB 的上限约束 | `search` 工具会成为第 7 个工具，超出预算，留待单独决策。回复会被其他群成员看到的轮次（钉钉群、企微群）一律拒绝读取，防止群成员看到所有者的私聊 |
+| R3 检索 | `search` 工具（第 7 个基础工具，D2）：对 `sessions/` 与 `notes/` 逐行子串扫描，同一行包含全部关键词即命中，不建索引、不加表；返回路径、偏移、片段，再用 `read_file` 按偏移细读。`read_file` 读运行记录按偏移分页，不受工作区文件 1 MiB 上限约束 | 作用域与读取相同：回复会被其他群成员看到的轮次不能检索或读取运行记录；关键动作只检索到 owner / local 记录。检索调用本身不写入运行记录，否则查询词会命中自己。数据量大到扫描变慢时再换 FTS5 |
 | `memory/<topic>.md` + `MEMORY.md` | `workspace/notes/*.md` + `workspace/MEMORY.md` | 沿用已有目录和写权限，不迁移数据。索引由模型维护：写入超过 200 行或 8KB 时拒绝，装配 prompt 时按同一上限截断 |
 | R1 装配、冻结前缀 | system prompt 中稳定内容在前，当前时间和最近发出的消息在末尾 | agentd 每次运行都是一次短会话，前缀在记忆不变时保持一致，可复用模型服务的前缀缓存 |
 | 关键动作与模型分级（2a） | 配置 `strong_model`（默认关闭）；保留定时器 ID `memory-consolidation` 产生 `consolidation` 事件，只由 strong 档执行，只提供 `read_file`、`write_file`、`edit_file`；运行记录按 D1 过滤；失败记为 `skipped` | 关键动作的种类、可用工具和数据范围都在代码中定义（`loop.go`），不由提示词决定。strong 档只发送标准 chat-completions 字段，兼容 OpenAI、Gemini 等托管服务的接口；步数、时长、上下文预算单独配置 |

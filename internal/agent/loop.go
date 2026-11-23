@@ -36,7 +36,7 @@ const (
 
 var (
 	criticalKinds = map[string]bool{kindConsolidation: true}
-	criticalTools = map[string]bool{"read_file": true, "write_file": true, "edit_file": true}
+	criticalTools = map[string]bool{"read_file": true, "search": true, "write_file": true, "edit_file": true}
 )
 
 type criticalKey struct{}
@@ -343,6 +343,16 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 			page = trimPartialRune(page)
 		}
 		res, e := s.readPage(map[string]any{"path": s.redact(a.Path), "sha256": digest(b), "size": len(b)}, page, a.Offset, len(b))
+		return res, nil, e
+	case "search":
+		var a struct {
+			Query string `json:"query"`
+			Path  string `json:"path"`
+		}
+		if e := decodeArgs(call.Function.Arguments, &a); e != nil {
+			return "", nil, e
+		}
+		res, e := s.search(ctx, a.Query, a.Path)
 		return res, nil, e
 	case "write_file":
 		var a struct {

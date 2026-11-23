@@ -92,7 +92,7 @@ func DefaultConfig() Config {
 		{"量子位", "https://www.qbitai.com/feed", "zh"},
 		{"TechCrunch AI", "https://techcrunch.com/category/artificial-intelligence/feed/", "en"},
 		{"Google AI", "https://blog.google/innovation-and-ai/technology/ai/rss/", "en"},
-	}, Listen: "127.0.0.1:8090", Model: ModelConfig{Endpoint: "http://localhost:8080/v1/chat/completions", MaxTokens: 2048, TimeoutSeconds: 120}, StrongModel: StrongModelConfig{ModelConfig: ModelConfig{TimeoutSeconds: 300}, MaxSteps: 40, RunSeconds: 1800, MaxContextBytes: 512 << 10}, Limits: Limits{RunSeconds: 240, ToolSeconds: 15, MaxSteps: 12, MaxInputBytes: 16384, MaxOutputBytes: 16384, MaxBatch: 20, MaxHistoryMessages: 24, MaxRunsPerHour: 120, RetryBaseMS: 1000, DebounceMS: 1000, PollMS: 250, ApprovalSeconds: 3600}, Timezone: "UTC", DefaultTarget: "local", Targets: map[string]Target{"local": {Kind: "local"}}, Permissions: map[string]string{"read_file": "allow", "write_file": "allow", "edit_file": "allow", "set_timer": "allow", "send_message": "allow", "bash": "deny"}, Actions: map[string]Operation{}}
+	}, Listen: "127.0.0.1:8090", Model: ModelConfig{Endpoint: "http://localhost:8080/v1/chat/completions", MaxTokens: 2048, TimeoutSeconds: 120}, StrongModel: StrongModelConfig{ModelConfig: ModelConfig{TimeoutSeconds: 300}, MaxSteps: 40, RunSeconds: 1800, MaxContextBytes: 512 << 10}, Limits: Limits{RunSeconds: 240, ToolSeconds: 15, MaxSteps: 12, MaxInputBytes: 16384, MaxOutputBytes: 16384, MaxBatch: 20, MaxHistoryMessages: 24, MaxRunsPerHour: 120, RetryBaseMS: 1000, DebounceMS: 1000, PollMS: 250, ApprovalSeconds: 3600}, Timezone: "UTC", DefaultTarget: "local", Targets: map[string]Target{"local": {Kind: "local"}}, Permissions: map[string]string{"read_file": "allow", "search": "allow", "write_file": "allow", "edit_file": "allow", "set_timer": "allow", "send_message": "allow", "bash": "deny"}, Actions: map[string]Operation{}}
 }
 func LoadConfig(path string) (Config, error) {
 	c := DefaultConfig()
@@ -180,7 +180,7 @@ func (c Config) Validate() error {
 	}
 	for name, mode := range c.Permissions {
 		switch name {
-		case "bash", "read_file", "write_file", "edit_file", "set_timer", "send_message":
+		case "bash", "read_file", "search", "write_file", "edit_file", "set_timer", "send_message":
 		default:
 			return fmt.Errorf("unknown tool %q", name)
 		}

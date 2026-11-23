@@ -26,7 +26,7 @@
    │   ① runBusiness（news.go）命中业务事件 → 直接处理，不进模型                                     │
    │   ② 组装上下文：system prompt（memory.go）+ 历史 + 本批事件                                    │
    │   ③ 执行器：原生循环（model.go → 本地模型）  或  OpenCode（opencode.go，经临时 MCP 回调工具）      │
-   │   ④ 工具调用 tool() → 权限检查 → 6 个基础工具 + 命名 HTTP 操作                                  │
+   │   ④ 工具调用 tool() → 权限检查 → 7 个基础工具 + 命名 HTTP 操作                                  │
    └───────┬─────────────────────┬──────────────────────┬───────────────────────┬─────────────┘
            │                     │                      │                       │
            ▼                     ▼                      ▼                       ▼
@@ -50,10 +50,11 @@
 | 核心：五原语 | `inbox.go` | 事件写入（去重键）、按顺序 claim、执行、提交或退回重试、死信 |
 | | `timers.go` | cron / 一次性定时器，到点把 prompt 写成 Inbox 事件 |
 | | `memory.go` | 系统提示组装（稳定前缀）、`MEMORY.md` 上限、运行记录 `data/sessions/`、工作区读写 |
+| | `search.go` | `search` 工具：对运行记录和笔记逐行子串检索，沿用读取的作用域规则 |
 | | `consolidation.go` | 整理的候选版本、代码检查（证据、历史、删除、上限、改动量）、提升 / 待确认 / 回滚、整理指标 |
 | | `permissions.go` | 工具权限、命名 HTTP 操作的冻结请求、审批、执行与结果未知处理 |
 | | `outbox.go` | 通知排队、静默时段、按目标投递（im / webhook / local）、重试 |
-| 核心：运行 | `loop.go` | 一次运行：组装消息、模型循环、6 个工具的分发、分页读取 |
+| 核心：运行 | `loop.go` | 一次运行：组装消息、模型循环、7 个工具的分发、分页读取 |
 | | `model.go` | OpenAI 兼容的 chat completions 客户端、工具定义 |
 | | `opencode.go` | 可选执行器：启动 `opencode run`，用临时 MCP 接口把工具调用转回 `tool()` |
 | | `sandbox.go` | `bash` 工具的受限执行 |
@@ -74,7 +75,7 @@
 | `actions` | 需要权限的命名操作（冻结的参数、恢复提示、结果） | pending_approval → approved/rejected → executing → succeeded/failed/unknown |
 | `outbox` | 待投递通知（目标、内容、投递时间） | pending → sending → sent / failed / unknown |
 
-**6 个工具**：`read_file`、`write_file`、`edit_file`、`set_timer`、`send_message`、`bash`（默认 deny）；配置中的命名 HTTP 操作也作为工具暴露给模型。
+**7 个工具**：`read_file`、`search`、`write_file`、`edit_file`、`set_timer`、`send_message`、`bash`（默认 deny）；配置中的命名 HTTP 操作也作为工具暴露给模型。
 
 ## 三、数据流
 

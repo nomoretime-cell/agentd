@@ -374,6 +374,9 @@ func (s *Service) collectEgress(f *os.File, size, offset int64, budget int) (con
 }
 
 func (s *Service) recordTool(ctx context.Context, key string, call ToolCall, result string, pending *Action, err error) {
+	if call.Function.Name == "search" {
+		return // A recorded query would match itself in every later search.
+	}
 	if call.Function.Name == "read_file" {
 		var a struct{ Path string }
 		// Recording transcript reads would make each reread grow today's transcript.
@@ -542,7 +545,7 @@ func clipMemoryIndex(v string) string {
 	return v
 }
 
-const memoryGuide = "Memory exists so you serve this user better over time; you decide what to keep. MEMORY.md is your index and loads every run: keep it under 200 lines, one line per topic naming the notes/ file that holds the details. Save only what later runs cannot see elsewhere: preferences, decisions, tested rules, plans and pitfalls. Past runs are recorded read-only in sessions/YYYY-MM-DD.jsonl; read them when the user refers to earlier work.\n"
+const memoryGuide = "Memory exists so you serve this user better over time; you decide what to keep. MEMORY.md is your index and loads every run: keep it under 200 lines, one line per topic naming the notes/ file that holds the details. Save only what later runs cannot see elsewhere: preferences, decisions, tested rules, plans and pitfalls. Past runs are recorded read-only in sessions/YYYY-MM-DD.jsonl. When the user refers to earlier work, find it with search, then read_file at the returned offset.\n"
 
 func (s *Service) systemPrompt() string { return s.systemPromptFor(true) }
 func (s *Service) systemPromptFor(includeHistory bool) string {

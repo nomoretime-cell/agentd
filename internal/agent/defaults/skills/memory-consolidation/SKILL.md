@@ -62,7 +62,8 @@ What is true now, in your words.
 ## Steps
 
 1. **Check.** Where the transcripts touch a topic in MEMORY.md, read that note
-   and fix what the transcripts show to be wrong or out of date.
+   and fix what the transcripts show to be wrong or out of date. Use `search`
+   to find what earlier transcripts said about the topic.
 2. **Save.** Keep only what later runs cannot see elsewhere: preferences,
    decisions, tested rules, plans and pitfalls. Skip one-off results, transient
    errors, anything already in IDENTITY.md, and all secrets or credentials.

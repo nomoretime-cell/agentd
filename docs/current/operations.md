@@ -70,6 +70,7 @@ Outbox 的 pending 解析意味着操作者已确认未送达、允许重新投�
 | 工具 | 行为 |
 | --- | --- |
 | read_file | 从 workspace 或受控 outputs 引用读取，返回内容预览、SHA-256 和下一偏移量 |
+| search | 在 `sessions/`（运行记录，最新的一天在前）和 `notes/` 中查找同一行包含所有关键词的内容（不区分大小写），返回路径、偏移和片段，最多 20 条；再用 `read_file` 按偏移读上下文。群聊轮次不能检索运行记录 |
 | write_file | 原子替换 MEMORY.md、notes/ 或 scratch/；已存在文件要求 expected_hash，新文件使用 absent |
 | edit_file | 用当前 expected_hash 替换一次唯一匹配的文本 |
 | set_timer | 将变更暂存到当前 Run，成功提交时与 Inbox 完成同事务保存 |

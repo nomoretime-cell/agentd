@@ -92,7 +92,7 @@ func TestCriticalActionUsesStrongTierWithFileToolsOnly(t *testing.T) {
 	s.Start(context.Background())
 	fireConsolidation(t, s)
 	waitFor(t, 3*time.Second, func() bool { return count(t, s, "SELECT count(*) FROM inbox WHERE status='done'") == 1 })
-	if strings.Join(offered, ",") != "read_file,write_file,edit_file" {
+	if strings.Join(offered, ",") != "read_file,search,write_file,edit_file" {
 		t.Fatalf("critical run offered %v", offered)
 	}
 	if denied != nil {

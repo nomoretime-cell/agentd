@@ -43,6 +43,7 @@ targets:
     kind: local
 permissions:
   read_file: allow
+  search: allow
   write_file: allow
   edit_file: allow
   set_timer: allow
