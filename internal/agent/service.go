@@ -50,8 +50,9 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 		return nil, err
 	}
 	if cfg.OpenCodeBinary != "" {
-		if !filepath.IsAbs(cfg.OpenCodeBinary) {
-			cfg.OpenCodeBinary = filepath.Join(root, cfg.OpenCodeBinary)
+		// Programs resolve against the working directory, not the state root.
+		if cfg.OpenCodeBinary, err = filepath.Abs(cfg.OpenCodeBinary); err != nil {
+			return nil, err
 		}
 		if fi, e := os.Stat(cfg.OpenCodeBinary); e != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0111 == 0 {
 			return nil, errors.New("opencode_binary must point to an installed executable")
@@ -109,10 +110,15 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 	if len(s.token) < 32 {
 		return nil, errors.New("API token must have at least 32 characters")
 	}
-	for name, content := range map[string]string{"MEMORY.md": "# Memory\n\nUser preferences and useful facts.\n", "IDENTITY.md": "You are a helpful assistant. Use send_message for notifications.\n"} {
+	// Templates are copied once and then belong to the operator and the model.
+	for _, name := range []string{"MEMORY.md", "IDENTITY.md"} {
 		p := filepath.Join(root, "workspace", name)
 		if !fileExists(p) {
-			if err = atomicWrite(p, []byte(content), 0600); err != nil {
+			content, e := defaults.ReadFile("defaults/" + name)
+			if e != nil {
+				return nil, e
+			}
+			if err = atomicWrite(p, content, 0600); err != nil {
 				return nil, err
 			}
 		}

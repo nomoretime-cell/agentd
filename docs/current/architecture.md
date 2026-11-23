@@ -152,7 +152,7 @@ tool() 调用命名操作 ─► permissions: 需要审批 ─► actions(pendin
 
 ## 四、运行状态在哪里
 
-当前使用 `-root .`，即仓库根目录（目标是迁入 `.agentd/`，见 [90-convention-storage-layout](../design/90-convention-storage-layout.md)）：
+状态根目录默认是仓库下的 `.agentd/`（`-root` 指定），下表路径都相对它。按角色分目录尚未实施，见 [90-convention-storage-layout](../design/90-convention-storage-layout.md)。
 
 | 路径 | 内容 | 谁写 |
 | --- | --- | --- |
@@ -162,4 +162,5 @@ tool() 调用命名操作 ─► permissions: 需要审批 ─► actions(pendin
 | `data/session.jsonl` | 所有者对话的近期上下文 | `memory.go` |
 | `data/deliveries/` | `local` 目标的投递结果 | `outbox.go` |
 | `data/opencode/` | OpenCode 会话数据 | OpenCode |
-| `workspace/IDENTITY.md`、`MEMORY.md`、`notes/`、`skills/`、`scratch/` | 模型可读写的工作区 | 模型（经工具） |
+| `workspace/IDENTITY.md`、`MEMORY.md`、`notes/`、`skills/`、`scratch/` | 模型可见的工作区；`IDENTITY.md`、`skills/` 对模型只读 | 模型（经工具）；`IDENTITY.md`、`MEMORY.md` 首次启动由模板生成 |
+| 程序内置（`internal/agent/defaults/`） | `IDENTITY.md`、`MEMORY.md` 模板；内置 skill，以 `skills/...` 只读提供，`workspace/skills/` 下同名文件优先 | 随版本发布 |

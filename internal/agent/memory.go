@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,11 +19,28 @@ import (
 	"time"
 )
 
+// defaults holds the content shipped with this version: templates copied into
+// a new workspace, and built-in skills served read-only so that they follow
+// the binary. A file with the same name under workspace/skills overrides one.
+//
+//go:embed defaults
+var defaults embed.FS
+
 func (s *Service) workspaceRead(name string) ([]byte, error) {
 	name = path.Clean(name)
 	if name == "." || strings.HasPrefix(name, "../") || path.IsAbs(name) {
 		return nil, ErrDenied
 	}
+	b, e := s.workspaceFile(name)
+	if errors.Is(e, os.ErrNotExist) && strings.HasPrefix(name, "skills/") {
+		if built, err := defaults.ReadFile("defaults/" + name); err == nil {
+			return built, nil
+		}
+	}
+	return b, e
+}
+
+func (s *Service) workspaceFile(name string) ([]byte, error) {
 	dir := filepath.Join(s.root, "workspace")
 	if strings.HasPrefix(name, "outputs/") {
 		dir = filepath.Join(s.root, "data/outputs")

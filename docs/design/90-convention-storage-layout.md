@@ -2,7 +2,7 @@
 
 2026-11-23 · 适用于所有阶段。代码、设计文档和脚本中的运行时路径，都以本文为准。
 
-> **文档状态：目标布局已决定，迁移尚未实施。** 当前实现仍把仓库目录当作状态根目录（`-root .`），运行数据位于仓库下的 `data/` 和 `workspace/`。本文第 6 节列出当前位置与目标位置的对照，第 7 节列出迁移步骤。迁移完成前，新代码按"相对状态根目录"的约定编写（第 5 节），迁移后无需再改。
+> **文档状态：目标布局已决定；迁移第 1 步已实施（2026-11-23），状态根目录默认是 `.agentd/`。** 角色分目录（第 3 步）尚未实施，`.agentd/` 内部仍是单角色的 `data/`、`workspace/`。本文第 6 节列出当前位置与目标位置的对照，第 7 节列出迁移步骤。新代码按"相对状态根目录"的约定编写（第 5 节）。
 
 ## 1. 结论
 
@@ -76,7 +76,7 @@
 1. **运行时路径一律相对状态根目录拼接**（代码中的 `s.root`），不写死仓库路径、`.agentd` 或 `/var/lib/agentd`。
 2. **模型可见路径只经宿主函数映射**：`workspaceRead`、`workspaceWrite`、`transcriptRead`，以及迁移后的作用域映射函数。工具代码不自行拼接物理路径。
 3. **`data/` 下的内容不经工具直接暴露**，只能通过上述函数按权限读取。
-4. **随版本发布的默认内容**（`IDENTITY.md` 模板、默认 skill）放在代码里，用 `go:embed` 编入程序；首次启动时，目标文件不存在才复制，之后不覆盖。
+4. **随版本发布的默认内容**放在 `internal/agent/defaults/`，用 `go:embed` 编入程序。模板（`IDENTITY.md`、`MEMORY.md`）首次启动时目标文件不存在才复制，之后归运营人员和模型，不覆盖。内置 skill 不复制，由宿主以只读方式直接从程序提供，这样升级程序就升级 skill；`workspace/skills/` 下的同名文件优先，供运营人员覆盖。
 5. **程序和工具的相对路径**（如 `opencode_binary`）相对启动时的工作目录解析，不相对状态根目录。
 6. **新增任何运行时路径，先更新本文**，再写代码。
 
@@ -84,16 +84,16 @@
 
 | 当前位置（`-root .`） | 目标位置（`.agentd/` 下） | 何时迁移 |
 | --- | --- | --- |
-| `data/state.db` 等宿主文件 | `data/` 同名文件 | 第 1 步 |
+| `data/state.db` 等宿主文件 | `data/` 同名文件 | 第 1 步 ✅ |
 | `data/sessions/YYYY-MM-DD.jsonl` | `data/roles/default/sessions/_legacy/` 原样保留；旧记录没有服务对象字段，只对整理运行可见 | 第 3 步 |
 | `workspace/IDENTITY.md` | `workspace/roles/default/IDENTITY.md` | 第 3 步 |
 | `workspace/MEMORY.md`、`workspace/notes/` | `workspace/roles/default/` | 第 3 步 |
-| `workspace/skills/`（仓库中的默认 skill） | 编入程序，首次启动复制到 `workspace/company/skills/` | 第 1 步 |
+| `workspace/skills/`（仓库中的默认 skill） | 已编入程序（`internal/agent/defaults/skills/`），以 `skills/` 只读提供；第 3 步起作为 `company/skills/` 的内置部分 | 第 1 步 ✅ |
 | `workspace/scratch/` | `workspace/roles/default/scratch/` | 第 3 步 |
 
 ## 7. 迁移步骤
 
-1. **引入 `.agentd/`**：`-root` 默认值改为 `.agentd`；默认内容改为 `go:embed`；`opencode_binary` 等改为相对工作目录；README、脚本中的 `data/api-token` 改为 `.agentd/data/api-token`；`.gitignore` 加入 `.agentd/`。
+1. ✅ **引入 `.agentd/`**（2026-11-23）：`-root` 默认值改为 `.agentd`；默认内容改为 `go:embed`；`opencode_binary` 等改为相对工作目录；README、脚本中的 `data/api-token` 改为 `.agentd/data/api-token`；`.gitignore` 加入 `.agentd/`。
    - **已有实例**：启动时如果检测到旧布局（当前目录下有 `data/state.db`，但没有 `.agentd/`），就停止启动，并提示两种做法：执行 `mkdir .agentd && mv data workspace .agentd/` 完成迁移，或者显式传 `-root .` 继续使用旧布局。不自动移动数据。
 2. **运行记录带作用域字段**：每条记录增加 `role`（固定为 `default`）、`principal`、`conversation`。不改目录，不改已有字段。
 3. **第二个角色出现时**：建立 `company/`、`roles/` 和虚拟路径映射，把单角色时的内容迁入 `roles/default/`。

@@ -9,15 +9,17 @@
 ```sh
 ./scripts/bootstrap
 make build
-./bin/agentd -config config.yaml -root .
+./bin/agentd -config config.yaml
 ```
+
+运行状态都在状态根目录 `.agentd/` 下（`-root` 可改），本文出现的 `data/`、`workspace/` 都指其中的目录。
 
 Go 工具链保存在 `.tools/go/`，模块缓存、构建缓存、临时文件都在 `.cache/`。`scripts/go` 设置这些路径，不修改系统 Go 或用户全局 Go 环境。已安装本地工具链和下载模块后，构建可离线进行。工具链版本在 bootstrap 中固定，下载后核验官方 SHA-256；依赖版本由 go.mod/go.sum 固定。
 
 默认监听 `127.0.0.1:8090`；本地模型地址为 `http://localhost:8080/v1/chat/completions`，模型名称在 config.yaml 中配置。初次启动自动生成 `data/api-token`，权限为 0600；除 healthz 外所有接口都要求 Bearer Token，不输出 Token 到日志。配置私密凭证时使用被 Git 忽略的 `config.local.yaml`，并以 `-config config.local.yaml` 启动；该文件是完整配置，不是叠加文件。
 
 ```sh
-TOKEN=$(cat data/api-token)
+TOKEN=$(cat .agentd/data/api-token)
 curl -s http://127.0.0.1:8090/healthz
 curl -s http://127.0.0.1:8090/v1/events \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \

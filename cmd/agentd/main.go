@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -22,10 +23,30 @@ func main() {
 		os.Exit(1)
 	}
 }
+// checkLegacyLayout stops a default start next to state from before .agentd/
+// existed. Moving data is left to the operator.
+func checkLegacyLayout(explicitRoot bool) error {
+	if explicitRoot {
+		return nil
+	}
+	if _, e := os.Stat("data/state.db"); e != nil {
+		return nil
+	}
+	if _, e := os.Stat(".agentd"); e == nil {
+		return nil
+	}
+	return errors.New("found state from an older layout in ./data but no ./.agentd; move it with `mkdir .agentd && mv data workspace .agentd/`, or keep the old layout with -root .")
+}
+
 func run() error {
 	config := flag.String("config", "config.yaml", "YAML configuration file")
-	root := flag.String("root", ".", "project-local data and workspace root")
+	root := flag.String("root", ".agentd", "state root directory holding data/ and workspace/")
 	flag.Parse()
+	explicit := false
+	flag.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "root" })
+	if e := checkLegacyLayout(explicit); e != nil {
+		return e
+	}
 	cfg, e := agent.LoadConfig(*config)
 	if e != nil {
 		return e

@@ -6,7 +6,7 @@
 - **第一阶段（已实现，当前基线）**：[第一阶段架构基线](docs/design/01-stage-1-architecture.md)。
 - **第二阶段（部分实现）**：[记忆模块设计](docs/design/02-stage-2-memory.md)。只替换 Memory 组件；已实现运行记录、索引上限和整理，落地方式见该文末节。
 
-**运行时路径**以[运行状态目录与路径约定](docs/design/90-convention-storage-layout.md)为准：目标是仓库下唯一的状态根目录 `.agentd/`，按角色和服务对象隔离；迁移尚未实施，当前仍是仓库下的 `data/` 和 `workspace/`。
+**运行时路径**以[运行状态目录与路径约定](docs/design/90-convention-storage-layout.md)为准：状态根目录是仓库下的 `.agentd/`（`-root` 默认值），按角色和服务对象隔离的分目录尚未实施。随版本发布的模板和内置 skill 在 `internal/agent/defaults/`。
 
 **开发顺序**以[开发路线](docs/design/91-convention-roadmap.md)为准：开始新工作前先确认它在路线中的位置和依赖，完成后更新路线中的状态。
 

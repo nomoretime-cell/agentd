@@ -11,9 +11,9 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("source", help="configured news feed name")
 parser.add_argument("change", help="stable identifier for this change; reuse on retry")
 parser.add_argument("--listen", default="127.0.0.1:8090")
+parser.add_argument("--root", default=".agentd", help="state root passed to agentd -root, relative to the repository")
 args = parser.parse_args()
-root = Path(__file__).resolve().parent.parent
-data = root / "data"
+data = Path(__file__).resolve().parent.parent / args.root / "data"
 token = (data / "api-token").read_text().strip()
 payload = {"key": "news-test:" + args.source + ":" + args.change, "source": args.source}
 request = urllib.request.Request(
@@ -33,6 +33,6 @@ with sqlite3.connect((data / "state.db").as_uri() + "?mode=ro", uri=True) as db:
             raise SystemExit(0 if row[1] == "sent" else 1)
         state = db.execute("SELECT status FROM inbox WHERE id=?", (event["id"],)).fetchone()
         if state and state[0] == "dead":
-            raise SystemExit("Test event failed. See data/agentd.log.")
+            raise SystemExit("Test event failed. See the agentd log.")
         time.sleep(1)
 raise SystemExit("No confirmed receipt yet. Recheck with the same change identifier.")

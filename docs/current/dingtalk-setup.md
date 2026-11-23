@@ -57,7 +57,7 @@ dingtalk:
 ```sh
 chmod 600 config.local.yaml
 make build
-./bin/agentd -config config.local.yaml -root .
+./bin/agentd -config config.local.yaml
 ```
 
 日志出现 `dingtalk stream connected` 后，使用指定测试账号给机器人发一条私聊消息。发现模式只记录 `sender_staff_id`、`conversation_id` 和会话类型，不执行任务、不回复消息、不打印消息正文及 Webhook。
@@ -84,14 +84,14 @@ dingtalk:
 6. 验收四项证据：
 
 - 日志 `dingtalk inbox accepted` 对应一个事件；API `/v1/inbox` 中该事件最终为 `done`。
-- 项目 `workspace/notes/dingtalk-cloud-check.md` 实际存在且内容正确。
+- `.agentd/workspace/notes/dingtalk-cloud-check.md` 实际存在且内容正确。
 - `/v1/outbox` 对应 `dingtalk:<事件 ID>` 的结果为 `sent`。
 - 原测试会话实际收到正确回复，其他会话未收到消息。最后一项需真实钉钉客户端观察，不能用本地测试代替。
 
 本机查询命令：
 
 ```sh
-TOKEN=$(cat data/api-token)
+TOKEN=$(cat .agentd/data/api-token)
 curl -s http://127.0.0.1:8090/v1/status -H "Authorization: Bearer $TOKEN"
 curl -s http://127.0.0.1:8090/v1/inbox -H "Authorization: Bearer $TOKEN"
 curl -s http://127.0.0.1:8090/v1/outbox -H "Authorization: Bearer $TOKEN"

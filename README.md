@@ -7,18 +7,19 @@
 ```sh
 ./scripts/bootstrap
 make build
-./bin/agentd -config config.yaml -root .
+./bin/agentd -config config.yaml
 ```
 
 - 服务：`http://127.0.0.1:8090`，健康检查 `/healthz`。
 - 模型：`http://localhost:8080/v1/chat/completions`，模型名称见 `config.yaml`。
-- API 密钥：首次启动生成 `data/api-token`，除健康检查外均需 Bearer Token。
+- 运行状态：全部位于状态根目录 `.agentd/`（`-root` 指定，默认 `.agentd`），下文的 `data/`、`workspace/` 都指其中的目录。见[运行状态目录与路径约定](docs/design/90-convention-storage-layout.md)。
+- API 密钥：首次启动生成 `.agentd/data/api-token`，除健康检查外均需 Bearer Token。
 - 默认投递：保存到 `data/deliveries/`；普通通知遵循配置中的夜间静默时段。
-- 运行状态：目前位于仓库下的 `data/` 和 `workspace/`（`-root .`）。计划迁入仓库下的 `.agentd/`，迁移前本文命令中的路径保持不变，见[运行状态目录与路径约定](docs/design/90-convention-storage-layout.md)。
+- **从旧布局升级**：旧版本把 `data/`、`workspace/` 放在仓库根目录。检测到旧布局时，默认启动会停止并提示：执行 `mkdir .agentd && mv data workspace .agentd/` 完成迁移，或加 `-root .` 继续使用旧布局。程序不会自动移动数据。
 - Go 工具链、依赖、构建缓存和测试数据均保存在项目 `.tools/`、`.cache/` 中。
 
 ```sh
-TOKEN=$(cat data/api-token)
+TOKEN=$(cat .agentd/data/api-token)
 curl -s http://127.0.0.1:8090/v1/events \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"key":"hello-001","text":"请用 send_message 发送一句你好。"}'
@@ -43,11 +44,11 @@ make dingtalk-live
 
 - **运行记录**：每次运行的输入、工具调用和结果、回答、状态，脱敏后追加到 `data/sessions/YYYY-MM-DD.jsonl`（按配置时区分天）。OpenCode 自带的工具（如 websearch）只能记下 OpenCode 事件里报告的名称、状态、输入，以及截断到 2KB 的输出或失败原因，事件里没有的内容记录不到。模型可以用 `read_file` 分页读取 `sessions/YYYY-MM-DD.jsonl`，不能修改，读取本身不会写入记录；回复会被其他群成员看到的轮次（钉钉群、企微群）不能读取。文件只增不减，备份时包含 `data/sessions/`。
 - **记忆文件**：`workspace/MEMORY.md` 是每次运行都会加载的索引，由模型维护，超过 200 行或 8KB 的写入会被拒绝；细节放在 `workspace/notes/`。
-- **整理**：启用下面的定时器后，agent 每天在静默时段按 `workspace/skills/memory-consolidation/SKILL.md` 对照运行记录检查、修正、合并记忆，进度记在 `notes/memory-consolidation.md`。整理会改写之后每次运行都会读到的记忆，按[设计](docs/design/02-stage-2-memory.md#关键动作与模型分级)应由最强档的外部模型执行；这项模型分级尚未实现，目前整理会使用默认模型；整理也还没有候选版本和回滚（设计见[整理的安全机制](docs/design/02-stage-2-memory.md#整理的安全机制)）。建议在这两项完成前不要启用。把 `active` 改为 `false` 即可停用。
+- **整理**：启用下面的定时器后，agent 每天在静默时段按内置的 `skills/memory-consolidation/SKILL.md`（随程序发布，源文件在 `internal/agent/defaults/skills/`；在 `workspace/skills/` 下放同名文件可覆盖） 对照运行记录检查、修正、合并记忆，进度记在 `notes/memory-consolidation.md`。整理会改写之后每次运行都会读到的记忆，按[设计](docs/design/02-stage-2-memory.md#关键动作与模型分级)应由最强档的外部模型执行；这项模型分级尚未实现，目前整理会使用默认模型；整理也还没有候选版本和回滚（设计见[整理的安全机制](docs/design/02-stage-2-memory.md#整理的安全机制)）。建议在这两项完成前不要启用。把 `active` 改为 `false` 即可停用。
 
 ```sh
 curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
-  -H "Authorization: Bearer $(cat data/api-token)" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $(cat .agentd/data/api-token)" -H 'Content-Type: application/json' \
   -d '{"id":"memory-consolidation","cron_expr":"30 3 * * *","active":true,"prompt":"按 skills/memory-consolidation/SKILL.md 整理记忆。"}'
 ```
 
@@ -60,7 +61,7 @@ curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
 - [钉钉接入步骤](docs/current/dingtalk-setup.md)（首次接入的验证记录见 [reports/2026-11-17-dingtalk-integration.md](docs/reports/2026-11-17-dingtalk-integration.md)）
 - [第一阶段架构基线（已实现）](docs/design/01-stage-1-architecture.md)
 - [第二阶段：记忆模块设计（部分实现）](docs/design/02-stage-2-memory.md)
-- [运行状态目录与路径约定（目标布局，迁移未实施）](docs/design/90-convention-storage-layout.md)
+- [运行状态目录与路径约定（`.agentd/` 已启用，角色分目录未实施）](docs/design/90-convention-storage-layout.md)
 
 默认禁止任意 shell；外部写操作通过配置好的命名 HTTP 操作执行，支持人工审批和结果未知保护。完整实现范围、沙箱平台限制及设计取舍见运行文档。
 
@@ -72,7 +73,7 @@ curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
 
 OpenCode 负责推理和工具循环，每轮可以调用内置 websearch，搜索词通过 TinyFish 查询。文件、通知、定时器及命名动作由本机临时 MCP 接口转交 agentd，沿用工作区权限、审批与动作账本。钉钉回复仍由 Outbox 投递。搜索可直接发“请联网搜索 Go 官方网站，给出来源链接”。
 
-`GET /v1/status` 的 `executor` 显示当前执行器。运行 `tail -f data/agentd.log` 可查看 `opencode run` 的事件号和会话号，以及 `opencode tool` 的工具名和结果状态。真实模型和搜索测试使用临时工作区，可运行 `AGENTD_OC_LIVE=1 ./scripts/go test -v ./internal/agent -run '^TestLiveOpenCodeChat$' -count=1`。
+`GET /v1/status` 的 `executor` 显示当前执行器。如果把日志重定向到 `.agentd/data/agentd.log`，运行 `tail -f .agentd/data/agentd.log` 可查看 `opencode run` 的事件号和会话号，以及 `opencode tool` 的工具名和结果状态。真实模型和搜索测试使用临时工作区，可运行 `AGENTD_OC_LIVE=1 ./scripts/go test -v ./internal/agent -run '^TestLiveOpenCodeChat$' -count=1`。
 
 ## 钉钉 AI 资讯定时私聊
 
@@ -88,7 +89,7 @@ OpenCode 负责推理和工具循环，每轮可以调用内置 websearch，搜�
 
 ```sh
 curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
-  -H "Authorization: Bearer $(cat data/api-token)" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $(cat .agentd/data/api-token)" -H 'Content-Type: application/json' \
   -d '{"id":"ai-news-private","cron_expr":"0 * * * *","active":true,"prompt":"AI 资讯私聊"}'
 ```
 
@@ -97,7 +98,7 @@ curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
 在 `config.local.yaml` 设置 `im.provider: wecom` 并重启，即选择企业微信智能机器人长连接。设置为 `dingtalk` 可切回；省略时沿用钉钉及其 `enabled` 配置。一次只启动一个渠道连接，两端共用本机 SQLite、Inbox、OpenCode、本地模型、Outbox 和新闻定时器。旧渠道的待投递消息保留原目标。
 
 1. 在企业微信创建 **智能机器人 → API 模式 → 长连接**，从后台取得 Bot ID、Secret，并将机器人加入试点内部群。agentd 主动连接企微，不需要公网回调入口。[企微官方长连接协议](https://developer.work.weixin.qq.com/document/path/101463)
-2. 从 [配置模板](config.yaml) 复制 `im` 和 `wecom` 两段到本地配置。填入 `bot_id`、`secret`。若还不知道用户或群 ID，先打开 `discovery_only`，重启后给机器人发私聊并在群里 @ 一次。`tail -f data/agentd.log` 中的 `wecom discovery` 会显示回调的 `userid`、`chatid`。发现模式只记录标识。
+2. 从 [配置模板](config.yaml) 复制 `im` 和 `wecom` 两段到本地配置。填入 `bot_id`、`secret`。若还不知道用户或群 ID，先打开 `discovery_only`，重启后给机器人发私聊并在群里 @ 一次。agentd 日志中的 `wecom discovery` 会显示回调的 `userid`、`chatid`。发现模式只记录标识。
 3. 将本人回调的 `userid` 写入 `owner_userid`，将 `wecom.allow_all_groups` 设为 `true` 后，机器人加入的每个内部群都会自动开放给该群所有成员 @ 提问，新群无需登记或重启。若只开放指定群，设为 `false` 并将群 ID 写入 `allowed_groups`。在 `team_knowledge` 中填写数字员工的角色和可公开给这些群的团队资料（支持 YAML 多行文本）。设置 `discovery_only: false` 后重启。`GET /v1/status` 中检查 `im_provider` 和 `wecom.connected`。
 4. 所有者在私聊中可以使用个人工作区及已授权工具。启用群内的任何成员均可 @ 机器人提问，每位成员在每个群的对话历史独立。默认群聊只使用团队资料和对话历史。显式设置 `wecom.group_owner_tools: true` 并重启后，所有获准群的所有成员都可调用所有者私聊可用的工具，包括 OpenCode 联网搜索和个人工作区读写（例如 `MEMORY.md` 和 `notes/`），结果会发回原群。全局工具策略、文件写入范围和 IM 渠道限制仍然适用。普通未 @ 的群消息是否可见取决于企微回调；此接入处理机器人收到的文本和文本引用。
 5. 需要提醒固定负责人的群可配置 `group_leads: {"群chatid": "负责人userid"}`。原群的结果消息会带指定成员的提及标记，处理中的进度消息不提醒。所有者也可以在群里 @ 机器人后发送 `/提醒 bob 总结今天的问题`，为该任务明确指定 userid。模型生成的提及标记按普通文字处理。用第二位成员的企微客户端验收是否出现实际 @ 提醒。
