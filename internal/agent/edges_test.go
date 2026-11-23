@@ -251,12 +251,58 @@ func TestPayloadEncodingIsStable(t *testing.T) {
 	}{
 		{Payload{Kind: "dingtalk", Text: "hi", imRoutes: imRoutes{DingTalk: &IMRoute{ConversationID: "c", ConversationType: "1", Sender: "u"}}},
 			`{"dingtalk":{"conversation_id":"c","conversation_type":"1","sender":"u","mentioned":false,"session_webhook":"","expires_at":0},"kind":"dingtalk","text":"hi"}`},
-		{Payload{NewsTarget: "wecom-owner:x", Kind: "ai_news", imRoutes: imRoutes{WeCom: &IMRoute{BotID: "b"}}},
+		{Payload{ownerScope: ownerScope{NewsTarget: "wecom-owner:x"}, Kind: "ai_news", imRoutes: imRoutes{WeCom: &IMRoute{BotID: "b"}}},
 			`{"news_target":"wecom-owner:x","wecom":{"bot_id":"b","conversation_id":"","conversation_type":"","sender":"","mentioned":false,"session_webhook":"","expires_at":0},"kind":"ai_news"}`},
 	} {
 		b, err := json.Marshal(c.p)
 		if err != nil || string(b) != c.want {
 			t.Fatalf("payload encoding changed:\n got %s\nwant %s", b, c.want)
+		}
+	}
+}
+
+// Work recorded for the IM provider that is not selected stays queued until it
+// is selected again; work for the selected provider runs.
+func TestClaimParksOtherProviderWork(t *testing.T) {
+	wc := wcConfig().WeCom
+	wecomOwner := "wecom-owner:" + stableID(wc.BotID) + ":" + wc.Owner
+	cases := []struct {
+		name               string
+		payload            string
+		fromDingTalkAction bool
+		dingtalk, wecom    int
+	}{
+		{"dingtalk message", `{"kind":"dingtalk","text":"x"}`, false, 1, 0},
+		{"wecom message", `{"kind":"wecom","text":"x"}`, false, 0, 1},
+		{"legacy unscoped news", `{"kind":"ai_news","text":"x"}`, false, 1, 0},
+		{"wecom scoped news", `{"news_target":"` + wecomOwner + `","kind":"ai_news","text":"x"}`, false, 0, 1},
+		{"approval from dingtalk event", `{"kind":"approval","action_id":"a1"}`, true, 1, 0},
+		{"local message", `{"kind":"message","text":"x"}`, false, 1, 1},
+	}
+	for _, c := range cases {
+		for provider, want := range map[string]int{"dingtalk": c.dingtalk, "wecom": c.wecom} {
+			cfg := dtConfig()
+			if provider == "wecom" {
+				cfg = wcConfig()
+			}
+			s := openTest(t, cfg, finalModel())
+			if c.fromDingTalkAction {
+				res, err := s.db.Exec("INSERT INTO inbox(dedup_key,payload,available_at,status) VALUES('origin',?,0,'done')", `{"kind":"dingtalk","text":"o"}`)
+				if err != nil {
+					t.Fatal(err)
+				}
+				origin, _ := res.LastInsertId()
+				if _, err = s.db.Exec("INSERT INTO actions(id,dedup_key,tool_name,tool_args,status,expires_at) VALUES('a1',?,'x','{}','approved',0)", "ev:"+strconv.FormatInt(origin, 10)+":1"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := s.db.Exec("INSERT INTO inbox(dedup_key,payload,available_at) VALUES('case',?,0)", c.payload); err != nil {
+				t.Fatal(err)
+			}
+			batch, err := s.claim(context.Background())
+			if err != nil || len(batch) != want {
+				t.Errorf("%s under %s: claimed %d, want %d (%v)", c.name, provider, len(batch), want, err)
+			}
 		}
 	}
 }

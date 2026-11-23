@@ -57,10 +57,24 @@ func (s *Service) admitBusiness(p *Payload, key *string) (bool, error) {
 // timerEvent returns the Inbox payload a due timer raises.
 func (s *Service) timerEvent(t Timer) Payload {
 	if t.ID == newsTimerID {
-		return Payload{Kind: "ai_news", Text: t.Prompt, NewsTarget: s.newsScope()}
+		return Payload{Kind: "ai_news", Text: t.Prompt, ownerScope: ownerScope{NewsTarget: s.eventScope()}}
 	}
 	return Payload{Kind: "timer", Text: t.Prompt}
 }
+
+// ownerScope records which owner a news event was raised for. The JSON field
+// name is part of the stored data format.
+type ownerScope struct {
+	NewsTarget string `json:"news_target,omitempty"`
+}
+
+// News events raised for one owner wait while another IM provider is selected.
+// scopedKinds lists their kinds as a JSON array for the Inbox query, and
+// scopeField is the payload path that stores the owner.
+const (
+	scopedKinds = `["news_test","ai_news"]`
+	scopeField  = "$.news_target"
+)
 
 type newsItem struct {
 	Title, Link string
@@ -249,7 +263,7 @@ func (s *Service) newsDigest(ctx context.Context, ev Event, items []newsItem) (O
 		// the initial polls had no articles or the model was offline.
 		var firstKey string
 		if err := s.read.QueryRowContext(ctx, `SELECT COALESCE((SELECT dedup_key FROM inbox
-			WHERE dedup_key GLOB 'timer:ai-news-private:*' AND COALESCE(json_extract(payload,'$.news_target'),'')=? ORDER BY id LIMIT 1),'')`, s.newsScope()).Scan(&firstKey); err != nil {
+			WHERE dedup_key GLOB 'timer:ai-news-private:*' AND COALESCE(json_extract(payload,'$.news_target'),'')=? ORDER BY id LIMIT 1),'')`, s.eventScope()).Scan(&firstKey); err != nil {
 			return out, err
 		}
 		if _, due, ok := strings.Cut(firstKey, "timer:"+newsTimerID+":"); ok {
@@ -377,8 +391,9 @@ func (s *Service) translateHeadlines(ctx context.Context, items []newsItem) erro
 	return nil
 }
 
-// Legacy DingTalk timer and test events have no news_target in their payload.
-func (s *Service) newsScope() string {
+// eventScope is the owner scope that may run now. Legacy DingTalk timer and
+// test events have no news_target in their payload.
+func (s *Service) eventScope() string {
 	if s.cfg.provider() == "wecom" {
 		return s.ownerTarget()
 	}

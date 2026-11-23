@@ -73,16 +73,17 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 func (s *Service) claim(ctx context.Context) (batch []Event, err error) {
 	// Caller holds s.mu. Dead heads deliberately block until an authenticated operator resolves them.
 	err = transaction(ctx, s.db, func(tx *sql.Tx) error {
+		parked := s.cfg.parkedEventKind()
 		// An outstanding approval belongs to the channel that created its action.
 		// Keep old-channel work queued until that provider is selected again.
 		rows, e := tx.QueryContext(ctx, `SELECT id,dedup_key,payload,available_at,status,retries FROM inbox AS i
 WHERE status IN ('pending','running','dead') AND json_extract(payload,'$.kind') != ?
-AND (json_extract(payload,'$.kind') NOT IN ('news_test','ai_news') OR COALESCE(json_extract(payload,'$.news_target'),'')=?)
+AND (json_extract(payload,'$.kind') NOT IN (SELECT value FROM json_each(?)) OR COALESCE(json_extract(payload,?),'')=?)
 AND (json_extract(payload,'$.kind') != 'approval' OR NOT EXISTS (
  SELECT 1 FROM actions a JOIN inbox origin ON origin.id=CAST(substr(a.dedup_key,4) AS INTEGER)
  WHERE a.id=json_extract(i.payload,'$.action_id') AND a.dedup_key GLOB 'ev:[0-9]*:*'
  AND json_extract(origin.payload,'$.kind')=?))
-ORDER BY id LIMIT ?`, s.cfg.inactiveProvider(), s.newsScope(), s.cfg.inactiveProvider(), s.cfg.Limits.MaxBatch)
+ORDER BY id LIMIT ?`, parked, scopedKinds, scopeField, s.eventScope(), parked, s.cfg.Limits.MaxBatch)
 		if e != nil {
 			return e
 		}

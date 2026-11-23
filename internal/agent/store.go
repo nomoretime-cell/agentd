@@ -47,8 +47,8 @@ type Event struct {
 	Retries     int     `json:"retries"`
 }
 type Payload struct {
-	NewsTarget string `json:"news_target,omitempty"`
-	// Field order is part of the stored format: insertEvent compares payload bytes.
+	// Embedded field order is part of the stored format: insertEvent compares payload bytes.
+	ownerScope
 	imRoutes
 	Kind      string          `json:"kind"`
 	Text      string          `json:"text,omitempty"`

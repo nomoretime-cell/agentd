@@ -76,6 +76,10 @@ func imOwnerTarget(target string) bool {
 	return strings.HasPrefix(target, "dingtalk-owner:") || strings.HasPrefix(target, "wecom-owner:")
 }
 
+// IM events of the provider that is not selected stay queued until it is
+// selected again. Their kind is the provider name.
+func (c Config) parkedEventKind() string { return c.inactiveProvider() }
+
 // Targets of the provider that is not selected stay queued until it is selected again.
 func (c Config) parkedTargetGlobs() (reply, owner string) {
 	return c.inactiveProvider() + ":*", c.inactiveProvider() + "-owner:*"
