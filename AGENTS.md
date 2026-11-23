@@ -8,6 +8,8 @@
 
 **运行时路径**以[运行状态目录与路径约定](docs/design/90-convention-storage-layout.md)为准：目标是仓库下唯一的状态根目录 `.agentd/`，按角色和服务对象隔离；迁移尚未实施，当前仍是仓库下的 `data/` 和 `workspace/`。
 
+**开发顺序**以[开发路线](docs/design/91-convention-roadmap.md)为准：开始新工作前先确认它在路线中的位置和依赖，完成后更新路线中的状态。
+
 文档分类与相互关系见 [docs/README.md](docs/README.md)。`docs/archive/` 下是早期草稿，仅供参考，与上面几份冲突时以上面几份为准。维护已有功能时，同时查看当前实现、测试和 [README](README.md)，保留现有数据和调用方依赖的行为。
 
 ## 设计理念

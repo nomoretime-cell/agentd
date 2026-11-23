@@ -26,6 +26,7 @@
 
 90-convention-storage-layout.md     跨阶段约定：运行状态目录与路径（目标布局，迁移未实施）
                                     被第二阶段及之后的设计引用
+91-convention-roadmap.md            跨阶段约定：开发路线，把各设计文档的后续步骤排成一条顺序
 
 archive/                            第一阶段之前的草稿，stage-1 由它们收敛而来
 ```
@@ -38,6 +39,7 @@ archive/                            第一阶段之前的草稿，stage-1 由它
 | [design/01-stage-1-architecture.md](design/01-stage-1-architecture.md) | 第一阶段架构基线：1 个进程、5 个组件、4 张表、6 个工具 | 已实现 |
 | [design/02-stage-2-memory.md](design/02-stage-2-memory.md) | 第二阶段记忆模块：四类数据、三个机制、关键动作与模型分级、作用域 | 部分实现 |
 | [design/90-convention-storage-layout.md](design/90-convention-storage-layout.md) | 运行状态目录 `.agentd/`、虚拟路径、作用域隔离、路径开发约定 | 目标已定，迁移未实施 |
+| [design/91-convention-roadmap.md](design/91-convention-roadmap.md) | 开发路线：现状、阶段 A–D 的顺序与依赖、完成标准、待决定事项 | 阶段 A 未开始 |
 | [current/architecture.md](current/architecture.md) | 当前软件架构：模块与文件、4 张表、事件/审批/记忆数据流、运行状态位置 | 随代码更新 |
 | [current/operations.md](current/operations.md) | 启动、HTTP 接口、工具与权限、审批与故障恢复、运维 | 随代码更新 |
 | [current/dingtalk-setup.md](current/dingtalk-setup.md) | 钉钉执行路径、接入步骤、复现测试与当前边界 | 随代码更新 |
