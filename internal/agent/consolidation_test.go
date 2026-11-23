@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -321,5 +324,70 @@ func TestEvidenceIgnoresModelWrittenText(t *testing.T) {
 	}
 	if _, err := consolidate(s); err == nil || !strings.Contains(err.Error(), "does not appear") {
 		t.Fatalf("model-written text accepted as evidence: %v", err)
+	}
+}
+
+// End to end: the timer raises consolidation, the worker runs it on the strong
+// tier through its HTTP client, and checked memory becomes current. The
+// default model is never called and group records never reach the service.
+func TestConsolidationEndToEnd(t *testing.T) {
+	day := todaySessions()
+	note := noteWith(ownerQuote, day+"@0", "用户偏好简短回答。\n")
+	var requests []string
+	step := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		requests = append(requests, string(b))
+		var req struct{ Messages []Message }
+		_ = json.Unmarshal(b, &req)
+		var msg Message
+		switch step {
+		case 0:
+			msg = call("read_file", `{"path":"`+day+`"}`)
+		case 1:
+			msg = writeCall("notes/style.md", note, "absent")
+		case 2:
+			msg = call("read_file", `{"path":"MEMORY.md"}`)
+		case 3:
+			var page struct {
+				SHA string `json:"sha256"`
+			}
+			_ = json.Unmarshal([]byte(req.Messages[len(req.Messages)-1].Content), &page)
+			msg = writeCall("MEMORY.md", "- 回答风格：简短 (notes/style.md)\n", page.SHA)
+		case 4:
+			msg = writeCall("notes/memory-consolidation.md", "day: today\n", "absent")
+		default:
+			msg = Message{Role: "assistant", Content: "Updated style.md."}
+		}
+		step++
+		out, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"message": msg, "finish_reason": "stop"}}})
+		_, _ = w.Write(out)
+	}))
+	defer srv.Close()
+	c := testConfig()
+	c.StrongModel.Enabled = true
+	c.StrongModel.Endpoint = srv.URL + "/v1/chat/completions"
+	c.StrongModel.Name = "strong"
+	s := openTest(t, c, failingModel(t))
+	owner := runScope{Role: defaultRole, Principal: "owner", Conversation: "c"}
+	rec := map[string]any{"type": "run", "inputs": []map[string]any{{"text": ownerQuote}}}
+	owner.stamp(rec)
+	s.appendTranscript(rec)
+	rec = map[string]any{"type": "run", "inputs": []map[string]any{{"text": "群里的秘密计划不要外传"}}}
+	runScope{Role: defaultRole, Principal: "group-1", Conversation: "g"}.stamp(rec)
+	s.appendTranscript(rec)
+	s.Start(context.Background())
+	fireConsolidation(t, s)
+	waitFor(t, 5*time.Second, func() bool { return count(t, s, "SELECT count(*) FROM inbox WHERE status='done'") == 1 })
+	if current(t, s, "notes/style.md") != note {
+		t.Fatalf("memory not promoted; metrics: %v", lastMetric(t, s))
+	}
+	for _, body := range requests {
+		if strings.Contains(body, "群里的秘密计划") {
+			t.Fatal("group record sent to the strong service")
+		}
+	}
+	if m := lastMetric(t, s); m["result"] != "promoted" {
+		t.Fatalf("metric %v", m)
 	}
 }

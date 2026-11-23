@@ -2,7 +2,7 @@
 
 2026-11-23 · 在线版本（初稿，之后以本文件为准）：https://claude.ai/artifact/LJaZjYaeUwyB6RXt674s4V
 
-> **文档状态：第二阶段设计，演进路线的第 1、2 步已实现（2026-11），其余仍是草案。** 本文以[第一阶段架构基线](01-stage-1-architecture.md)为前提，只替换其中的 Memory 组件，其余四个组件（Inbox、Timers、Permissions、Outbox）保持不变。落地方式见文末[在 agentd 中的落地](#在-agentd-中的落地)。
+> **文档状态：第二阶段设计，演进路线的第 1、2 步（含 2a 模型分级、2b 整理安全机制）已实现（2026-11-23），第 3 步起仍是草案。** 本文以[第一阶段架构基线](01-stage-1-architecture.md)为前提，只替换其中的 Memory 组件，其余四个组件（Inbox、Timers、Permissions、Outbox）保持不变。落地方式见文末[在 agentd 中的落地](#在-agentd-中的落地)。
 >
 > - **取代基线的部分**：`session.jsonl` 从"可丢弃的滑动缓存"改为"只追加的完整原始记录"（`sessions/`）；目录结构从 `workspace/notes` 改为 `memory/`、`skills/`、`skills-drafts/`、`knowledge/`；新增"整理"（由 Timers 触发的一次普通会话），不新增后台循环。
 > - **与基线预算的冲突，需要单独决策**：用 SQLite FTS5 实现 `search` 会新增一张表，超出"4 张表"的预算。第一步改用文件检索（grep），可以不新增表。
