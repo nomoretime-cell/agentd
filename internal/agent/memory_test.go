@@ -287,27 +287,74 @@ func TestReadPagesSurviveEscaping(t *testing.T) {
 		t.Fatal(err)
 	}
 	for path, want := range map[string]string{"sessions/2026-01-02.jsonl": transcript, "notes/escaped.md": note[:s.cfg.Limits.MaxOutputBytes-1]} {
-		var got strings.Builder
-		for offset, pages := 0, 0; offset < len(want); pages++ {
-			if pages > 100 {
-				t.Fatalf("%s: paging does not advance", path)
-			}
-			res, _, err := s.tool(context.Background(), "r", ToolCall{Function: FunctionCall{Name: "read_file", Arguments: fmt.Sprintf(`{"path":%q,"offset":%d}`, path, offset)}}, "", &Outcome{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			var page struct {
-				Content    string
-				NextOffset int `json:"next_offset"`
-			}
-			if err = json.Unmarshal([]byte(s.bounded(res)), &page); err != nil || page.NextOffset <= offset {
-				t.Fatalf("%s at %d: page unusable after the loop's cut (%v)", path, offset, err)
-			}
-			got.WriteString(page.Content)
-			offset = page.NextOffset
-		}
-		if got.String() != want {
+		if pageThrough(t, s, path, len(want)) != want {
 			t.Fatalf("%s: pages do not reassemble the file", path)
 		}
 	}
+}
+
+// pageThrough reads a file the way the native loop delivers read_file results
+// (redacted, then cut to max_output_bytes) and fails unless every page is
+// complete JSON whose cursor advances to the end.
+func pageThrough(t *testing.T, s *Service, path string, size int) string {
+	t.Helper()
+	var got strings.Builder
+	for offset, pages := 0, 0; offset < size; pages++ {
+		if pages > 10000 {
+			t.Fatalf("%s: paging does not advance", path)
+		}
+		res, _, err := s.tool(context.Background(), "r", ToolCall{Function: FunctionCall{Name: "read_file", Arguments: fmt.Sprintf(`{"path":%q,"offset":%d}`, path, offset)}}, "", &Outcome{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var page struct {
+			Content    string
+			NextOffset int `json:"next_offset"`
+		}
+		if err = json.Unmarshal([]byte(s.bounded(res)), &page); err != nil || page.NextOffset <= offset {
+			t.Fatalf("%s at %d: page unusable as delivered (%v, next_offset=%d)", path, offset, err, page.NextOffset)
+		}
+		got.WriteString(page.Content)
+		offset = page.NextOffset
+	}
+	return got.String()
+}
+
+// A small but valid output limit still pages forward; one too small to hold
+// any content says so instead of returning a page that never advances.
+func TestReadPagesWithSmallOutputLimit(t *testing.T) {
+	c := testConfig()
+	c.Limits.MaxOutputBytes = 256
+	s := openTest(t, c, finalModel())
+	note := "hello, 长短不一的笔记\n" + strings.Repeat("line\n", 20)
+	if err := s.workspaceWrite("notes/small.md", note[:min(len(note), 250)], "absent"); err != nil {
+		t.Fatal(err)
+	}
+	if got := pageThrough(t, s, "notes/small.md", min(len(note), 250)); got != note[:min(len(note), 250)] {
+		t.Fatal("pages do not reassemble the note")
+	}
+
+	c = testConfig()
+	c.Limits.MaxOutputBytes = 128
+	s = openTest(t, c, finalModel())
+	if err := s.workspaceWrite("notes/hello.md", "hello", "absent"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := s.tool(context.Background(), "r", ToolCall{Function: FunctionCall{Name: "read_file", Arguments: `{"path":"notes/hello.md"}`}}, "", &Outcome{})
+	if err == nil || !strings.Contains(err.Error(), "max_output_bytes") {
+		t.Fatalf("no capacity error: %v", err)
+	}
+}
+
+// Redaction can lengthen a page after it is encoded; the page must still
+// arrive as complete JSON.
+func TestReadPagesSurviveRedaction(t *testing.T) {
+	c := testConfig()
+	c.Model.APIKey = "k3y!"
+	s := openTest(t, c, finalModel())
+	note := strings.Repeat("k3y!", 3000)
+	if err := s.workspaceWrite("notes/keys.md", note, "absent"); err != nil {
+		t.Fatal(err)
+	}
+	pageThrough(t, s, "notes/keys.md", len(note))
 }

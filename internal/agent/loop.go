@@ -142,12 +142,12 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 	return out, errors.New("maximum model steps reached")
 }
 
-// readPage encodes one read_file page. JSON escaping can multiply the page's
-// size, so the page shrinks until the encoded result fits the tool result
-// limit; the caller never receives cut-off JSON or a lost next_offset.
-func (s *Service) readPage(fields map[string]any, page []byte, offset int) string {
-	// Leave room for redaction, which bounded() applies before its cut.
-	limit := s.cfg.Limits.MaxOutputBytes - 256
+// readPage encodes one read_file page. JSON escaping and redaction can both
+// lengthen it, so the page shrinks until the result, redacted exactly as the
+// model will receive it, fits max_output_bytes. The cursor still advances by
+// file bytes consumed. A page that cannot hold even one character is a
+// capacity error, never an empty page that leaves the cursor in place.
+func (s *Service) readPage(fields map[string]any, page []byte, offset, size int) (string, error) {
 	for {
 		fields["content"] = string(page)
 		fields["next_offset"] = offset + len(page)
@@ -155,8 +155,15 @@ func (s *Service) readPage(fields map[string]any, page []byte, offset int) strin
 		enc := json.NewEncoder(&buf)
 		enc.SetEscapeHTML(false)
 		_ = enc.Encode(fields)
-		if res := strings.TrimSuffix(buf.String(), "\n"); len(res) <= limit || len(page) == 0 {
-			return res
+		res := strings.TrimSuffix(buf.String(), "\n")
+		if len(s.redact(res)) <= s.cfg.Limits.MaxOutputBytes {
+			if len(page) == 0 && offset < size {
+				break
+			}
+			return res, nil
+		}
+		if len(page) == 0 {
+			break
 		}
 		page = page[:len(page)/2]
 		if i := bytes.LastIndexByte(page, '\n'); i >= 0 {
@@ -165,6 +172,7 @@ func (s *Service) readPage(fields map[string]any, page []byte, offset int) strin
 			page = trimPartialRune(page)
 		}
 	}
+	return "", fmt.Errorf("read_file cannot fit any content at offset %d within limits.max_output_bytes=%d; raise that limit", offset, s.cfg.Limits.MaxOutputBytes)
 }
 
 // trimPartialRune drops an incomplete UTF-8 sequence at the end of a page.
@@ -218,7 +226,8 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 			if e != nil {
 				return "", nil, e
 			}
-			return s.readPage(map[string]any{"path": a.Path, "size": size}, page, a.Offset), nil, nil
+			res, e := s.readPage(map[string]any{"path": a.Path, "size": size}, page, a.Offset, int(size))
+			return res, nil, e
 		}
 		b, e := s.workspaceRead(a.Path)
 		if e != nil {
@@ -231,7 +240,8 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if a.Offset+len(page) < len(b) {
 			page = trimPartialRune(page)
 		}
-		return s.readPage(map[string]any{"path": a.Path, "sha256": digest(b), "size": len(b)}, page, a.Offset), nil, nil
+		res, e := s.readPage(map[string]any{"path": a.Path, "sha256": digest(b), "size": len(b)}, page, a.Offset, len(b))
+		return res, nil, e
 	case "write_file":
 		var a struct {
 			Path     string `json:"path"`
