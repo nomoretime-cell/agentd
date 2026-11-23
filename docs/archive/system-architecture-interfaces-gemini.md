@@ -1,6 +1,6 @@
 # agentd 系统全景架构与 Go 模块接口契约
 
-> **设计基准**：综合 [README.md](../README.md)（Anthropic 五大原语）、[always-on-agent-design-codex-latest.md](always-on-agent-design-codex-latest.md)（总体架构与安全不变量）与 [event-inbox-design-codex.md](event-inbox-design-codex.md)（Event Inbox Go 实现规格）。
+> **设计基准**：综合 [README.md](../design/background-always-on-agents.md)（Anthropic 五大原语）、[always-on-agent-design-codex-latest.md](always-on-agent-design-codex-latest.md)（总体架构与安全不变量）与 [event-inbox-design-codex.md](event-inbox-design-codex.md)（Event Inbox Go 实现规格）。
 > **定位**：面向 Go 编码落地的**模块划分、进程/存储隔离边界与跨模块接口定义蓝图**。
 
 ---

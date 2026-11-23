@@ -4,7 +4,7 @@
 >
 > - **后续阶段**：[第二阶段：记忆模块设计（部分实现）](stage-2-memory-design.md)。它将取代本文中 Memory 组件的部分：§1 表格中的 Memory 行、§3 中的 `workspace/` 目录与 `session.jsonl`，以及 §4.2 第 4 条。
 > - **路径**：§3 中的 `data/`、`workspace/` 位于仓库目录下。目标是迁入仓库下的状态根目录 `.agentd/` 并按角色隔离，见[运行状态目录与路径约定](storage-layout.md)。
-> - **实现后的扩展**：第一阶段完成后新增了钉钉和企微 IM 渠道、新闻推送、OpenCode 执行器（`im.go`、`dingtalk.go`、`wecom.go`、`news.go`、`opencode.go` 等），本文没有覆盖。它们曾把渠道和业务的判断写进 Inbox、Outbox 和执行循环，偏离了本文"渠道只是 Outbox 的投递目标"的边界；2026-11 已集中迁移到渠道接口和业务入口，接入方式见 [AGENTS.md](../AGENTS.md) 的"架构不变量"。规模预算（4 张表、26 个字段、6 个工具）未变。
+> - **实现后的扩展**：第一阶段完成后新增了钉钉和企微 IM 渠道、新闻推送、OpenCode 执行器（`im.go`、`dingtalk.go`、`wecom.go`、`news.go`、`opencode.go` 等），本文没有覆盖。它们曾把渠道和业务的判断写进 Inbox、Outbox 和执行循环，偏离了本文"渠道只是 Outbox 的投递目标"的边界；2026-11 已集中迁移到渠道接口和业务入口，接入方式见 [AGENTS.md](../../AGENTS.md) 的"架构不变量"。规模预算（4 张表、26 个字段、6 个工具）未变。
 
 **原标题**：agentd 五大原语最简系统设计（Minimal Complete Edition）
 
@@ -128,7 +128,7 @@ CREATE INDEX idx_outbox_due ON outbox(status, deliver_at);
 2. **为什么把 `approvals` 扩展为 8 列的 `actions` 表**：
    仅记录 `approved` 无法防止“远端写动作已成功、但本地事件标 `done` 前崩溃导致重启二次执行”。将人工审批（`ask`）与自动放行（`allow`）的**外部写动作**统一记入 `actions`：发起远端请求前先短事务置 `executing`，明确成功后存 `result` 并置 `succeeded`，超时断连或崩溃遗留 `executing` 统一转 `unknown`（停止自动重发，等待核对）。纯只读工具与写本地 `workspace/` 笔记无需进此表。
 3. **Outbox 的 `sending -> unknown` 与防重历史复用**：
-   发送前短事务先将 `pending` 改为 `sending`，网络调用在事务外进行；超时、断连或进程重启发现遗留 `sending` 时统一转为 `unknown`（不盲目重发，交人工确认或渠道幂等查询）。同时查询最近 10 条 `status = 'sent'` 记录即可作为 [README.md](README.md) 中的 **Past messages（已发通知防重参考）**。
+   发送前短事务先将 `pending` 改为 `sending`，网络调用在事务外进行；超时、断连或进程重启发现遗留 `sending` 时统一转为 `unknown`（不盲目重发，交人工确认或渠道幂等查询）。同时查询最近 10 条 `status = 'sent'` 记录即可作为 [背景文章解析](background-always-on-agents.md)中的 **Past messages（已发通知防重参考）**。
 
 ---
 

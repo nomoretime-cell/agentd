@@ -24,6 +24,6 @@
 - 验证链路：HTTP 输入 → 模型原生工具调用 → 写笔记 → Outbox 本地投递；后续回合读取相同笔记；持久化定时器触发 → 模型通知；审批挂起 → 人工批准 API → loopback 模拟远端写一次 → 模型读取回执并通知。
 - 所有远端写验证只指向测试期间创建的本机 HTTP 接收器，没有发送真实业务消息。
 
-详细证据：[真实模型报告](../.cache/live-e2e/20261116T165506.952229000/report.json)、[二进制报告](../.cache/binary-e2e/20261116T165515922207/report.json)。这些运行产物位于被 Git 忽略的项目缓存中；清理缓存后可使用 `make live` 和 `python3 scripts/smoke.py` 重新生成。
+详细证据：[真实模型报告](../../.cache/live-e2e/20261116T165506.952229000/report.json)、[二进制报告](../../.cache/binary-e2e/20261116T165515922207/report.json)。这些运行产物位于被 Git 忽略的项目缓存中；清理缓存后可使用 `make live` 和 `python3 scripts/smoke.py` 重新生成。
 
 测试验证当前平台和当前模型的这些路径，不代表所有第三方 API 均已接入或能够承诺外部副作用恰好一次。Linux bubblewrap 分支未在本次 macOS 环境实机验证；原生 IM 渠道需后续适配，当前提供本地投递和通用 Webhook。
