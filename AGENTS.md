@@ -4,7 +4,7 @@
 
 **架构基准按阶段划分：**
 - **第一阶段（已实现，当前基线）**：[第一阶段架构基线](docs/stage-1-architecture-baseline.md)。
-- **第二阶段（草案，未实现）**：[记忆模块设计](docs/stage-2-memory-design.md)。只替换 Memory 组件。
+- **第二阶段（部分实现）**：[记忆模块设计](docs/stage-2-memory-design.md)。只替换 Memory 组件；已实现运行记录、索引上限和整理，落地方式见该文末节。
 
 `docs/archive/` 下是早期草稿，仅供参考，与上面两份冲突时以上面两份为准。维护已有功能时，同时查看当前实现、测试和 [README](README.md)，保留现有数据和调用方依赖的行为。
 
@@ -41,7 +41,7 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 | --- | --- | --- |
 | Event Inbox · `inbox.go` | 事件去重、合批、顺序领取、失败退避与批次提交 | 渠道校验并归一化输入后落库，再确认接收。需要与其他写入原子提交时，复用 `store.go` 的 `insertEvent`。 |
 | Timers · `timers.go` | 计划何时到期、下一次何时触发 | 到期事件入 Inbox 与更新计划共用一个短事务。具体业务由 Worker 执行。 |
-| Memory · `memory.go` | 工作区读写、文件版本冲突、提示上下文与会话缓存 | 工具复用 `workspaceRead`、`workspaceWrite`。判断动作是否执行、消息是否发送，分别查 Actions 和 Outbox 回执。 |
+| Memory · `memory.go` | 工作区读写、文件版本冲突、MEMORY.md 上限、提示上下文、会话缓存与运行记录（`data/sessions/`） | 工具复用 `workspaceRead`、`workspaceWrite`；运行记录只由 `appendTranscript` 写入。判断动作是否执行、消息是否发送，分别查 Actions 和 Outbox 回执，不查运行记录。 |
 | Permissions · `permissions.go`、`sandbox.go` | 受控外部动作的授权、冻结参数、审批、执行与核对；本地命令隔离 | 执行器调用宿主工具入口。获批后按原动作记录执行，业务代码复用动作账本。 |
 | Outbox · `outbox.go` | 通知入队、投递时机、重试与结果状态 | 业务返回 `Outcome.Notifications`，批次提交复用 `enqueueTx`；渠道适配器执行一次发送并解释平台回执，Outbox 据此推进状态。 |
 

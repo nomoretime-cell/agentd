@@ -38,12 +38,24 @@ make dingtalk-live
 
 `make live` 和二进制测试使用真实本地模型，只向本地测试接收器发送请求，报告位于 `.cache/live-e2e/` 和 `.cache/binary-e2e/`。`make dingtalk-live` 使用真实本地模型与模拟钉钉传输，报告位于 `.cache/dingtalk-e2e/`；它不代表真实钉钉云端验收。其他测试不依赖模型服务。
 
+## 记忆
+
+- **运行记录**：每次运行的输入、工具调用和结果、回答、状态，脱敏后追加到 `data/sessions/YYYY-MM-DD.jsonl`（按配置时区分天）。模型可以用 `read_file` 读取 `sessions/YYYY-MM-DD.jsonl`，但不能修改；群聊轮次不能读取。文件只增不减，备份时包含 `data/sessions/`。
+- **记忆文件**：`workspace/MEMORY.md` 是每次运行都会加载的索引，由模型维护，超过 200 行或 8KB 的写入会被拒绝；细节放在 `workspace/notes/`。
+- **整理**：启用下面的定时器后，agent 每天在静默时段按 `workspace/skills/memory-consolidation/SKILL.md` 对照运行记录检查、修正、合并记忆，进度记在 `notes/memory-consolidation.md`。每次整理是一次普通运行，会消耗模型调用；把 `active` 改为 `false` 即可停用。
+
+```sh
+curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
+  -H "Authorization: Bearer $(cat data/api-token)" -H 'Content-Type: application/json' \
+  -d '{"id":"memory-consolidation","cron_expr":"30 3 * * *","active":true,"prompt":"按 skills/memory-consolidation/SKILL.md 整理记忆。"}'
+```
+
 ## 文档
 
 - [钉钉接入、验证结果与真实会话联调](docs/dingtalk-validation-codex.md)
 - [运行、API、权限与故障恢复](docs/implementation-codex.md)
 - [第一阶段架构基线（已实现）](docs/stage-1-architecture-baseline.md)
-- [第二阶段：记忆模块设计（草案）](docs/stage-2-memory-design.md)
+- [第二阶段：记忆模块设计（部分实现）](docs/stage-2-memory-design.md)
 - [早期设计草稿（已归档）](docs/archive/README.md)
 - [原始文章架构解析](docs/README.md)
 

@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -107,5 +110,21 @@ func TestTranscriptRecordsRunsAndToolCalls(t *testing.T) {
 	write := ToolCall{Function: FunctionCall{Name: "write_file", Arguments: `{"path":"` + name + `","content":"x","expected_hash":"absent"}`}}
 	if _, _, err = s.tool(context.Background(), "w1", write, "", &Outcome{}); !errors.Is(err, ErrDenied) {
 		t.Fatalf("transcript writable: %v", err)
+	}
+}
+
+// An index edited directly on disk is cut to the same cap when it loads.
+func TestMemoryIndexClippedAtAssembly(t *testing.T) {
+	s := openTest(t, testConfig(), finalModel())
+	var b strings.Builder
+	for i := 1; i <= memoryIndexMaxLines+50; i++ {
+		fmt.Fprintf(&b, "- entry-%d\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(s.root, "workspace/MEMORY.md"), []byte(b.String()), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p := s.systemPrompt()
+	if !strings.Contains(p, fmt.Sprintf("- entry-%d\n", memoryIndexMaxLines)) || strings.Contains(p, fmt.Sprintf("- entry-%d\n", memoryIndexMaxLines+1)) {
+		t.Fatal("index not clipped to its line cap")
 	}
 }

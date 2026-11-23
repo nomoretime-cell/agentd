@@ -259,6 +259,18 @@ const (
 	memoryIndexMaxBytes = 8 << 10
 )
 
+// clipMemoryIndex applies the write-time cap again when the prompt is built,
+// covering an index edited directly on disk.
+func clipMemoryIndex(v string) string {
+	if lines := strings.SplitAfter(v, "\n"); len(lines) > memoryIndexMaxLines {
+		v = strings.Join(lines[:memoryIndexMaxLines], "")
+	}
+	if len(v) > memoryIndexMaxBytes {
+		v = strings.ToValidUTF8(v[:memoryIndexMaxBytes], "")
+	}
+	return v
+}
+
 const memoryGuide = "Memory exists so you serve this user better over time; you decide what to keep. MEMORY.md is your index and loads every run: keep it under 200 lines, one line per topic naming the notes/ file that holds the details. Save only what later runs cannot see elsewhere: preferences, decisions, tested rules, plans and pitfalls. Past runs are recorded read-only in sessions/YYYY-MM-DD.jsonl; read them when the user refers to earlier work.\n"
 
 func (s *Service) systemPrompt() string { return s.systemPromptFor(true) }
@@ -271,7 +283,11 @@ func (s *Service) systemPromptFor(includeHistory bool) string {
 	for _, name := range []string{"IDENTITY.md", "MEMORY.md"} {
 		v, e := s.workspaceRead(name)
 		if e == nil {
-			b.WriteString("\n--- " + name + " ---\n" + s.bounded(string(v)))
+			text := string(v)
+			if name == "MEMORY.md" {
+				text = clipMemoryIndex(text)
+			}
+			b.WriteString("\n--- " + name + " ---\n" + s.bounded(text))
 		}
 	}
 	b.WriteString("\nConfigured named operations (invoke via bash action/arguments):\n")

@@ -1,8 +1,8 @@
-# agentd 第二阶段：记忆模块设计（草案）
+# agentd 第二阶段：记忆模块设计（部分实现）
 
 2026-11-23 · 在线版本：https://claude.ai/artifact/LJaZjYaeUwyB6RXt674s4V
 
-> **文档状态：第二阶段设计草案，尚未实现。** 本文以[第一阶段架构基线](stage-1-architecture-baseline.md)为前提，只替换其中的 Memory 组件，其余四个组件（Inbox、Timers、Permissions、Outbox）保持不变。
+> **文档状态：第二阶段设计，演进路线的第 1、2 步已实现（2026-11），其余仍是草案。** 本文以[第一阶段架构基线](stage-1-architecture-baseline.md)为前提，只替换其中的 Memory 组件，其余四个组件（Inbox、Timers、Permissions、Outbox）保持不变。落地方式见文末[在 agentd 中的落地](#在-agentd-中的落地)。
 >
 > - **取代基线的部分**：`session.jsonl` 从"可丢弃的滑动缓存"改为"只追加的完整原始记录"（`sessions/`）；目录结构从 `workspace/notes` 改为 `memory/`、`skills/`、`skills-drafts/`、`knowledge/`；新增"整理"（由 Timers 触发的一次普通会话），不新增后台循环。
 > - **与基线预算的冲突，需要单独决策**：用 SQLite FTS5 实现 `search` 会新增一张表，超出"4 张表"的预算。第一步改用文件检索（grep），可以不新增表。
@@ -86,7 +86,7 @@ root/
 │   ├── raw/<doc_id>.<ext>      # 原文件
 │   └── md/<doc_id>.md          # 转换后的 Markdown
 ├── memory/                     # 提炼·模型可写
-│   ├── MEMORY.md               # 代码生成的索引，有硬上限
+│   ├── MEMORY.md               # 模型维护的索引，代码限上限
 │   ├── <topic>.md              # 一个主题一个文件
 │   └── .archive/               # 归档，不进索引
 ├── skills/                     # 提炼·已生效，模型只读
@@ -114,7 +114,7 @@ root/
 
 ```markdown
 ---
-description: 用户偏好中文简洁回复，技术术语保留英文   # 进索引的一行
+description: 用户偏好中文简洁回复，技术术语保留英文   # 一句话摘要，供检索和写索引行参考
 status: verified          # verified | unconfirmed
 sources: [s_20261120_b3, knowledge:doc_7f2a]   # 来源，供整理校验
 valid_until: 2027-03-31   # 可选，有时效的事实
@@ -152,11 +152,13 @@ sources: [s_20261102_c1, s_20261116_a4]
 | --- | --- | --- | --- | --- |
 | W1 记录 | 每条消息、每次工具调用 | harness | 会话 → sessions/ | 只追加，模型不可写 |
 | W2 导入 | 人执行导入命令、上传或放入监视目录 | 导入器 | 外部文件 → knowledge/ | hash 去重，转换在沙箱内执行 |
-| W3 在线记忆 | 用户明确要求记住，或模型判断明显值得记 | 模型（会话中） | 会话 → memory/ | 先读后写（版本冲突检测）；下次会话才进入前缀 |
-| W4 整理 | 定时器或会话结束 | 模型（整理会话） | sessions/ + knowledge/ → memory/ + skills-drafts/ | 从上次进度继续；每次一个 git 提交 |
+| W3 在线记忆 | 用户明确要求记住，或模型判断明显值得记 | 模型（会话中） | 会话 → memory/（主题文件 + MEMORY.md 中对应的行） | 先读后写（版本冲突检测）；下次会话才进入前缀 |
+| W4 整理 | 定时器或会话结束 | 模型（整理会话） | sessions/ + knowledge/ → memory/（含 MEMORY.md）+ skills-drafts/ | 从上次进度继续；每次一个 git 提交 |
 | W5 生效 | 审核通过 | 闸门 | skills-drafts/ → skills/ | 可回滚；驳回理由写入 memory 供下次参考 |
 | W6 统计 | 每次读取 memory 或 skill | harness | 工具调用 → state/usage.jsonl | 供归档使用 |
-| W7 索引 | W2、W3、W4、W5 之后 | 代码 | frontmatter → MEMORY.md、skills 目录、knowledge/INDEX.md | 超上限则拒绝前一次写入并返回当前条目 |
+| W7 索引 | W2、W5 之后 | 代码 | frontmatter → skills 目录、knowledge/INDEX.md | 超上限则拒绝触发它的那次导入或生效，并返回当前条目 |
+
+MEMORY.md 不由 W7 生成，做法与 Claude Code 一致：模型在 W3、W4 中和主题文件一起维护索引，代码只管上限。`write`/`edit` 写 MEMORY.md 时校验行数和字节数（如 200 行），超限整次拒绝并返回当前内容，模型必须先合并；装配时再按同一上限截断，兜住人直接编辑文件的情况。这样分组和措辞由模型决定，代码不必解析 frontmatter 拼索引。代价是索引可能和主题文件不同步（漏加一行，或留下指向已归档文件的行），由整理（W4）顺带校对。
 
 ### 整理（W4）的任务内容
 
@@ -166,7 +168,7 @@ sources: [s_20261102_c1, s_20261116_a4]
 2. **提炼**：只记"看原文也看不出来"的东西：验证过的规则、计划、偏好、坑。
 3. **合并与替换**：相似条目合成一条；与新事实矛盾的旧条目直接覆盖。
 4. **skill 草稿**：用户纠正过做法、同类任务重复出现、一个不简单的流程被验证有效时起草。优先修改已有 skill，最后才新建；修改前必须先读。不记环境特有的失败和偶发错误。
-5. **归档**：按使用统计归档长期未用的条目，处理过期的 valid_until。
+5. **归档与校对索引**：按使用统计归档长期未用的条目，处理过期的 valid_until，并删去 MEMORY.md 中对应的行；顺带核对 MEMORY.md 与主题文件是否一一对应。
 
 ### 读取路径
 
@@ -234,10 +236,10 @@ skills 和 knowledge 默认全局共享；敏感资料可按同样方式分目�
 | --- | --- | --- |
 | IDENTITY.md | 可 | 否（只能提议，走闸门） |
 | sessions/、knowledge/ | 可（检索） | 否 |
-| memory/ | 可 | 可（版本冲突检测 + 上限校验） |
+| memory/（含 MEMORY.md） | 可 | 可（版本冲突检测；MEMORY.md 另有上限校验） |
 | skills/ | 可 | 否 |
 | skills-drafts/ | 可 | 可 |
-| 各类索引、state/ | 可 | 否（代码生成） |
+| skills 目录、knowledge/INDEX.md、state/ | 可 | 否（代码生成） |
 
 所有进入 memory 和 skill 的内容在写入时检查提示注入与外泄特征（Hermes 做法）；来自 session 和 knowledge 的文字一律当作数据，不当作指令。skill 只描述怎么做，不能授予权限。
 
@@ -256,11 +258,11 @@ skills 和 knowledge 默认全局共享；敏感资料可按同样方式分目�
 | 工具 | 参数 | 记忆相关行为 |
 | --- | --- | --- |
 | `read` | path, range? | 读 memory、skill、knowledge 原文；返回内容 hash 供后续写入；记录使用统计（W6） |
-| `write` | path, content, expected_hash | 全量写；仅允许 memory/ 与 skills-drafts/；hash 不符则拒绝（先读后写）；校验 frontmatter 必填字段；重建索引，超上限则整次拒绝并返回当前条目 |
+| `write` | path, content, expected_hash | 全量写；仅允许 memory/ 与 skills-drafts/；hash 不符则拒绝（先读后写）；校验 frontmatter 必填字段；写 MEMORY.md 时校验上限，超限整次拒绝并返回当前内容 |
 | `edit` | path, old, new, expected_hash | 局部替换，约束同 `write`；patch skill 草稿时优先使用 |
 | `search` | query, scope (sessions / knowledge / memory), filters? | 全文检索返回片段与定位（会话 id + seq，或文档 id + 标题路径），不做 LLM 摘要 |
 
-模型不直接删除或移动文件。归档时在 frontmatter 写 `archived: true`，由代码移入 .archive/ 并重建索引。
+模型不直接删除或移动文件。归档时在 frontmatter 写 `archived: true` 并从 MEMORY.md 删去对应行，由代码移入 .archive/。
 
 非模型接口（给人和定时器）：
 
@@ -275,17 +277,32 @@ skills 和 knowledge 默认全局共享；敏感资料可按同样方式分目�
 
 每一步都独立可用，后一步不推翻前一步的数据格式。
 
-1. **原始层与装配**：完整 session 记录（W1）；memory/ 文件 + 代码生成的索引与硬上限；冻结前缀。这一步先做，因为原始数据没记下的部分以后无法补。
+1. **原始层与装配**：完整 session 记录（W1）；memory/ 文件 + 模型维护的 MEMORY.md 与代码硬上限；冻结前缀。这一步先做，因为原始数据没记下的部分以后无法补。
 2. **整理**：用定时器触发整理会话；进度记录；git 提交；使用统计与归档。
 3. **skills**：草稿区、manual 闸门、skills 目录进入前缀。
 4. **knowledge 导入**：导入命令 + 转换器 + INDEX.md；`search` 接入 FTS5（trigram 分词）。
 5. **按需增强**：多作用域；向量检索 + RRF；verify 闸门；模型升级后的全量重建。
 
+## 在 agentd 中的落地
+
+第 1、2 步已实现，没有新增表、工具或后台循环，仍在第一阶段的规模预算内。实现时按 agentd 现有结构做了映射，与上文设计的差异如下。
+
+| 设计 | agentd 中的实现 | 说明 |
+| --- | --- | --- |
+| `sessions/`（W1 记录） | `data/sessions/YYYY-MM-DD.jsonl`，按天一个文件 | 记录点在工具分发（`tool` 记录）和 worker（`run` 记录），原生循环与 OpenCode 都覆盖。写入前脱敏；`read_file` 只记参数，避免重读记录时让记录自我膨胀 |
+| R3 检索 sessions | 沿用 `read_file`，路径 `sessions/YYYY-MM-DD.jsonl`，只读、可分页 | `search` 工具会成为第 7 个工具，超出预算，留待单独决策。群聊轮次一律拒绝读取，防止群成员看到所有者的私聊 |
+| `memory/<topic>.md` + `MEMORY.md` | `workspace/notes/*.md` + `workspace/MEMORY.md` | 沿用已有目录和写权限，不迁移数据。索引由模型维护：写入超过 200 行或 8KB 时拒绝，装配 prompt 时按同一上限截断 |
+| R1 装配、冻结前缀 | system prompt 中稳定内容在前，当前时间和最近发出的消息在末尾 | agentd 每次运行都是一次短会话，前缀在记忆不变时保持一致，可复用模型服务的前缀缓存 |
+| W4 整理 | `workspace/skills/memory-consolidation/SKILL.md` + 一个定时器 | 整理是一次普通的定时运行，进度记在 `notes/memory-consolidation.md`；定时器由运维按 README 启用 |
+| `session.jsonl` | 保留为本地对话的滑动缓存 | 它只负责对话连贯性，原始记录由 `data/sessions/` 承担 |
+
+尚未实现：skill 草稿与闸门（W5）、knowledge 导入（W2）、使用统计与归档（W6）、`search` 工具、作用域分目录、提炼层的 git 版本管理。
+
 ## 参考资料
 
 - [Anthropic: Components of agent memory](https://www.anthropic.com/research/components-of-agent-memory)：记忆层级、Dreaming、小索引、告诉模型记忆的目的
 - [@reinexbt 对上文的一页总结](https://x.com/reinexbt/status/2124159642938818904)：PURPOSE / SAVE / INDEX / DREAM / WIKI / PRUNE 六步 prompt
-- [Claude Code memory](https://code.claude.com/docs/en/memory)：CLAUDE.md、一事一文件 + MEMORY.md 索引（200 行 / 25 KB）
+- [Claude Code memory](https://code.claude.com/docs/en/memory)：CLAUDE.md、一事一文件 + 模型维护的 MEMORY.md 索引（加载前 200 行 / 25 KB）
 - [Anthropic Agent Skills](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview)：SKILL.md 格式与按需加载
 - [Hermes Agent](https://github.com/NousResearch/hermes-agent)：有上限的 MEMORY.md / USER.md、后台复盘生成 skill、Curator 归档、FTS5 会话检索
 - [Letta sleep-time agents](https://docs.letta.com/guides/agents/architectures/sleeptime)：后台整理记忆
