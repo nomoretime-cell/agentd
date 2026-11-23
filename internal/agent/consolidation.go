@@ -51,8 +51,11 @@ func (s *Service) memoryHome(ctx context.Context) string {
 	return filepath.Join(s.root, "workspace")
 }
 
-// readMemory loads MEMORY.md and every file under notes/ in dir, keyed by
-// model path.
+// memoryTrees are the directories a candidate copies besides MEMORY.md.
+var memoryTrees = []string{"notes", "skills-drafts"}
+
+// readMemory loads MEMORY.md and every file under memoryTrees in dir, keyed
+// by model path.
 func readMemory(dir string) (map[string]string, error) {
 	files := map[string]string{}
 	if b, e := os.ReadFile(filepath.Join(dir, "MEMORY.md")); e == nil {
@@ -60,8 +63,17 @@ func readMemory(dir string) (map[string]string, error) {
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return nil, e
 	}
-	notes := filepath.Join(dir, "notes")
-	e := filepath.WalkDir(notes, func(p string, d fs.DirEntry, err error) error {
+	for _, tree := range memoryTrees {
+		if e := readTree(dir, tree, files); e != nil {
+			return nil, e
+		}
+	}
+	return files, nil
+}
+
+func readTree(dir, tree string, files map[string]string) error {
+	notes := filepath.Join(dir, tree)
+	return filepath.WalkDir(notes, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return nil
@@ -79,15 +91,16 @@ func readMemory(dir string) (map[string]string, error) {
 			return err
 		}
 		b, err := os.ReadFile(p)
-		files["notes/"+filepath.ToSlash(rel)] = string(b)
+		files[tree+"/"+filepath.ToSlash(rel)] = string(b)
 		return err
 	})
-	return files, e
 }
 
 func writeMemory(dir string, files map[string]string) error {
-	if e := os.MkdirAll(filepath.Join(dir, "notes"), 0700); e != nil {
-		return e
+	for _, tree := range memoryTrees {
+		if e := os.MkdirAll(filepath.Join(dir, tree), 0700); e != nil {
+			return e
+		}
 	}
 	for name, content := range files {
 		p := filepath.Join(dir, filepath.FromSlash(name))
@@ -119,16 +132,23 @@ func (s *Service) prepareCandidate() error {
 // review is the host's verdict on a candidate.
 type review struct {
 	Added, Changed, Retired []string
+	Drafts                  []string // skill drafts added or changed, by name
 	Failures                []string
 	Hold                    string
 }
 
-func (r review) changed() bool { return len(r.Added)+len(r.Changed)+len(r.Retired) > 0 }
+func (r review) changed() bool { return len(r.Added)+len(r.Changed)+len(r.Retired)+len(r.Drafts) > 0 }
 
 // entryPath reports whether a model path is a memory entry the checks cover:
-// not the index, the progress note or the archive.
+// a note other than the progress note and the archive. Drafts are reviewed by
+// a person at the gate instead.
 func entryPath(p string) bool {
-	return p != "MEMORY.md" && p != progressNote && !strings.HasPrefix(p, archivePrefix)
+	return strings.HasPrefix(p, "notes/") && p != progressNote && !strings.HasPrefix(p, archivePrefix)
+}
+
+// frozen reports whether a path is a record that no run may change.
+func frozen(p string) bool {
+	return strings.HasPrefix(p, archivePrefix) || strings.HasPrefix(p, rejectedDrafts)
 }
 
 func (s *Service) reviewCandidate(cur, cand map[string]string) review {
@@ -141,8 +161,20 @@ func (s *Service) reviewCandidate(cur, cand map[string]string) review {
 	for _, p := range slices.Sorted(mapKeys(cur)) {
 		if _, ok := cand[p]; !ok {
 			fail("%s was deleted; retire it instead", p)
-		} else if strings.HasPrefix(p, archivePrefix) && cand[p] != cur[p] {
-			fail("%s is archived and cannot change", p)
+		} else if frozen(p) && cand[p] != cur[p] {
+			fail("%s is a record and cannot change", p)
+		}
+	}
+	for p := range cand {
+		if _, ok := cur[p]; !ok && frozen(p) {
+			fail("%s is a record and cannot be added", p)
+		}
+	}
+	for _, p := range slices.Sorted(mapKeys(cand)) {
+		if strings.HasPrefix(p, draftsPrefix) && cand[p] != cur[p] {
+			if name := draftName(p); !slices.Contains(r.Drafts, name) {
+				r.Drafts = append(r.Drafts, name)
+			}
 		}
 	}
 	transcripts := map[string]string{}
@@ -363,7 +395,7 @@ func (s *Service) finishConsolidation(ev Event, out Outcome, runErr error) (Outc
 	r := s.reviewCandidate(cur, cand)
 	idx := cand["MEMORY.md"]
 	metric["index_lines"], metric["index_bytes"] = lineCount(idx), len(idx)
-	metric["added"], metric["changed"], metric["retired"] = len(r.Added), len(r.Changed), len(r.Retired)
+	metric["added"], metric["changed"], metric["retired"], metric["drafts"] = len(r.Added), len(r.Changed), len(r.Retired), len(r.Drafts)
 	switch {
 	case len(r.Failures) > 0:
 		metric["result"], metric["failures"] = "rejected", r.Failures
@@ -393,6 +425,9 @@ func (s *Service) finishConsolidation(ev Event, out Outcome, runErr error) (Outc
 	}
 	metric["result"] = "promoted"
 	s.recordConsolidation(metric)
+	if len(r.Drafts) > 0 {
+		out.Notifications = append(out.Notifications, s.draftsNotice(ev.ID, r.Drafts))
+	}
 	return out, nil
 }
 
@@ -472,8 +507,10 @@ func (s *Service) finishPromotion() error {
 	for _, m := range [][2]string{
 		{filepath.Join(ws, "MEMORY.md"), filepath.Join(version, "MEMORY.md")},
 		{filepath.Join(ws, "notes"), filepath.Join(version, "notes")},
+		{filepath.Join(ws, "skills-drafts"), filepath.Join(version, "skills-drafts")},
 		{filepath.Join(src, "MEMORY.md"), filepath.Join(ws, "MEMORY.md")},
 		{filepath.Join(src, "notes"), filepath.Join(ws, "notes")},
+		{filepath.Join(src, "skills-drafts"), filepath.Join(ws, "skills-drafts")},
 	} {
 		if fileExists(m[0]) && !fileExists(m[1]) {
 			if e = os.Rename(m[0], m[1]); e != nil {
@@ -481,8 +518,10 @@ func (s *Service) finishPromotion() error {
 			}
 		}
 	}
-	if e = os.MkdirAll(filepath.Join(ws, "notes"), 0700); e != nil {
-		return e
+	for _, tree := range memoryTrees {
+		if e = os.MkdirAll(filepath.Join(ws, tree), 0700); e != nil {
+			return e
+		}
 	}
 	if e = errors.Join(syncDir(ws), os.RemoveAll(src)); e != nil {
 		return e
@@ -548,5 +587,6 @@ func (s *Service) MemoryControl(op string) error {
 // memoryStatus summarizes consolidation state for GET /v1/status.
 func (s *Service) memoryStatus() map[string]any {
 	names, _ := s.versions()
-	return map[string]any{"held": fileExists(filepath.Join(s.root, heldDir)), "versions": len(names), "strong_model": s.strong != nil}
+	drafts, _ := s.Drafts()
+	return map[string]any{"held": fileExists(filepath.Join(s.root, heldDir)), "versions": len(names), "strong_model": s.strong != nil, "drafts": len(drafts)}
 }

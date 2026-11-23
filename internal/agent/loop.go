@@ -216,6 +216,15 @@ var (
 	errMaxSteps      = errors.New("maximum model steps reached")
 )
 
+// draftAccess keeps drafts out of every run but critical ones: a draft must
+// not shape behavior before a person approves it.
+func draftAccess(ctx context.Context, p string) error {
+	if strings.HasPrefix(path.Clean(p), draftsPrefix) && !isCritical(ctx) {
+		return ErrDenied
+	}
+	return nil
+}
+
 // tools offers what this run may call; critical runs get only file tools.
 func (s *Service) tools(ctx context.Context) []Tool {
 	all := s.turnTools(ctx)
@@ -330,6 +339,9 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 			res, e := s.readPage(map[string]any{"path": s.redact(a.Path), "size": size}, []byte(s.maskedFile(string(page))), a.Offset, int(size))
 			return res, nil, e
 		}
+		if e := draftAccess(ctx, a.Path); e != nil {
+			return "", nil, e
+		}
 		b, e := s.workspaceReadIn(s.memoryHome(ctx), a.Path)
 		if e != nil {
 			return "", nil, e
@@ -363,6 +375,9 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if e := decodeArgs(call.Function.Arguments, &a); e != nil {
 			return "", nil, e
 		}
+		if e := draftAccess(ctx, a.Path); e != nil {
+			return "", nil, e
+		}
 		e := s.workspaceWriteIn(s.memoryHome(ctx), a.Path, a.Content, a.Expected)
 		return "file saved", nil, e
 	case "edit_file":
@@ -373,6 +388,9 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 			Expected string `json:"expected_hash"`
 		}
 		if e := decodeArgs(call.Function.Arguments, &a); e != nil {
+			return "", nil, e
+		}
+		if e := draftAccess(ctx, a.Path); e != nil {
 			return "", nil, e
 		}
 		b, e := s.workspaceReadIn(s.memoryHome(ctx), a.Path)

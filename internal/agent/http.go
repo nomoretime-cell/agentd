@@ -134,6 +134,19 @@ func (s *Service) Handler() http.Handler {
 		e := s.MemoryControl(r.PathValue("op"))
 		respond(w, map[string]any{"memory": s.memoryStatus()}, e)
 	})
+	mux.HandleFunc("GET /v1/drafts", func(w http.ResponseWriter, r *http.Request) {
+		list, e := s.Drafts()
+		respond(w, list, e)
+	})
+	mux.HandleFunc("POST /v1/drafts/{name}/{decision}", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Reason string `json:"reason"`
+		}
+		if r.ContentLength != 0 && !decodeHTTP(w, r, &req) {
+			return
+		}
+		respond(w, map[string]string{"draft": r.PathValue("name"), "decision": r.PathValue("decision")}, s.DecideDraft(r.PathValue("name"), r.PathValue("decision"), req.Reason))
+	})
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		paused := s.paused

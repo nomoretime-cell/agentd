@@ -46,6 +46,9 @@ JSON 请求必须包含 Content-Type: application/json，并携带认证。未�
 | POST /v1/events | `{key,text}`：普通人工消息 |
 | POST /v1/timers | `{id,cron_expr,fire_at,prompt,active}`，fire_at 为 Unix 毫秒 |
 | POST /v1/control | `{command:"pause" / "stop" / "resume"}` |
+| GET /v1/drafts | 等待审核的 skill 草稿与规则提议，含批准时会遇到的问题 |
+| POST /v1/drafts/{name}/approve | 批准：skill 安装到 `workspace/skills/<name>/`（旧版本留在 `data/gate/versions/`）；`identity` 草稿追加到 IDENTITY.md |
+| POST /v1/drafts/{name}/reject | `{reason}` 必填；草稿与理由移到 `skills-drafts/.rejected/`，供下次整理参考 |
 | POST /v1/memory/{op} | 记忆整理结果：`promote` 提升待确认的候选，`discard` 丢弃它，`rollback` 回到上一版本（当前版本留作版本，可再次回滚撤销）。整理运行中返回 409 |
 | POST /v1/events/{id}/resolve | `{operation:"retry" / "skip"}`：重试 dead 或显式跳过 dead/pending |
 | POST /v1/action-requests | `{key,name,arguments,text}`：提交已配置的命名外部动作 |

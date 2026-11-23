@@ -24,6 +24,7 @@
     │   ├── memory/                      # 整理的候选、待确认、被拒版本与历史版本，模型不可见
     │   │   ├── candidate/  held/  rejected/  versions/<时间戳>/
     │   │   └── promoting.json  consolidation.jsonl   # 提升进行中的标记；每次整理一行指标
+    │   ├── gate/                        # 闸门：decisions.jsonl 决定记录；versions/ 被替换的 skill 与 IDENTITY.md
     │   ├── principals.jsonl             # 服务对象标识与平台 ID 的对应，供人查阅
     │   └── roles/<role>/sessions/<principal>/YYYY-MM-DD.jsonl   # 原始运行记录
     └── workspace/                       # 模型可见内容的物理位置
@@ -91,6 +92,7 @@
 | `data/sessions/YYYY-MM-DD.jsonl` | `data/roles/default/sessions/_legacy/` 原样保留；旧记录没有服务对象字段，只对整理运行可见 | 第 3 步 |
 | `workspace/IDENTITY.md` | `workspace/roles/default/IDENTITY.md` | 第 3 步 |
 | `workspace/MEMORY.md`、`workspace/notes/` | `workspace/roles/default/` | 第 3 步 |
+| `workspace/skills-drafts/`（含 `.rejected/`）、`data/gate/` | `workspace/roles/default/skills-drafts/`、`data/roles/default/gate/` | 第 3 步 |
 | `workspace/skills/`（仓库中的默认 skill） | 已编入程序（`internal/agent/defaults/skills/`），以 `skills/` 只读提供；第 3 步起作为 `company/skills/` 的内置部分 | 第 1 步 ✅ |
 | `workspace/scratch/` | `workspace/roles/default/scratch/` | 第 3 步 |
 

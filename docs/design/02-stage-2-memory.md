@@ -2,7 +2,7 @@
 
 2026-11-23 · 在线版本（初稿，之后以本文件为准）：https://claude.ai/artifact/LJaZjYaeUwyB6RXt674s4V
 
-> **文档状态：第二阶段设计，演进路线的第 1、2 步（含 2a 模型分级、2b 整理安全机制）已实现（2026-11-23），第 3 步起仍是草案。** 本文以[第一阶段架构基线](01-stage-1-architecture.md)为前提，只替换其中的 Memory 组件，其余四个组件（Inbox、Timers、Permissions、Outbox）保持不变。落地方式见文末[在 agentd 中的落地](#在-agentd-中的落地)。
+> **文档状态：第二阶段设计，演进路线的第 1–3 步（含 2a 模型分级、2b 整理安全机制、skill 草稿与闸门）已实现（2026-11-23），第 4 步起仍是草案。** 本文以[第一阶段架构基线](01-stage-1-architecture.md)为前提，只替换其中的 Memory 组件，其余四个组件（Inbox、Timers、Permissions、Outbox）保持不变。落地方式见文末[在 agentd 中的落地](#在-agentd-中的落地)。
 >
 > - **取代基线的部分**：`session.jsonl` 从"可丢弃的滑动缓存"改为"只追加的完整原始记录"（`sessions/`）；目录结构从 `workspace/notes` 改为 `memory/`、`skills/`、`skills-drafts/`、`knowledge/`；新增"整理"（由 Timers 触发的一次普通会话），不新增后台循环。
 > - **与基线预算的冲突，需要单独决策**：用 SQLite FTS5 实现 `search` 会新增一张表，超出"4 张表"的预算。第一步改用文件检索（grep），可以不新增表。
@@ -382,7 +382,15 @@ always-on agent 没有天然的会话边界，需要人为切分，否则冻结�
 | W4 整理 | 内置 skill `skills/memory-consolidation/SKILL.md`（`internal/agent/defaults/skills/`）+ 一个定时器 | 整理是一次普通的定时运行，进度记在 `notes/memory-consolidation.md`。目前仍使用默认模型，不符合"关键动作用最强模型"，因此定时器默认不启用，待 2a 完成后再启用 |
 | `session.jsonl` | 保留为本地对话的滑动缓存 | 它只负责对话连贯性，原始记录由 `data/sessions/` 承担 |
 
-尚未实现：skill 草稿与闸门（W5）、knowledge 导入（W2）、使用统计与归档（W6）、`search` 工具、作用域分目录、提炼层的版本管理。
+尚未实现：knowledge 导入（W2）、使用统计与归档（W6）、`search` 工具、作用域分目录、提炼层的版本管理。
+
+第 3 步 skills 的实现（2026-11-23，`gate.go`）：
+
+- **草稿只由关键动作写**：`skills-drafts/` 只有关键动作（整理）能读写，普通运行读、写、检索都被拒绝，所以草稿批准前不会进入任何运行的上下文。整理写的草稿和记忆一样先进候选副本，候选被拒绝时草稿一并作废，候选待确认时草稿一并等待。
+- **闸门为 manual**：`GET /v1/drafts` 列出草稿和批准时会遇到的问题；`POST /v1/drafts/{name}/approve` 安装到 `workspace/skills/<name>/`，被替换的旧 skill 存入 `data/gate/versions/`；`/reject` 必须写理由，草稿连同 `REJECTED.md` 移到 `skills-drafts/.rejected/`，下次整理起草前先读。每个决定一行写入 `data/gate/decisions.jsonl`。批准时校验：名称与目录一致且为小写加连字符、有 description、总大小不超过 256KB、不含符号链接、skill 总数不超过 50。
+- **skills 目录进入前缀**：每次运行的 system prompt 列出全部可用 skill 的 name 与 description（内置的和 `workspace/skills/` 的，后者同名优先），最多 50 条、4KB，按名称排序以保住前缀缓存。
+- **规则型记忆走同一闸门**：整理把"以后总是/不要"类规则写成 `skills-drafts/identity/PROPOSAL.md`；批准后追加到 IDENTITY.md 的"Approved rules"一节，旧的 IDENTITY.md 存入 `data/gate/versions/`。
+- **与设计的差异**：verify / auto 闸门未实现；草稿不要求 evidence，由人审核；已批准 skill 的使用统计与 stale 归档（W6）未实现。
 
 2b 的实现（2026-11-23，`consolidation.go`）与上文设计的差异：
 

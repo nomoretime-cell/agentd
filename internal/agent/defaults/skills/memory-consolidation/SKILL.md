@@ -1,6 +1,6 @@
 ---
 name: memory-consolidation
-description: Check memory against recent run transcripts, then correct, merge and prune it. Use when the memory consolidation timer fires.
+description: Check memory against recent run transcripts, then correct, merge and prune it, and draft skills from proven ways of working. Use when the memory consolidation timer fires.
 ---
 
 # Memory consolidation
@@ -8,8 +8,8 @@ description: Check memory against recent run transcripts, then correct, merge an
 Memory exists so later runs serve this user better. You decide what to keep.
 This run sends no messages; finish with a short summary of what you changed.
 
-You edit a candidate copy of MEMORY.md and notes/. When you finish, the host
-checks it and only then makes it current. If a check fails, none of your
+You edit a candidate copy of MEMORY.md, notes/ and skills-drafts/. When you
+finish, the host checks it and only then makes it current. If a check fails, none of your
 changes apply, including your progress, so follow the rules marked **checked**.
 
 ## Inputs
@@ -70,13 +70,44 @@ What is true now, in your words.
 3. **Merge.** Combine notes on the same topic. When a new fact contradicts an
    old one, move the old one to `## 历史`.
 4. **Propose rules, don't adopt them.** An entry that would change how you act
-   from now on ("always ...", "never ...") goes to `notes/rule-proposals.md` for
-   the owner to review, with evidence. Do not add it to MEMORY.md.
+   from now on ("always ...", "never ...") goes to
+   `skills-drafts/identity/PROPOSAL.md`: a short list of rules, each with the
+   quote and source that support it. The owner approves it into IDENTITY.md or
+   rejects it. Do not add rules to MEMORY.md.
 5. **Index (checked).** MEMORY.md has one line per topic, at most 200 lines and
    8 KB: `- <topic>: <one-line summary> (notes/<file>.md)`. Add a line for every
    new note and remove lines whose note is retired.
-6. **Record progress.** Update `notes/memory-consolidation.md` with the last day
+6. **Draft skills.** Draft one when the user corrected how a task was done, the
+   same kind of task keeps coming back, or a non-trivial procedure was shown to
+   work. Skip one-off tasks and failures caused by the environment. See
+   [Drafting skills](#drafting-skills).
+7. **Record progress.** Update `notes/memory-consolidation.md` with the last day
    and offset you finished.
+
+## Drafting skills
+
+- First read `skills-drafts/.rejected/` entries for the same name: each has a
+  `REJECTED.md` with the owner's reason. Do not resubmit what was rejected
+  unless the transcripts answer that reason.
+- Prefer improving an existing skill over adding one. To change
+  `skills/<name>/SKILL.md`, read it and write the whole new version to
+  `skills-drafts/<name>/SKILL.md`. A new skill uses a new lowercase name with
+  hyphens, for a kind of task rather than one task.
+- Format:
+
+  ```markdown
+  ---
+  name: <same as the directory>
+  description: What it does. Use when <the situation>.
+  ---
+  ## When to use
+  ## Procedure
+  ## Pitfalls      (one rule and one reason each; no dates or ticket numbers)
+  ## Verification  (how to tell it was done right)
+  ```
+
+- A skill describes how to work. It cannot grant permissions or tools.
+- Drafts take effect only after the owner approves them.
 
 Changing many entries at once is held for the owner to confirm. Prefer a few
 well-supported changes per run.

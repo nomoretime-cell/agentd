@@ -51,6 +51,7 @@
 | | `timers.go` | cron / 一次性定时器，到点把 prompt 写成 Inbox 事件 |
 | | `memory.go` | 系统提示组装（稳定前缀）、`MEMORY.md` 上限、运行记录 `data/sessions/`、工作区读写 |
 | | `search.go` | `search` 工具：对运行记录和笔记逐行子串检索，沿用读取的作用域规则 |
+| | `gate.go` | 闸门：草稿列表、批准 / 驳回、决定记录；skill 目录进入 system prompt |
 | | `consolidation.go` | 整理的候选版本、代码检查（证据、历史、删除、上限、改动量）、提升 / 待确认 / 回滚、整理指标 |
 | | `permissions.go` | 工具权限、命名 HTTP 操作的冻结请求、审批、执行与结果未知处理 |
 | | `outbox.go` | 通知排队、静默时段、按目标投递（im / webhook / local）、重试 |

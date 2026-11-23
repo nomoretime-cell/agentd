@@ -31,9 +31,11 @@ func (s *Service) workspaceRead(name string) ([]byte, error) {
 	return s.workspaceReadIn(filepath.Join(s.root, "workspace"), name)
 }
 
-// isMemoryPath reports whether a model path is memory: MEMORY.md and notes/.
-// A consolidation run reads and writes these in its candidate copy.
-func isMemoryPath(name string) bool { return name == "MEMORY.md" || strings.HasPrefix(name, "notes/") }
+// isMemoryPath reports whether a model path is memory: MEMORY.md, notes/ and
+// skill drafts. A consolidation run reads and writes these in its candidate copy.
+func isMemoryPath(name string) bool {
+	return name == "MEMORY.md" || strings.HasPrefix(name, "notes/") || strings.HasPrefix(name, draftsPrefix)
+}
 
 // workspaceReadIn reads a model path with memory paths resolved in home.
 func (s *Service) workspaceReadIn(home, name string) ([]byte, error) {
@@ -104,6 +106,10 @@ func (s *Service) workspaceWriteIn(home, name, content, expected string) error {
 	case strings.HasPrefix(name, "scratch/"):
 		dir = filepath.Join(s.root, "workspace/scratch")
 		relative = strings.TrimPrefix(name, "scratch/")
+	case strings.HasPrefix(name, draftsPrefix) && !strings.HasPrefix(name, rejectedDrafts):
+		// Only critical runs reach here (see tool); rejected drafts are records.
+		dir = filepath.Join(home, "skills-drafts")
+		relative = strings.TrimPrefix(name, draftsPrefix)
 	default:
 		return ErrDenied
 	}
@@ -569,7 +575,10 @@ func (s *Service) systemPromptFor(includeHistory bool) string {
 		a := s.cfg.Actions[name]
 		fmt.Fprintf(&b, "%s: method=%s policy=%s\n", name, a.Method, a.Mode)
 	}
-	b.WriteString("Default notification target: " + s.cfg.DefaultTarget + ". Skills may be read from skills/ using read_file.\n")
+	b.WriteString("Default notification target: " + s.cfg.DefaultTarget + ".\n")
+	if catalog := s.skillCatalog(); catalog != "" {
+		b.WriteString("Skills (read skills/<name>/SKILL.md before doing a task one covers):\n" + catalog)
+	}
 	b.WriteString("\nCurrent time: " + timeNow() + ".\n")
 	if !includeHistory {
 		return b.String()
