@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, inserted bool, err error) {
-	if p.DingTalk != nil || p.WeCom != nil {
+	if p.fromIM() {
 		return 0, false, ErrDenied
 	}
 	if key == "" || len(key) > 256 {

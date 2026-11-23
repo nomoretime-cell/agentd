@@ -129,7 +129,7 @@ func (s *Service) acceptWeCom(ctx context.Context, raw json.RawMessage) error {
 	}
 	key := "wecom:" + stableID(strings.Join([]string{m.BotID, m.Kind, m.ChatID, m.MsgID}, "\x00"))
 	err := transaction(ctx, s.db, func(tx *sql.Tx) error {
-		_, _, err := insertEvent(ctx, tx, key, Payload{Kind: "wecom", WeCom: r, Text: text}, time.Now().Add(time.Duration(s.cfg.Limits.DebounceMS)*time.Millisecond).UnixMilli())
+		_, _, err := insertEvent(ctx, tx, key, Payload{Kind: "wecom", imRoutes: imRoutes{WeCom: r}, Text: text}, time.Now().Add(time.Duration(s.cfg.Limits.DebounceMS)*time.Millisecond).UnixMilli())
 		return err
 	})
 	if errors.Is(err, ErrConflict) {
@@ -153,7 +153,17 @@ type wecomConnection struct {
 
 // weComChannel sends replies and proactive owner messages over the long
 // connection that also receives callbacks.
-type weComChannel struct{ s *Service }
+type weComChannel struct {
+	s    *Service
+	url  string
+	conn *wecomConnection // guarded by s.mu
+}
+
+func (c *weComChannel) connected() bool {
+	c.s.mu.Lock()
+	defer c.s.mu.Unlock()
+	return c.conn != nil
+}
 
 func (c *weComChannel) owner() (string, bool) {
 	w := c.s.cfg.WeCom
@@ -187,7 +197,7 @@ func (c *weComChannel) deliver(ctx context.Context, n Notification) string {
 	}
 	body := map[string]any{"chatid": chat, "msgtype": "markdown", "markdown": map[string]string{"content": imText(content)}}
 	s.mu.Lock()
-	session := s.wecomConn
+	session := c.conn
 	s.mu.Unlock()
 	if session == nil {
 		return "offline"
@@ -217,14 +227,14 @@ func (c *weComChannel) deliver(ctx context.Context, n Notification) string {
 	}
 }
 
-func (s *Service) wecomLoop(ctx context.Context) {
-
+func (c *weComChannel) run(ctx context.Context) {
+	s := c.s
 	backoff := time.Second
 	for ctx.Err() == nil {
-		conn, _, err := websocket.DefaultDialer.DialContext(ctx, s.wecomURL, nil)
+		conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, nil)
 		if err == nil {
 			start := time.Now()
-			err = s.serveWeCom(ctx, conn)
+			err = c.serve(ctx, conn)
 			if time.Since(start) > time.Minute {
 				backoff = time.Second
 			}
@@ -242,7 +252,8 @@ func (s *Service) wecomLoop(ctx context.Context) {
 	}
 }
 
-func (s *Service) serveWeCom(ctx context.Context, conn *websocket.Conn) error {
+func (c *weComChannel) serve(ctx context.Context, conn *websocket.Conn) error {
+	s := c.s
 	stopClose := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stopClose()
 	defer conn.Close()
@@ -270,7 +281,7 @@ func (s *Service) serveWeCom(ctx context.Context, conn *websocket.Conn) error {
 	conn.SetReadDeadline(time.Time{})
 	session := &wecomConnection{send: make(chan wecomSend), done: make(chan struct{})}
 	s.mu.Lock()
-	s.wecomConn = session
+	c.conn = session
 	s.mu.Unlock()
 	s.log.Info("wecom connected", "discovery_only", s.cfg.WeCom.DiscoveryOnly)
 	frames := make(chan wecomFrame)
@@ -292,7 +303,7 @@ func (s *Service) serveWeCom(ctx context.Context, conn *websocket.Conn) error {
 	}()
 	defer func() {
 		s.mu.Lock()
-		s.wecomConn = nil
+		c.conn = nil
 		s.mu.Unlock()
 		close(session.done)
 		conn.Close()

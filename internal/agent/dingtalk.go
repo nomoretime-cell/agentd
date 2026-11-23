@@ -163,7 +163,7 @@ func (s *Service) acceptDingTalk(ctx context.Context, f dingTalkFrame) dingTalkA
 	if text == "" || len(text) > s.cfg.Limits.MaxInputBytes || !validDingTalkWebhook(m.Webhook) || len(m.Webhook) > 8192 || m.ExpiresAt <= time.Now().UnixMilli() {
 		return ack
 	}
-	p := Payload{Kind: "dingtalk", Text: m.withQuote(text, s.cfg.Limits.MaxInputBytes), DingTalk: &IMRoute{ConversationID: m.ConversationID, ConversationType: m.ConversationType, Sender: m.Sender, Mentioned: m.Mentioned, Webhook: m.Webhook, ExpiresAt: m.ExpiresAt}}
+	p := Payload{Kind: "dingtalk", Text: m.withQuote(text, s.cfg.Limits.MaxInputBytes), imRoutes: imRoutes{DingTalk: &IMRoute{ConversationID: m.ConversationID, ConversationType: m.ConversationType, Sender: m.Sender, Mentioned: m.Mentioned, Webhook: m.Webhook, ExpiresAt: m.ExpiresAt}}}
 	key := "dingtalk:" + stableID(c.ClientID+"\x00"+m.ConversationID+"\x00"+m.MsgID)
 	var eventID int64
 	var inserted bool
@@ -218,6 +218,7 @@ type dingTalkChannel struct {
 	// Only the serial Outbox dispatcher accesses this short-lived token.
 	token      string
 	tokenUntil time.Time
+	online     bool // guarded by s.mu
 }
 
 func (c *dingTalkChannel) owner() (string, bool) {
@@ -351,19 +352,29 @@ func (s *Service) serveDingTalk(ctx context.Context, conn *websocket.Conn) error
 		}
 	}
 }
-func (s *Service) dingTalkLoop(ctx context.Context) {
+func (c *dingTalkChannel) connected() bool {
+	c.s.mu.Lock()
+	defer c.s.mu.Unlock()
+	return c.online
+}
+
+func (c *dingTalkChannel) run(ctx context.Context) {
+	s := c.s
+	if !s.cfg.DingTalk.Enabled {
+		return
+	}
 	delay := time.Second
 	for ctx.Err() == nil {
 		conn, e := s.dingTalkConnect(ctx)
 		if e == nil {
 			s.mu.Lock()
-			s.dingTalkConnected = true
+			c.online = true
 			s.mu.Unlock()
 			s.log.Info("dingtalk stream connected", "discovery_only", s.cfg.DingTalk.DiscoveryOnly)
 			since := time.Now()
 			_ = s.serveDingTalk(ctx, conn) // Don't log transport errors containing secret tickets.
 			s.mu.Lock()
-			s.dingTalkConnected = false
+			c.online = false
 			s.mu.Unlock()
 			if time.Since(since) > time.Minute {
 				delay = time.Second

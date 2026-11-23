@@ -134,9 +134,10 @@ func (s *Service) Handler() http.Handler {
 		s.mu.Lock()
 		paused := s.paused
 		active := s.activeCancel != nil
-		wcConnected := s.wecomConn != nil
-		dtConnected := s.dingTalkConnected
 		s.mu.Unlock()
+		online := s.im.connected()
+		wcConnected := s.cfg.provider() == "wecom" && online
+		dtConnected := s.cfg.provider() == "dingtalk" && online
 		counts := map[string]int{}
 		for _, table := range []string{"inbox", "timers", "actions", "outbox"} {
 			var n int

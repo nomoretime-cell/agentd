@@ -45,7 +45,7 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 	var prompt string
 	if route.team() {
 		ctx = context.WithValue(ctx, teamTurnKey{}, true)
-		prompt = "你是群内团队助手。结合团队资料和当前可用工具回答问题。需要实时信息时使用可用的联网搜索并注明来源，没有依据时明确说明。团队资料：\n" + s.cfg.WeCom.TeamKnowledge
+		prompt = s.teamPrompt()
 	} else {
 		prompt = s.systemPromptFor(target == "")
 	}

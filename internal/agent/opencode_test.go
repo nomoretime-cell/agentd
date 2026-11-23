@@ -84,7 +84,7 @@ func TestChatHistoryExistingConversations(t *testing.T) {
 	s := openTest(t, dtConfig(), finalModel())
 	ctx := context.Background()
 	for _, m := range []struct{ conversation, text string }{{"room1", "first"}, {"room2", "private"}, {"room1", "second"}} {
-		payload, _ := json.Marshal(Payload{Kind: "dingtalk", Text: m.text, DingTalk: &IMRoute{ConversationID: m.conversation, Sender: "owner", Webhook: "SECRET"}})
+		payload, _ := json.Marshal(Payload{Kind: "dingtalk", Text: m.text, imRoutes: imRoutes{DingTalk: &IMRoute{ConversationID: m.conversation, Sender: "owner", Webhook: "SECRET"}}})
 		result, err := s.db.Exec("INSERT INTO inbox(dedup_key,payload,available_at,status) VALUES(?,?,0,'done')", m.text, string(payload))
 		if err != nil {
 			t.Fatal(err)

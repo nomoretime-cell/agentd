@@ -47,14 +47,14 @@ type Event struct {
 	Retries     int     `json:"retries"`
 }
 type Payload struct {
-	NewsTarget string          `json:"news_target,omitempty"`
-	WeCom      *IMRoute        `json:"wecom,omitempty"`
-	DingTalk   *IMRoute        `json:"dingtalk,omitempty"`
-	Kind       string          `json:"kind"`
-	Text       string          `json:"text,omitempty"`
-	ActionID   string          `json:"action_id,omitempty"`
-	Name       string          `json:"name,omitempty"`
-	Arguments  json.RawMessage `json:"arguments,omitempty"`
+	NewsTarget string `json:"news_target,omitempty"`
+	// Field order is part of the stored format: insertEvent compares payload bytes.
+	imRoutes
+	Kind      string          `json:"kind"`
+	Text      string          `json:"text,omitempty"`
+	ActionID  string          `json:"action_id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 type Timer struct {
 	ID     string `json:"id"`

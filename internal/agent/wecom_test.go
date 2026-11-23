@@ -155,7 +155,7 @@ func testWeComTeam(t *testing.T, all bool) {
 		body := fmt.Sprintf("<rss><channel><item><title>团队新闻</title><link>https://example.test/news</link><pubDate>%s</pubDate></item></channel></rss>", time.Now().UTC().Format(time.RFC1123Z))
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
-	s.wecomURL = strings.Replace(server.URL, "http", "ws", 1)
+	s.im.(*weComChannel).url = strings.Replace(server.URL, "http", "ws", 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s.Start(ctx)
@@ -378,9 +378,9 @@ func TestWeComUnacknowledgedSendIsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	stopped := make(chan struct{})
-	go func() { defer close(stopped); s.serveWeCom(ctx, conn) }()
+	go func() { defer close(stopped); s.im.(*weComChannel).serve(ctx, conn) }()
 	defer func() { cancel(); <-stopped }()
-	waitFor(t, time.Second, func() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.wecomConn != nil })
+	waitFor(t, time.Second, func() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.im.(*weComChannel).conn != nil })
 	_, err = s.db.Exec("INSERT INTO outbox(dedup_key,target,content,deliver_at) VALUES('ai-news:test:drop',?,'test',0)", s.ownerTarget())
 	if err != nil {
 		t.Fatal(err)

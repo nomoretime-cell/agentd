@@ -30,13 +30,42 @@ type imChannel interface {
 	// owner returns the target for proactive messages to the owner and
 	// whether the platform is configured to send them.
 	owner() (target string, enabled bool)
+	// run keeps the platform connection open until ctx ends.
+	run(ctx context.Context)
+	// connected reports whether the platform connection is open now.
+	connected() bool
 }
 
 func newIMChannel(s *Service) imChannel {
 	if s.cfg.provider() == "wecom" {
-		return &weComChannel{s: s}
+		return &weComChannel{s: s, url: "wss://openws.work.weixin.qq.com"}
 	}
 	return &dingTalkChannel{s: s}
+}
+
+// imRoutes is the part of an Inbox payload that records where an IM message
+// came from. The JSON field names are part of the stored data format.
+type imRoutes struct {
+	WeCom    *IMRoute `json:"wecom,omitempty"`
+	DingTalk *IMRoute `json:"dingtalk,omitempty"`
+}
+
+func (r imRoutes) fromIM() bool { return r.DingTalk != nil || r.WeCom != nil }
+
+func (s *Service) teamPrompt() string {
+	return "你是群内团队助手。结合团队资料和当前可用工具回答问题。需要实时信息时使用可用的联网搜索并注明来源，没有依据时明确说明。团队资料：\n" + s.cfg.WeCom.TeamKnowledge
+}
+
+// redactIM removes IM credentials and session webhooks from text leaving the host.
+func (s *Service) redactIM(v string) string {
+	v = dingTalkSecretField.ReplaceAllString(v, `${1}[redacted]"`)
+	v = dingTalkSecretURL.ReplaceAllString(v, "[dingtalk-webhook-redacted]")
+	for _, secret := range []string{s.cfg.DingTalk.ClientSecret, s.cfg.WeCom.Secret} {
+		if secret != "" {
+			v = strings.ReplaceAll(v, secret, "[redacted]")
+		}
+	}
+	return v
 }
 
 func imReplyTarget(target string) bool {

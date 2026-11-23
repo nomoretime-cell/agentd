@@ -19,29 +19,26 @@ import (
 )
 
 type Service struct {
-	cfg               Config
-	im                imChannel
-	root              string
-	db, read          *sql.DB
-	lock              *os.File
-	model             Model
-	client            *http.Client
-	token             string
-	log               *slog.Logger
-	mu                sync.Mutex // Coordinates control changes, claims and commits; never held during model inference.
-	paused            bool
-	activeCancel      context.CancelFunc
-	activeAborted     bool
-	wake              chan struct{}
-	cancel            context.CancelFunc
-	wg                sync.WaitGroup
-	memoryMu          sync.Mutex
-	started           bool
-	lastSend          time.Time
-	starts            []time.Time
-	dingTalkConnected bool
-	wecomConn         *wecomConnection
-	wecomURL          string
+	cfg           Config
+	im            imChannel
+	root          string
+	db, read      *sql.DB
+	lock          *os.File
+	model         Model
+	client        *http.Client
+	token         string
+	log           *slog.Logger
+	mu            sync.Mutex // Coordinates control changes, claims and commits; never held during model inference.
+	paused        bool
+	activeCancel  context.CancelFunc
+	activeAborted bool
+	wake          chan struct{}
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	memoryMu      sync.Mutex
+	started       bool
+	lastSend      time.Time
+	starts        []time.Time
 }
 
 func Open(root string, cfg Config, model Model) (s *Service, err error) {
@@ -84,7 +81,7 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 		lock.Close()
 		return nil, errors.New("another agentd instance owns this data directory")
 	}
-	s = &Service{wecomURL: "wss://openws.work.weixin.qq.com", cfg: cfg, root: root, lock: lock, model: model, wake: make(chan struct{}, 1), log: slog.Default(), client: &http.Client{Timeout: time.Duration(cfg.Limits.ToolSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	s = &Service{cfg: cfg, root: root, lock: lock, model: model, wake: make(chan struct{}, 1), log: slog.Default(), client: &http.Client{Timeout: time.Duration(cfg.Limits.ToolSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	defer func() {
 		if err != nil {
 			s.Close()
@@ -145,12 +142,7 @@ func (s *Service) Start(parent context.Context) {
 	s.started = true
 	ctx, cancel := context.WithCancel(parent)
 	s.cancel = cancel
-	loops := []func(context.Context){s.workerLoop, s.timerLoop, s.outboxLoop}
-	if s.cfg.provider() == "wecom" {
-		loops = append(loops, s.wecomLoop)
-	} else if s.cfg.DingTalk.Enabled {
-		loops = append(loops, s.dingTalkLoop)
-	}
+	loops := []func(context.Context){s.workerLoop, s.timerLoop, s.outboxLoop, s.im.run}
 	for _, f := range loops {
 		s.wg.Add(1)
 		go func(fn func(context.Context)) { defer s.wg.Done(); fn(ctx) }(f)
@@ -261,9 +253,8 @@ func (s *Service) logErr(op string, e error) {
 	}
 }
 func (s *Service) redact(v string) string {
-	v = dingTalkSecretField.ReplaceAllString(v, `${1}[redacted]"`)
-	v = dingTalkSecretURL.ReplaceAllString(v, "[dingtalk-webhook-redacted]")
-	for _, secret := range []string{s.token, s.cfg.Model.APIKey, s.cfg.DingTalk.ClientSecret, s.cfg.WeCom.Secret} {
+	v = s.redactIM(v)
+	for _, secret := range []string{s.token, s.cfg.Model.APIKey} {
 		if secret != "" {
 			v = strings.ReplaceAll(v, secret, "[redacted]")
 		}

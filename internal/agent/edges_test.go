@@ -241,3 +241,22 @@ func TestActionReplayWithChangedToolOrdinal(t *testing.T) {
 		t.Fatal("changed intent accepted", e)
 	}
 }
+
+// Stored Inbox payloads are compared byte for byte on redelivery, so their
+// encoding must not change when Payload is reorganised.
+func TestPayloadEncodingIsStable(t *testing.T) {
+	for _, c := range []struct {
+		p    Payload
+		want string
+	}{
+		{Payload{Kind: "dingtalk", Text: "hi", imRoutes: imRoutes{DingTalk: &IMRoute{ConversationID: "c", ConversationType: "1", Sender: "u"}}},
+			`{"dingtalk":{"conversation_id":"c","conversation_type":"1","sender":"u","mentioned":false,"session_webhook":"","expires_at":0},"kind":"dingtalk","text":"hi"}`},
+		{Payload{NewsTarget: "wecom-owner:x", Kind: "ai_news", imRoutes: imRoutes{WeCom: &IMRoute{BotID: "b"}}},
+			`{"news_target":"wecom-owner:x","wecom":{"bot_id":"b","conversation_id":"","conversation_type":"","sender":"","mentioned":false,"session_webhook":"","expires_at":0},"kind":"ai_news"}`},
+	} {
+		b, err := json.Marshal(c.p)
+		if err != nil || string(b) != c.want {
+			t.Fatalf("payload encoding changed:\n got %s\nwant %s", b, c.want)
+		}
+	}
+}
