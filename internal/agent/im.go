@@ -57,12 +57,15 @@ func (s *Service) teamPrompt() string {
 }
 
 // redactIM removes IM credentials and session webhooks from text leaving the host.
-func (s *Service) redactIM(v string) string {
-	v = dingTalkSecretField.ReplaceAllString(v, `${1}[redacted]"`)
-	v = dingTalkSecretURL.ReplaceAllString(v, "[dingtalk-webhook-redacted]")
+func (s *Service) redactIM(v string, mask func(value, label string) string) string {
+	v = dingTalkSecretField.ReplaceAllStringFunc(v, func(field string) string {
+		prefix := dingTalkSecretField.FindStringSubmatch(field)[1]
+		return prefix + mask(field[len(prefix):len(field)-1], "[redacted]") + `"`
+	})
+	v = dingTalkSecretURL.ReplaceAllStringFunc(v, func(url string) string { return mask(url, "[dingtalk-webhook-redacted]") })
 	for _, secret := range []string{s.cfg.DingTalk.ClientSecret, s.cfg.WeCom.Secret} {
 		if secret != "" {
-			v = strings.ReplaceAll(v, secret, "[redacted]")
+			v = strings.ReplaceAll(v, secret, mask(secret, "[redacted]"))
 		}
 	}
 	return v

@@ -293,9 +293,8 @@ func TestReadPagesSurviveEscaping(t *testing.T) {
 	}
 }
 
-// pageThrough reads a file the way the native loop delivers read_file results
-// (redacted, then cut to max_output_bytes) and fails unless every page is
-// complete JSON whose cursor advances to the end.
+// Both executors deliver the host tool result directly. Each encoded page
+// must fit the limit and advance by the number of original bytes consumed.
 func pageThrough(t *testing.T, s *Service, path string, size int) string {
 	t.Helper()
 	var got strings.Builder
@@ -311,7 +310,7 @@ func pageThrough(t *testing.T, s *Service, path string, size int) string {
 			Content    string
 			NextOffset int `json:"next_offset"`
 		}
-		if err = json.Unmarshal([]byte(s.bounded(res)), &page); err != nil || page.NextOffset <= offset {
+		if err = json.Unmarshal([]byte(res), &page); err != nil || len(res) > s.cfg.Limits.MaxOutputBytes || page.NextOffset <= offset || page.NextOffset > size {
 			t.Fatalf("%s at %d: page unusable as delivered (%v, next_offset=%d)", path, offset, err, page.NextOffset)
 		}
 		got.WriteString(page.Content)
@@ -346,15 +345,29 @@ func TestReadPagesWithSmallOutputLimit(t *testing.T) {
 	}
 }
 
-// Redaction can lengthen a page after it is encoded; the page must still
-// arrive as complete JSON.
+func TestReadPageFitsOneMultibyteCharacter(t *testing.T) {
+	c := testConfig()
+	c.Limits.MaxOutputBytes = 144 // metadata plus the first three-byte character
+	s := openTest(t, c, finalModel())
+	const name, note = "notes/example.md", "中A"
+	if err := s.workspaceWrite(name, note, "absent"); err != nil {
+		t.Fatal(err)
+	}
+	if got := pageThrough(t, s, name, len(note)); got != note {
+		t.Fatal("lost a character at the page boundary")
+	}
+}
+
+// Include matches that straddle the initial read window.
 func TestReadPagesSurviveRedaction(t *testing.T) {
 	c := testConfig()
 	c.Model.APIKey = "k3y!"
 	s := openTest(t, c, finalModel())
-	note := strings.Repeat("k3y!", 3000)
+	note := "x" + strings.Repeat("k3y!", 3000)
 	if err := s.workspaceWrite("notes/keys.md", note, "absent"); err != nil {
 		t.Fatal(err)
 	}
-	pageThrough(t, s, "notes/keys.md", len(note))
+	if got := pageThrough(t, s, "notes/keys.md", len(note)); got != "x"+strings.Repeat("*", len(note)-1) {
+		t.Fatal("paged file mask differs at a read boundary")
+	}
 }

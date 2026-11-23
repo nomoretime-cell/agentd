@@ -74,7 +74,7 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 				return out, e
 			}
 			ctx = context.WithValue(ctx, resumedActionKey{}, a)
-			fmt.Fprintf(&input, "Original context: %s\nAction %s is %s. Receipt: %s. Do not execute it again. Inform the user or continue from this receipt.\n", a.Hint, a.ID, a.Status, a.Result)
+			fmt.Fprintf(&input, "Action %s is %s. Host receipt: %s\nResume the original request below. The receipt describes the action only. Complete the steps appropriate to this status. If a notification was requested, call send_message with the actual outcome before finishing. Do not repeat the action.\nOriginal context: %s\n", a.ID, a.Status, a.Result, a.Hint)
 		}
 		if ev.Payload.Kind == "action_request" {
 			result, pending, e := s.namedOperation(ctx, fmt.Sprintf("ev:%d:0", ev.ID), ev.Payload.Name, ev.Payload.Arguments, ev.Payload.Text)
@@ -129,9 +129,9 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 			key := fmt.Sprintf("ev:%d:%d", batch[0].ID, ordinal)
 			result, pending, toolErr := s.tool(ctx, key, call, input.String(), &out)
 			if toolErr != nil {
-				result = "ERROR: " + s.bounded(toolErr.Error())
+				result = s.bounded("ERROR: " + toolErr.Error())
 			}
-			messages = append(messages, Message{Role: "tool", ToolCallID: call.ID, Content: s.bounded(result)})
+			messages = append(messages, Message{Role: "tool", ToolCallID: call.ID, Content: result})
 			if pending != nil {
 				out.Approval = pending
 				out.Messages = messages
@@ -142,11 +142,8 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 	return out, errors.New("maximum model steps reached")
 }
 
-// readPage encodes one read_file page. JSON escaping and redaction can both
-// lengthen it, so the page shrinks until the result, redacted exactly as the
-// model will receive it, fits max_output_bytes. The cursor still advances by
-// file bytes consumed. A page that cannot hold even one character is a
-// capacity error, never an empty page that leaves the cursor in place.
+// readPage fits already-masked text and its metadata into one JSON result.
+// The cursor advances in original bytes; a nonempty file must make progress.
 func (s *Service) readPage(fields map[string]any, page []byte, offset, size int) (string, error) {
 	for {
 		fields["content"] = string(page)
@@ -156,16 +153,17 @@ func (s *Service) readPage(fields map[string]any, page []byte, offset, size int)
 		enc.SetEscapeHTML(false)
 		_ = enc.Encode(fields)
 		res := strings.TrimSuffix(buf.String(), "\n")
-		if len(s.redact(res)) <= s.cfg.Limits.MaxOutputBytes {
+		if len(res) <= s.cfg.Limits.MaxOutputBytes {
 			if len(page) == 0 && offset < size {
 				break
 			}
 			return res, nil
 		}
-		if len(page) == 0 {
+		_, first := utf8.DecodeRune(page)
+		if len(page) <= first {
 			break
 		}
-		page = page[:len(page)/2]
+		page = page[:max(first, len(page)/2)]
 		if i := bytes.LastIndexByte(page, '\n'); i >= 0 {
 			page = page[:i+1]
 		} else {
@@ -196,7 +194,14 @@ func decodeArgs(raw string, v any) error {
 	return nil
 }
 func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint string, out *Outcome) (result string, pending *Action, err error) {
-	defer func() { s.recordTool(key, call, result, pending, err) }()
+	defer func() {
+		// Both executors receive the same bounded tool result. File pages
+		// already fit and carry structured metadata that must stay intact.
+		if err == nil && call.Function.Name != "read_file" {
+			result = s.bounded(result)
+		}
+		s.recordTool(key, call, result, pending, err)
+	}()
 	if s.restrictTeamTools(ctx) {
 		return "", nil, ErrDenied
 	}
@@ -226,7 +231,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 			if e != nil {
 				return "", nil, e
 			}
-			res, e := s.readPage(map[string]any{"path": a.Path, "size": size}, page, a.Offset, int(size))
+			res, e := s.readPage(map[string]any{"path": s.redact(a.Path), "size": size}, []byte(s.maskedFile(string(page))), a.Offset, int(size))
 			return res, nil, e
 		}
 		b, e := s.workspaceRead(a.Path)
@@ -236,11 +241,12 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if a.Offset < 0 || a.Offset > len(b) {
 			return "", nil, errors.New("invalid offset")
 		}
-		page := b[a.Offset:min(len(b), a.Offset+s.cfg.Limits.MaxOutputBytes/2)]
+		view := s.maskedFile(string(b))
+		page := []byte(view[a.Offset:min(len(view), a.Offset+s.cfg.Limits.MaxOutputBytes/2)])
 		if a.Offset+len(page) < len(b) {
 			page = trimPartialRune(page)
 		}
-		res, e := s.readPage(map[string]any{"path": a.Path, "sha256": digest(b), "size": len(b)}, page, a.Offset, len(b))
+		res, e := s.readPage(map[string]any{"path": s.redact(a.Path), "sha256": digest(b), "size": len(b)}, page, a.Offset, len(b))
 		return res, nil, e
 	case "write_file":
 		var a struct {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,5 +99,39 @@ func TestChatHistoryExistingConversations(t *testing.T) {
 	messages, err := s.chatHistory(ctx, &IMRoute{ConversationID: "room1", Sender: "owner"}, 3)
 	if err != nil || len(messages) != 2 || messages[0].Content != "first" || messages[1].Content != "reply first" {
 		t.Fatalf("unexpected history: %+v %v", messages, err)
+	}
+}
+
+func TestOpenCodeReadFileReturnsMaskedPage(t *testing.T) {
+	c := testConfig()
+	c.Model.APIKey = `sample-"quoted"`
+	s := openTest(t, c, finalModel())
+	note := "before " + c.Model.APIKey + " after"
+	if err := s.workspaceWrite("notes/check.md", note, "absent"); err != nil {
+		t.Fatal(err)
+	}
+	turn := ocTurn{s: s, ctx: context.Background()}
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"notes/check.md"}}}`))
+	response := httptest.NewRecorder()
+	turn.mcp(response, req)
+	var frame struct {
+		Result struct {
+			IsError bool
+			Content []struct{ Text string }
+		}
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &frame); err != nil || response.Code != 200 || frame.Result.IsError || len(frame.Result.Content) != 1 {
+		t.Fatal("invalid MCP result", err)
+	}
+	var page struct {
+		Content    string
+		NextOffset int `json:"next_offset"`
+		SHA256     string
+	}
+	if err := json.Unmarshal([]byte(frame.Result.Content[0].Text), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Content != "before "+strings.Repeat("*", len(c.Model.APIKey))+" after" || page.NextOffset != len(note) || page.SHA256 != digest([]byte(note)) {
+		t.Fatal("file masking changed surrounding text, cursor, or source hash")
 	}
 }

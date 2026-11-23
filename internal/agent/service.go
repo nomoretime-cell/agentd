@@ -253,21 +253,29 @@ func (s *Service) logErr(op string, e error) {
 	}
 }
 func (s *Service) redact(v string) string {
-	v = s.redactIM(v)
-	for _, secret := range []string{s.token, s.cfg.Model.APIKey} {
+	return s.redactText(v, func(_, label string) string { return label })
+}
+
+// File views mask before slicing so even a page boundary inside a credential
+// is safe. Keeping byte lengths preserves offsets and hashes of the source.
+func (s *Service) maskedFile(v string) string {
+	return s.redactText(v, func(value, _ string) string { return strings.Repeat("*", len(value)) })
+}
+
+func (s *Service) redactText(v string, mask func(value, label string) string) string {
+	v = s.redactIM(v, mask)
+	replace := func(secret string) {
 		if secret != "" {
-			v = strings.ReplaceAll(v, secret, "[redacted]")
+			v = strings.ReplaceAll(v, secret, mask(secret, "[redacted]"))
 		}
 	}
+	replace(s.token)
+	replace(s.cfg.Model.APIKey)
 	for _, a := range s.cfg.Actions {
-		if a.BearerToken != "" {
-			v = strings.ReplaceAll(v, a.BearerToken, "[redacted]")
-		}
+		replace(a.BearerToken)
 	}
 	for _, t := range s.cfg.Targets {
-		if t.Token != "" {
-			v = strings.ReplaceAll(v, t.Token, "[redacted]")
-		}
+		replace(t.Token)
 	}
 	return v
 }
