@@ -17,19 +17,11 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 	if key == "" || len(key) > 256 {
 		return 0, false, errors.New("key must contain 1..256 bytes")
 	}
-	if p.Kind == "news_test" {
-		if s.cfg.provider() == "wecom" {
-			p.NewsTarget = s.ownerTarget()
-			key = "wecom:" + stableID(p.NewsTarget+"\x00"+key)
-		}
-		if !s.canMessageOwner() {
-			return 0, false, ErrDenied
-		}
-		if _, ok := s.testNewsFeed(p.Name); !ok {
-			return 0, false, errors.New("unknown news source")
-		}
+	business, err := s.admitBusiness(&p, &key)
+	if err != nil {
+		return 0, false, err
 	}
-	if p.Kind != "message" && p.Kind != "action_request" && p.Kind != "news_test" {
+	if !business && p.Kind != "message" && p.Kind != "action_request" {
 		return 0, false, errors.New("unsupported external event kind")
 	}
 	if strings.TrimSpace(p.Text) == "" && p.Kind == "message" {

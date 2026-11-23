@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,49 @@ import (
 )
 
 const newsTimerID = "ai-news-private"
+
+// The core reaches business work only through runBusiness, admitBusiness and
+// timerEvent. News is the only business today.
+
+// runBusiness runs an event kind that bypasses the model loop.
+func (s *Service) runBusiness(ctx context.Context, ev Event) (Outcome, bool, error) {
+	switch ev.Payload.Kind {
+	case "news_test":
+		out, err := s.newsTest(ctx, ev)
+		return out, true, err
+	case "ai_news":
+		out, err := s.aiNews(ctx, ev)
+		return out, true, err
+	}
+	return Outcome{}, false, nil
+}
+
+// admitBusiness validates an externally submitted business event and may
+// scope its idempotency key. It reports whether the kind is a business kind.
+func (s *Service) admitBusiness(p *Payload, key *string) (bool, error) {
+	if p.Kind != "news_test" {
+		return false, nil
+	}
+	if s.cfg.provider() == "wecom" {
+		p.NewsTarget = s.ownerTarget()
+		*key = "wecom:" + stableID(p.NewsTarget+"\x00"+*key)
+	}
+	if !s.canMessageOwner() {
+		return true, ErrDenied
+	}
+	if _, ok := s.testNewsFeed(p.Name); !ok {
+		return true, errors.New("unknown news source")
+	}
+	return true, nil
+}
+
+// timerEvent returns the Inbox payload a due timer raises.
+func (s *Service) timerEvent(t Timer) Payload {
+	if t.ID == newsTimerID {
+		return Payload{Kind: "ai_news", Text: t.Prompt, NewsTarget: s.newsScope()}
+	}
+	return Payload{Kind: "timer", Text: t.Prompt}
+}
 
 type newsItem struct {
 	Title, Link string

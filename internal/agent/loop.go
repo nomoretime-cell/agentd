@@ -23,11 +23,8 @@ func timeNow() string { return time.Now().Format(time.RFC3339) }
 
 func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 	var out Outcome
-	if batch[0].Payload.Kind == "news_test" {
-		return s.newsTest(ctx, batch[0])
-	}
-	if batch[0].Payload.Kind == "ai_news" {
-		return s.aiNews(ctx, batch[0])
+	if out, ok, err := s.runBusiness(ctx, batch[0]); ok {
+		return out, err
 	}
 	target, err := s.replyTarget(ctx, batch[0])
 	if err != nil {
