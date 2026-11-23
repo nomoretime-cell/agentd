@@ -52,7 +52,7 @@ JSON 请求必须包含 Content-Type: application/json，并携带认证。未�
 | GET /v1/drafts | 等待审核的 skill 草稿与规则提议，含批准时会遇到的问题 |
 | POST /v1/drafts/{name}/approve | 批准：skill 安装到 `workspace/skills/<name>/`（旧版本留在 `data/gate/versions/`）；`identity` 草稿追加到 IDENTITY.md |
 | POST /v1/drafts/{name}/reject | `{reason}` 必填；草稿与理由移到 `skills-drafts/.rejected/`，供下次整理参考 |
-| POST /v1/memory/{op} | 记忆整理结果：`promote` 提升待确认的候选，`discard` 丢弃它，`rollback` 回到上一版本（当前版本留作版本，可再次回滚撤销）。整理运行中、候选缺少基线或当前记忆已变化时返回 409。过期候选需 discard 后重新整理 |
+| POST /v1/memory/{op} | 记忆整理结果：`promote` 提升待确认的候选，`discard` 丢弃它，`rollback` 回到上一版本（当前版本留作版本，可再次回滚撤销）。整理运行中、候选缺少基线或当前记忆已变化时返回 409。过期的待确认候选会在下一次整理开始时自动丢弃（指标记为 `discarded`）；未过期的待确认候选会让后续整理跳过，直到被处理。`GET /v1/status` 的 `memory.held_stale` 显示是否已过期 |
 | POST /v1/events/{id}/resolve | `{operation:"retry" / "skip"}`：重试 dead 或显式跳过 dead/pending |
 | POST /v1/action-requests | `{key,name,arguments,text}`：提交已配置的命名外部动作 |
 | POST /v1/actions/{id}/decision | `{decision:"approve" / "reject"}` |

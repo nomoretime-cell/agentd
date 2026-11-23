@@ -114,25 +114,74 @@ func writeMemory(dir string, files map[string]string) error {
 	return nil
 }
 
-// prepareCandidate starts a consolidation from a copy of current memory.
+// errStaleCandidate marks a candidate whose base memory has since changed;
+// promoting it would overwrite what ordinary runs wrote meanwhile.
+var errStaleCandidate = errors.New("memory changed since consolidation; discard and regenerate")
+
+// checkBase reports whether the candidate in src was made from the current
+// memory. Ordinary runs keep writing memory, so a held candidate goes stale
+// as soon as one of them does.
+func (s *Service) checkBase(src string) error {
+	base, err := os.ReadFile(filepath.Join(s.root, src, "base.sha256"))
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: %w (missing candidate baseline)", ErrConflict, errStaleCandidate)
+	}
+	if err != nil {
+		return err
+	}
+	cur, err := readMemory(filepath.Join(s.root, "workspace"))
+	if err != nil {
+		return err
+	}
+	if memoryDigest(cur) != string(base) {
+		return fmt.Errorf("%w: %w", ErrConflict, errStaleCandidate)
+	}
+	return nil
+}
+
+// prepareCandidate starts a consolidation from a copy of current memory. A
+// held candidate that is still current blocks it; a stale one can never be
+// promoted, so it is dropped and recorded rather than blocking every later
+// consolidation until someone discards it.
 func (s *Service) prepareCandidate() error {
+	dropped, err := s.prepareCandidateLocked()
+	if dropped != "" {
+		s.recordConsolidation(map[string]any{"result": "discarded", "reason": dropped})
+	}
+	return err
+}
+
+func (s *Service) prepareCandidateLocked() (dropped string, err error) {
 	s.memoryMu.Lock()
 	defer s.memoryMu.Unlock()
-	if fileExists(filepath.Join(s.root, heldDir)) || fileExists(filepath.Join(s.root, promotingMarker)) {
-		return fmt.Errorf("%w: previous memory promotion is pending", ErrConflict)
+	if fileExists(filepath.Join(s.root, promotingMarker)) {
+		return "", fmt.Errorf("%w: previous memory promotion is pending", ErrConflict)
+	}
+	if held := filepath.Join(s.root, heldDir); fileExists(held) {
+		e := s.checkBase(heldDir)
+		if e == nil {
+			return "", fmt.Errorf("%w: a held consolidation is waiting for review", ErrConflict)
+		}
+		if !errors.Is(e, errStaleCandidate) {
+			return "", e
+		}
+		if e = os.RemoveAll(held); e != nil {
+			return "", e
+		}
+		dropped = "held candidate was stale: memory changed after it was made"
 	}
 	dir := filepath.Join(s.root, candidateDir)
 	if e := os.RemoveAll(dir); e != nil {
-		return e
+		return dropped, e
 	}
 	cur, e := readMemory(filepath.Join(s.root, "workspace"))
 	if e != nil {
-		return e
+		return dropped, e
 	}
 	if e = writeMemory(dir, cur); e != nil {
-		return e
+		return dropped, e
 	}
-	return atomicWrite(filepath.Join(dir, "base.sha256"), []byte(memoryDigest(cur)), 0600)
+	return dropped, atomicWrite(filepath.Join(dir, "base.sha256"), []byte(memoryDigest(cur)), 0600)
 }
 
 func memoryDigest(files map[string]string) string {
@@ -498,19 +547,8 @@ func (s *Service) promoteLocked(src string) error {
 		return fmt.Errorf("%w: unfinished memory promotion", ErrConflict)
 	}
 	if src == candidateDir || src == heldDir {
-		base, err := os.ReadFile(filepath.Join(s.root, src, "base.sha256"))
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%w: missing candidate baseline; discard and regenerate", ErrConflict)
-		}
-		if err != nil {
+		if err := s.checkBase(src); err != nil {
 			return err
-		}
-		cur, err := readMemory(filepath.Join(s.root, "workspace"))
-		if err != nil {
-			return err
-		}
-		if memoryDigest(cur) != string(base) {
-			return fmt.Errorf("%w: memory changed since consolidation; discard and regenerate", ErrConflict)
 		}
 	}
 	p := promotion{Source: src, Version: path.Join(versionsDir, time.Now().UTC().Format("20060102T150405.000000000Z"))}
@@ -627,5 +665,8 @@ func (s *Service) MemoryControl(op string) error {
 func (s *Service) memoryStatus() map[string]any {
 	names, _ := s.versions()
 	drafts, _ := s.Drafts()
-	return map[string]any{"held": fileExists(filepath.Join(s.root, heldDir)), "versions": len(names), "strong_model": s.strong != nil, "drafts": len(drafts)}
+	held := fileExists(filepath.Join(s.root, heldDir))
+	// A stale held candidate cannot be promoted; the next consolidation drops it.
+	stale := held && errors.Is(s.checkBase(heldDir), errStaleCandidate)
+	return map[string]any{"held": held, "held_stale": stale, "versions": len(names), "strong_model": s.strong != nil, "drafts": len(drafts)}
 }

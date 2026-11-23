@@ -277,7 +277,24 @@ func TestHeldRetirements(t *testing.T) {
 				if err := s.MemoryControl("promote"); !errors.Is(err, ErrConflict) || current(t, s, "notes/new") != "keep" {
 					t.Fatalf("stale promotion: %v", err)
 				}
+				if st := s.memoryStatus(); st["held"] != true || st["held_stale"] != true {
+					t.Fatalf("status does not show the stale held candidate: %v", st)
+				}
+				// The next consolidation drops the stale candidate instead of
+				// being blocked by it, and records that it did.
+				if err := s.prepareCandidate(); err != nil {
+					t.Fatalf("stale held candidate blocks consolidation: %v", err)
+				}
+				if fileExists(filepath.Join(s.root, heldDir)) || lastMetric(t, s)["result"] != "discarded" {
+					t.Fatalf("stale held candidate not dropped; metric %v", lastMetric(t, s))
+				}
+				if current(t, s, "notes/new") != "keep" || current(t, s, "notes/a") != "original a" {
+					t.Fatal("dropping the stale candidate changed current memory")
+				}
 				return
+			}
+			if st := s.memoryStatus(); st["held"] != true || st["held_stale"] != false {
+				t.Fatalf("fresh held candidate reported stale: %v", st)
 			}
 			if err := s.MemoryControl("promote"); err != nil {
 				t.Fatal(err)

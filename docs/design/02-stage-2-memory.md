@@ -405,7 +405,7 @@ always-on agent 没有天然的会话边界，需要人为切分，否则冻结�
 
 - **版本用目录而不是 git。** 候选在 `data/memory/candidate/`，提升时当前版本移入 `data/memory/versions/<时间戳>/`（保留 10 个），提升过程有标记文件，崩溃后下次启动补完。回滚把上一版本提升回来，当前版本同样留作版本，所以回滚本身可撤销。
 - **检查项**：MEMORY.md 上限；不得删除笔记文件；归档不可改；改动或新增的笔记必须有 evidence，每条引文至少 4 个字符，且逐字出现在所引运行记录中、本次运行可见（owner / local）的输入、回答或工具结果里；`## 历史` 只增不减。改动超过现有条目 30%（至少 5 条时）或删去 MEMORY.md 30% 以上的行（至少 10 行时）转为待确认。
-- **结果**：通过则提升（`promoted`）；没有改动则不产生版本（`unchanged`）；检查失败则丢弃并留一份在 `data/memory/rejected/`（`rejected`，运行记为 `skipped`）；需确认则移到 `data/memory/held/` 并通知默认目标（`held`），由 `POST /v1/memory/promote` 或 `/discard` 处理。每次一行指标写入 `data/memory/consolidation.jsonl`。
+- **结果**：通过则提升（`promoted`）；没有改动则不产生版本（`unchanged`）；检查失败则丢弃并留一份在 `data/memory/rejected/`（`rejected`，运行记为 `skipped`）；需确认则移到 `data/memory/held/` 并通知默认目标（`held`），由 `POST /v1/memory/promote` 或 `/discard` 处理。候选记录生成时的记忆摘要（`base.sha256`），提升前核对：等待期间记忆有改动则候选已过期，提升返回 409，避免覆盖普通运行新写的笔记。待确认的候选未过期时，后续整理跳过；已过期时，下一次整理开始时自动丢弃它（`discarded`）再照常整理，所以不处理通知也不会让整理一直停住。以后若过期丢弃频繁，可改为按文件三方合并。每次一行指标写入 `data/memory/consolidation.jsonl`。
 - **规则型记忆**：skill 闸门（B1）之前，整理把这类条目写入 `notes/rule-proposals.md` 供所有者查看，不写进索引。这一条靠 skill 约束，代码不检查，B1 时改为走闸门。
 - **未实现**：回归探针、`verify` 字段的使用时复核、knowledge 作为证据来源（`knowledge:<doc_id>` 目前会被拒绝）。
 - 达到步数或上下文上限而停止的运行仍会检查并提升已完成的部分；模型调用失败等其他错误则整体丢弃。
