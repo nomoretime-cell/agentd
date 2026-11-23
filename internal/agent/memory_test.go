@@ -239,6 +239,7 @@ cat >/dev/null
 echo '{"type":"step_start","sessionID":"'$sid'"}'
 echo '{"type":"tool_use","sessionID":"'$sid'","part":{"tool":"websearch","state":{"status":"running","input":{"query":"go"}}}}'
 echo '{"type":"tool_use","sessionID":"'$sid'","part":{"tool":"websearch","state":{"status":"completed","title":"Go official site","input":{"query":"go"},"output":"https://go.dev/ SOURCE_MARKER"}}}'
+echo '{"type":"tool_use","sessionID":"'$sid'","part":{"tool":"read","state":{"status":"error","input":{"filePath":"/missing"},"error":"ERROR_MARKER file not found"}}}'
 echo '{"type":"tool_use","sessionID":"'$sid'","part":{"tool":"agentd_read_file","state":{"status":"completed","output":"HOST_TOOL"}}}'
 echo '{"type":"text","sessionID":"'$sid'","part":{"text":"done"}}'
 echo '{"type":"step_finish","sessionID":"'$sid'","part":{"reason":"stop"}}'
@@ -265,7 +266,48 @@ echo '{"type":"step_finish","sessionID":"'$sid'","part":{"reason":"stop"}}'
 		t.Fatal(err)
 	}
 	text := string(raw)
-	if strings.Count(text, `"executor":"opencode"`) != 1 || !strings.Contains(text, "SOURCE_MARKER") || !strings.Contains(text, `\"query\":\"go\"`) || strings.Contains(text, "HOST_TOOL") {
+	if strings.Count(text, `"executor":"opencode"`) != 2 || !strings.Contains(text, "SOURCE_MARKER") || !strings.Contains(text, `"error":"ERROR_MARKER file not found"`) || !strings.Contains(text, `\"query\":\"go\"`) || strings.Contains(text, "HOST_TOOL") {
 		t.Fatalf("opencode tools not recorded as expected:\n%s", text)
+	}
+}
+
+// Escaping can multiply a page's size when it becomes JSON. Whatever the
+// content, each page must still arrive as complete JSON after the native
+// loop's cut, and the pages must add up to the whole file.
+func TestReadPagesSurviveEscaping(t *testing.T) {
+	s := openTest(t, testConfig(), finalModel())
+	// A record longer than a page is cut by bytes, so a page of backslashes doubles when encoded.
+	record := `{"type":"tool","args":"` + strings.Repeat(`\\`, 6000) + strings.Repeat(`\"<&>`, 200) + `"}` + "\n"
+	transcript := strings.Repeat(record, 6)
+	if err := os.WriteFile(filepath.Join(s.root, "data/sessions/2026-01-02.jsonl"), []byte(transcript), 0600); err != nil {
+		t.Fatal(err)
+	}
+	note := strings.Repeat(`\"`, 3000) + strings.Repeat(`<a href="x">\path\to & more</a>`+"\n", 600)
+	if err := s.workspaceWrite("notes/escaped.md", note[:s.cfg.Limits.MaxOutputBytes-1], "absent"); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{"sessions/2026-01-02.jsonl": transcript, "notes/escaped.md": note[:s.cfg.Limits.MaxOutputBytes-1]} {
+		var got strings.Builder
+		for offset, pages := 0, 0; offset < len(want); pages++ {
+			if pages > 100 {
+				t.Fatalf("%s: paging does not advance", path)
+			}
+			res, _, err := s.tool(context.Background(), "r", ToolCall{Function: FunctionCall{Name: "read_file", Arguments: fmt.Sprintf(`{"path":%q,"offset":%d}`, path, offset)}}, "", &Outcome{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var page struct {
+				Content    string
+				NextOffset int `json:"next_offset"`
+			}
+			if err = json.Unmarshal([]byte(s.bounded(res)), &page); err != nil || page.NextOffset <= offset {
+				t.Fatalf("%s at %d: page unusable after the loop's cut (%v)", path, offset, err)
+			}
+			got.WriteString(page.Content)
+			offset = page.NextOffset
+		}
+		if got.String() != want {
+			t.Fatalf("%s: pages do not reassemble the file", path)
+		}
 	}
 }

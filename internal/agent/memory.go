@@ -16,7 +16,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 func (s *Service) workspaceRead(name string) ([]byte, error) {
@@ -193,9 +192,7 @@ func (s *Service) transcriptRead(name string, offset int64, limit int) (page []b
 		if i := bytes.LastIndexByte(page, '\n'); i >= 0 {
 			page = page[:i+1]
 		} else {
-			for k := 0; k < utf8.UTFMax && !utf8.Valid(page); k++ {
-				page = page[:len(page)-1]
-			}
+			page = trimPartialRune(page)
 		}
 	}
 	return page, size, nil
@@ -226,7 +223,7 @@ func (s *Service) recordTool(key string, call ToolCall, result string, pending *
 
 // recordExecutorTool records a tool that an external executor ran on its own,
 // with whatever the executor reported about it.
-func (s *Service) recordExecutorTool(executor string, eventID int64, tool, status, title string, input json.RawMessage, output string) {
+func (s *Service) recordExecutorTool(executor string, eventID int64, tool, status, title string, input json.RawMessage, output, failure string) {
 	rec := map[string]any{"type": "tool", "executor": executor, "event": eventID, "tool": tool, "status": status}
 	if title != "" {
 		rec["title"] = s.bounded(title)
@@ -234,12 +231,18 @@ func (s *Service) recordExecutorTool(executor string, eventID int64, tool, statu
 	if len(input) > 0 {
 		rec["args"] = s.bounded(string(input))
 	}
-	if output != "" {
-		out := s.bounded(output)
-		if len(out) > executorOutputBytes {
-			out = strings.ToValidUTF8(out[:executorOutputBytes], "") + " [truncated]"
+	clip := func(v string) string {
+		v = s.bounded(v)
+		if len(v) > executorOutputBytes {
+			v = strings.ToValidUTF8(v[:executorOutputBytes], "") + " [truncated]"
 		}
-		rec["result"] = out
+		return v
+	}
+	if output != "" {
+		rec["result"] = clip(output)
+	}
+	if failure != "" {
+		rec["error"] = clip(failure)
 	}
 	s.appendTranscript(rec)
 }

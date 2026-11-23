@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Outcome struct {
@@ -140,6 +142,39 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 	return out, errors.New("maximum model steps reached")
 }
 
+// readPage encodes one read_file page. JSON escaping can multiply the page's
+// size, so the page shrinks until the encoded result fits the tool result
+// limit; the caller never receives cut-off JSON or a lost next_offset.
+func (s *Service) readPage(fields map[string]any, page []byte, offset int) string {
+	// Leave room for redaction, which bounded() applies before its cut.
+	limit := s.cfg.Limits.MaxOutputBytes - 256
+	for {
+		fields["content"] = string(page)
+		fields["next_offset"] = offset + len(page)
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(fields)
+		if res := strings.TrimSuffix(buf.String(), "\n"); len(res) <= limit || len(page) == 0 {
+			return res
+		}
+		page = page[:len(page)/2]
+		if i := bytes.LastIndexByte(page, '\n'); i >= 0 {
+			page = page[:i+1]
+		} else {
+			page = trimPartialRune(page)
+		}
+	}
+}
+
+// trimPartialRune drops an incomplete UTF-8 sequence at the end of a page.
+func trimPartialRune(page []byte) []byte {
+	for k := 0; k < utf8.UTFMax && len(page) > 0 && !utf8.Valid(page); k++ {
+		page = page[:len(page)-1]
+	}
+	return page
+}
+
 func decodeArgs(raw string, v any) error {
 	d := json.NewDecoder(strings.NewReader(raw))
 	d.DisallowUnknownFields()
@@ -183,8 +218,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 			if e != nil {
 				return "", nil, e
 			}
-			res, _ := json.Marshal(map[string]any{"path": a.Path, "content": string(page), "next_offset": a.Offset + len(page), "size": size})
-			return string(res), nil, nil
+			return s.readPage(map[string]any{"path": a.Path, "size": size}, page, a.Offset), nil, nil
 		}
 		b, e := s.workspaceRead(a.Path)
 		if e != nil {
@@ -193,9 +227,11 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if a.Offset < 0 || a.Offset > len(b) {
 			return "", nil, errors.New("invalid offset")
 		}
-		end := min(len(b), a.Offset+s.cfg.Limits.MaxOutputBytes/2)
-		res, _ := json.Marshal(map[string]any{"path": a.Path, "sha256": digest(b), "content": string(b[a.Offset:end]), "next_offset": end, "size": len(b)})
-		return string(res), nil, nil
+		page := b[a.Offset:min(len(b), a.Offset+s.cfg.Limits.MaxOutputBytes/2)]
+		if a.Offset+len(page) < len(b) {
+			page = trimPartialRune(page)
+		}
+		return s.readPage(map[string]any{"path": a.Path, "sha256": digest(b), "size": len(b)}, page, a.Offset), nil, nil
 	case "write_file":
 		var a struct {
 			Path     string `json:"path"`
