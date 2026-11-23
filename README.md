@@ -42,7 +42,7 @@ make dingtalk-live
 
 - **运行记录**：每次运行的输入、工具调用和结果、回答、状态，脱敏后追加到 `data/sessions/YYYY-MM-DD.jsonl`（按配置时区分天）。模型可以用 `read_file` 读取 `sessions/YYYY-MM-DD.jsonl`，但不能修改；群聊轮次不能读取。文件只增不减，备份时包含 `data/sessions/`。
 - **记忆文件**：`workspace/MEMORY.md` 是每次运行都会加载的索引，由模型维护，超过 200 行或 8KB 的写入会被拒绝；细节放在 `workspace/notes/`。
-- **整理**：启用下面的定时器后，agent 每天在静默时段按 `workspace/skills/memory-consolidation/SKILL.md` 对照运行记录检查、修正、合并记忆，进度记在 `notes/memory-consolidation.md`。每次整理是一次普通运行，会消耗模型调用；把 `active` 改为 `false` 即可停用。
+- **整理**：启用下面的定时器后，agent 每天在静默时段按 `workspace/skills/memory-consolidation/SKILL.md` 对照运行记录检查、修正、合并记忆，进度记在 `notes/memory-consolidation.md`。整理会改写之后每次运行都会读到的记忆，按[设计](docs/stage-2-memory-design.md#关键动作与模型分级)应由最强档的外部模型执行；这项模型分级尚未实现，目前整理会使用默认模型，建议在它完成前不要启用。把 `active` 改为 `false` 即可停用。
 
 ```sh
 curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
