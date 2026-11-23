@@ -51,13 +51,20 @@ type searchArea struct {
 func (s *Service) searchAreas(ctx context.Context) []searchArea {
 	home := s.memoryHome(ctx)
 	notes := searchArea{prefix: "notes/", files: func() ([]string, error) { return treeFiles(filepath.Join(home, "notes"), "notes/") },
-		open: func(p string) (io.ReadCloser, error) { return openUnder(filepath.Join(home, "notes"), strings.TrimPrefix(p, "notes/")) }}
+		open: func(p string) (io.ReadCloser, error) {
+			return openUnder(filepath.Join(home, "notes"), strings.TrimPrefix(p, "notes/"))
+		}}
 	sessions := searchArea{prefix: "sessions/", files: s.transcriptFiles,
 		open: func(p string) (io.ReadCloser, error) { f, _, e := s.openTranscript(p, 0); return f, e }}
 	if isCritical(ctx) {
 		sessions.keep = egressVisible
 	}
-	return []searchArea{notes, sessions}
+	kdir := filepath.Join(s.root, knowledgeDir)
+	knowledge := searchArea{prefix: "knowledge/", files: func() ([]string, error) {
+		all, e := treeFiles(kdir, "knowledge/")
+		return slices.DeleteFunc(all, func(p string) bool { return strings.HasPrefix(p, "knowledge/.archive/") }), e
+	}, open: func(p string) (io.ReadCloser, error) { return openUnder(kdir, strings.TrimPrefix(p, "knowledge/")) }}
+	return []searchArea{notes, knowledge, sessions}
 }
 
 // transcriptFiles lists transcripts newest day first.
@@ -163,7 +170,7 @@ func (s *Service) search(ctx context.Context, query, where string) (string, erro
 		}
 	}
 	if !matched {
-		return "", errors.New("search path must be under notes/ or sessions/")
+		return "", errors.New("search path must be under notes/, knowledge/ or sessions/")
 	}
 	return s.fitSearch(res), nil
 }

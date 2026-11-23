@@ -46,7 +46,7 @@ make dingtalk-live
 - **记忆文件**：`workspace/MEMORY.md` 是每次运行都会加载的索引，由模型维护，超过 200 行或 8KB 的写入会被拒绝；细节放在 `workspace/notes/`。
 - **整理**：ID 为 `memory-consolidation` 的定时器触发整理，agent 按内置的 `skills/memory-consolidation/SKILL.md`（源文件在 `internal/agent/defaults/skills/`；在 `workspace/skills/` 下放同名文件可覆盖）对照运行记录检查、修正、合并记忆，进度记在 `notes/memory-consolidation.md`。整理会改写之后每次运行都会读到的记忆，属于关键动作：
   - **只由 strong 档模型执行**，在配置的 `strong_model` 中填写任一 OpenAI 兼容接口（如 OpenAI、Gemini 的 chat completions 地址）并设 `enabled: true`。未开启或调用失败时本次整理跳过（运行记录状态 `skipped`），不会改用本地模型，也不会重试。
-  - **开启即同意外发**：整理时所有者私聊和本机运行的记录、以及记忆文件会发往该服务；群聊、其他用户和旧记录不会发送。
+  - **开启即同意外发**：整理时所有者私聊和本机运行的记录、记忆文件、skill 和已导入的 knowledge 会发往该服务；群聊、其他用户和旧记录不会发送。
   - 整理只能用读写文件的工具，不能发消息、设定时器或执行命令。
   - **先改候选，检查通过才生效**（[设计](docs/design/02-stage-2-memory.md#整理的安全机制)）：整理只改 `data/memory/candidate/` 里的副本。宿主检查每条新增或改动的笔记都带有逐字出自运行记录的原话（`evidence`），没有删除笔记或历史，索引不超限。通过后替换当前记忆，旧版本保留在 `data/memory/versions/`。检查失败则本次作废；改动过大则等待确认。
   - **沉淀做法**：整理发现被纠正过的做法、反复出现的任务或验证有效的流程时，起草 skill 到 `skills-drafts/<name>/`；"以后总是/不要"类规则写成 `skills-drafts/identity/PROPOSAL.md`。草稿在批准前不会被任何普通运行看到。用 `GET /v1/drafts` 查看，`POST /v1/drafts/{name}/approve` 批准（skill 进入每次运行的 skill 目录，规则追加到 IDENTITY.md），或 `POST /v1/drafts/{name}/reject -d '{"reason":"..."}'` 驳回。
@@ -58,6 +58,20 @@ curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
   -H "Authorization: Bearer $(cat .agentd/data/api-token)" -H 'Content-Type: application/json' \
   -d '{"id":"memory-consolidation","cron_expr":"30 3 * * *","active":true,"prompt":"按 skills/memory-consolidation/SKILL.md 整理记忆。"}'
 ```
+
+## 知识库
+
+把参考资料导入后，每次运行都能看到资料目录，并可用 `search` 和 `read_file` 查阅原文；资料对模型只读。
+
+```sh
+curl --fail-with-body -sS http://127.0.0.1:8090/v1/knowledge/import \
+  -H "Authorization: Bearer $(cat .agentd/data/api-token)" -H 'Content-Type: application/json' \
+  -d '{"path":"/path/to/docs"}'
+curl -sS http://127.0.0.1:8090/v1/knowledge -H "Authorization: Bearer $(cat .agentd/data/api-token)"
+```
+
+- md、markdown、txt 直接导入。pdf、docx、pptx、xlsx、html、csv、epub 需要在配置的 `knowledge.converter` 填一个转换器（如 `["markitdown"]`），它在无网络的沙箱里运行，所需目录（如它的 Python 虚拟环境）写进 `knowledge.converter_paths`。Linux 需要可用的 bubblewrap，macOS 使用 sandbox-exec；沙箱不可用时这些格式导入失败，不会退回不隔离的转换。
+- 重复导入同一目录只处理有变化的文件；文件改了会替换并归档旧版本，目录里删掉的文件会归档并移出目录。资料目录与 MEMORY.md 同样最多 200 行、8KB。单个文件转换后不超过 1MiB，更大的请拆分。
 
 ## 文档
 

@@ -19,6 +19,15 @@ strong_model:
   max_steps: 40
   run_seconds: 1800
   max_context_bytes: 524288
+# Imported reference material. Markdown and text import directly; other
+# formats (pdf, docx, pptx, xlsx, html, csv, epub) need a converter that takes
+# the file path as its last argument and prints Markdown, e.g. ["markitdown"].
+# It runs sandboxed without network; list the directories it must read, such
+# as its virtualenv, in converter_paths.
+knowledge:
+  converter: []
+  converter_paths: []
+  converter_seconds: 120
 limits:
   run_seconds: 240
   tool_seconds: 15

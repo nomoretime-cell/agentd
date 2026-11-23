@@ -51,6 +51,7 @@
 | | `timers.go` | cron / 一次性定时器，到点把 prompt 写成 Inbox 事件 |
 | | `memory.go` | 系统提示组装（稳定前缀）、`MEMORY.md` 上限、运行记录 `data/sessions/`、工作区读写 |
 | | `search.go` | `search` 工具：对运行记录和笔记逐行子串检索，沿用读取的作用域规则 |
+| | `knowledge.go` | knowledge 导入：转换（沙箱）、去重、归档、生成 `knowledge/INDEX.md` |
 | | `gate.go` | 闸门：草稿列表、批准 / 驳回、决定记录；skill 目录进入 system prompt |
 | | `consolidation.go` | 整理的候选版本、代码检查（证据、历史、删除、上限、改动量）、提升 / 待确认 / 回滚、整理指标 |
 | | `permissions.go` | 工具权限、命名 HTTP 操作的冻结请求、审批、执行与结果未知处理 |
@@ -58,7 +59,7 @@
 | 核心：运行 | `loop.go` | 一次运行：组装消息、模型循环、7 个工具的分发、分页读取 |
 | | `model.go` | OpenAI 兼容的 chat completions 客户端、工具定义 |
 | | `opencode.go` | 可选执行器：启动 `opencode run`，用临时 MCP 接口把工具调用转回 `tool()` |
-| | `sandbox.go` | `bash` 工具的受限执行 |
+| | `sandbox.go` | 沙箱：`bash` 工具与 knowledge 转换器共用，无网络、只读系统目录 |
 | | `store.go` | SQLite 打开（写库单连接 + 只读库）、4 张表、Payload 格式 |
 | | `service.go` | `Service` 结构、启动/关闭、暂停、脱敏、原子写 |
 | | `http.go` | 管理 API：事件、定时器、审批、对账、状态、列表 |
@@ -172,4 +173,7 @@ tool() 调用命名操作 ─► permissions: 需要审批 ─► actions(pendin
 | `data/deliveries/` | `local` 目标的投递结果 | `outbox.go` |
 | `data/opencode/` | OpenCode 会话数据 | OpenCode |
 | `workspace/IDENTITY.md`、`MEMORY.md`、`notes/`、`skills/`、`scratch/` | 模型可见的工作区；`IDENTITY.md`、`skills/` 对模型只读 | 模型（经工具）；`IDENTITY.md`、`MEMORY.md` 首次启动由模板生成 |
+| `data/memory/` | 整理的候选、待确认、被拒副本，历史版本，整理指标 | `consolidation.go` |
+| `data/gate/`、`workspace/skills-drafts/` | 闸门决定记录与被替换的旧版本；等待审核的草稿（只有关键动作可读写） | `gate.go`；草稿由整理写 |
+| `data/knowledge/`、`workspace/knowledge/` | 原文件、清单、导入记录；模型只读的 Markdown 与 `INDEX.md` | `knowledge.go` |
 | 程序内置（`internal/agent/defaults/`） | `IDENTITY.md`、`MEMORY.md` 模板；内置 skill，以 `skills/...` 只读提供，`workspace/skills/` 下同名文件优先 | 随版本发布 |

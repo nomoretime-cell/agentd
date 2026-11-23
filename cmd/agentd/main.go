@@ -23,6 +23,7 @@ func main() {
 		os.Exit(1)
 	}
 }
+
 // checkLegacyLayout stops a default start next to state from before .agentd/
 // existed. Moving data is left to the operator.
 func checkLegacyLayout(explicitRoot bool) error {

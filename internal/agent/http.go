@@ -134,6 +134,22 @@ func (s *Service) Handler() http.Handler {
 		e := s.MemoryControl(r.PathValue("op"))
 		respond(w, map[string]any{"memory": s.memoryStatus()}, e)
 	})
+	mux.HandleFunc("GET /v1/knowledge", func(w http.ResponseWriter, r *http.Request) {
+		v, e := s.Knowledge()
+		respond(w, v, e)
+	})
+	mux.HandleFunc("POST /v1/knowledge/import", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Path string `json:"path"`
+		}
+		if !decodeHTTP(w, r, &req) {
+			return
+		}
+		respond(w, map[string]string{"import": "started", "path": req.Path}, s.StartImport(req.Path))
+	})
+	mux.HandleFunc("POST /v1/knowledge/{id}/remove", func(w http.ResponseWriter, r *http.Request) {
+		respond(w, map[string]string{"doc_id": r.PathValue("id")}, s.RemoveKnowledge(r.PathValue("id")))
+	})
 	mux.HandleFunc("GET /v1/drafts", func(w http.ResponseWriter, r *http.Request) {
 		list, e := s.Drafts()
 		respond(w, list, e)

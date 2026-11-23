@@ -39,6 +39,10 @@ type Service struct {
 	wg            sync.WaitGroup
 	memoryMu      sync.Mutex
 	consolidating atomic.Bool
+	knowledge     knowledgeState
+	convert       func(context.Context, string, []byte) ([]byte, error) // converts a knowledge file to Markdown
+	life          context.Context                                       // background work such as imports; ends at Close
+	endLife       context.CancelFunc
 	started       bool
 	lastSend      time.Time
 	starts        []time.Time
@@ -64,7 +68,7 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 			return nil, errors.New("OpenCode requires a model endpoint ending in /chat/completions")
 		}
 	}
-	for _, name := range []string{"data", "data/deliveries", "data/outputs", "data/sessions", "data/memory", "data/gate", "workspace", "workspace/notes", "workspace/skills-drafts", "workspace/skills", "workspace/scratch"} {
+	for _, name := range []string{"data", "data/deliveries", "data/outputs", "data/sessions", "data/memory", "data/gate", "data/knowledge/raw", "data/knowledge/tmp", "workspace", "workspace/notes", "workspace/skills-drafts", "workspace/knowledge/md", "workspace/skills", "workspace/scratch"} {
 		path := filepath.Join(root, name)
 		if err = os.MkdirAll(path, 0700); err != nil {
 			return nil, err
@@ -92,6 +96,8 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 		}
 	}()
 	s.im = newIMChannel(s)
+	s.convert = s.runConverter
+	s.life, s.endLife = context.WithCancel(context.Background())
 	s.db, s.read, err = openDB(root)
 	if err != nil {
 		return nil, err
@@ -166,6 +172,9 @@ func (s *Service) Start(parent context.Context) {
 	}
 }
 func (s *Service) Close() error {
+	if s.endLife != nil {
+		s.endLife()
+	}
 	s.mu.Lock()
 	if s.cancel != nil {
 		s.cancel()

@@ -29,6 +29,7 @@ type Config struct {
 	Listen             string               `yaml:"listen"`
 	Model              ModelConfig          `yaml:"model"`
 	StrongModel        StrongModelConfig    `yaml:"strong_model"`
+	Knowledge          KnowledgeConfig      `yaml:"knowledge"`
 	Limits             Limits               `yaml:"limits"`
 	Timezone           string               `yaml:"timezone"`
 	Quiet              QuietHours           `yaml:"quiet_hours"`
@@ -45,6 +46,7 @@ type ModelConfig struct {
 	MaxTokens      int    `yaml:"max_tokens"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
+
 // StrongModelConfig is the tier that runs critical actions: work whose output
 // enters every later run. Enabling it consents to sending the records those
 // actions read to this service. Requests use only standard chat-completions
@@ -92,7 +94,7 @@ func DefaultConfig() Config {
 		{"量子位", "https://www.qbitai.com/feed", "zh"},
 		{"TechCrunch AI", "https://techcrunch.com/category/artificial-intelligence/feed/", "en"},
 		{"Google AI", "https://blog.google/innovation-and-ai/technology/ai/rss/", "en"},
-	}, Listen: "127.0.0.1:8090", Model: ModelConfig{Endpoint: "http://localhost:8080/v1/chat/completions", MaxTokens: 2048, TimeoutSeconds: 120}, StrongModel: StrongModelConfig{ModelConfig: ModelConfig{TimeoutSeconds: 300}, MaxSteps: 40, RunSeconds: 1800, MaxContextBytes: 512 << 10}, Limits: Limits{RunSeconds: 240, ToolSeconds: 15, MaxSteps: 12, MaxInputBytes: 16384, MaxOutputBytes: 16384, MaxBatch: 20, MaxHistoryMessages: 24, MaxRunsPerHour: 120, RetryBaseMS: 1000, DebounceMS: 1000, PollMS: 250, ApprovalSeconds: 3600}, Timezone: "UTC", DefaultTarget: "local", Targets: map[string]Target{"local": {Kind: "local"}}, Permissions: map[string]string{"read_file": "allow", "search": "allow", "write_file": "allow", "edit_file": "allow", "set_timer": "allow", "send_message": "allow", "bash": "deny"}, Actions: map[string]Operation{}}
+	}, Listen: "127.0.0.1:8090", Model: ModelConfig{Endpoint: "http://localhost:8080/v1/chat/completions", MaxTokens: 2048, TimeoutSeconds: 120}, StrongModel: StrongModelConfig{ModelConfig: ModelConfig{TimeoutSeconds: 300}, MaxSteps: 40, RunSeconds: 1800, MaxContextBytes: 512 << 10}, Knowledge: KnowledgeConfig{ConverterSeconds: 120}, Limits: Limits{RunSeconds: 240, ToolSeconds: 15, MaxSteps: 12, MaxInputBytes: 16384, MaxOutputBytes: 16384, MaxBatch: 20, MaxHistoryMessages: 24, MaxRunsPerHour: 120, RetryBaseMS: 1000, DebounceMS: 1000, PollMS: 250, ApprovalSeconds: 3600}, Timezone: "UTC", DefaultTarget: "local", Targets: map[string]Target{"local": {Kind: "local"}}, Permissions: map[string]string{"read_file": "allow", "search": "allow", "write_file": "allow", "edit_file": "allow", "set_timer": "allow", "send_message": "allow", "bash": "deny"}, Actions: map[string]Operation{}}
 }
 func LoadConfig(path string) (Config, error) {
 	c := DefaultConfig()
@@ -147,6 +149,14 @@ func (c Config) Validate() error {
 	}
 	if e := c.StrongModel.validate(); e != nil {
 		return fmt.Errorf("strong_model: %w", e)
+	}
+	if c.Knowledge.ConverterSeconds < 1 {
+		return errors.New("knowledge.converter_seconds must be positive")
+	}
+	for _, p := range c.Knowledge.ConverterPaths {
+		if !strings.HasPrefix(p, "/") {
+			return errors.New("knowledge.converter_paths must be absolute")
+		}
 	}
 	l := c.Limits
 	if l.RunSeconds < 1 || l.ToolSeconds < 1 || l.MaxSteps < 1 || l.MaxSteps > 100 || l.MaxInputBytes < 1 || l.MaxInputBytes > 1048576 || l.MaxOutputBytes < 128 || l.MaxOutputBytes > 1048576 || l.MaxBatch < 1 || l.MaxBatch > 100 || l.MaxHistoryMessages < 0 || l.MaxHistoryMessages > 100 || l.MaxRunsPerHour < 1 || l.RetryBaseMS < 1 || l.DebounceMS < 0 || l.PollMS < 10 || l.ApprovalSeconds < 1 {

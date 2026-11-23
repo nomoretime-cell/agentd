@@ -107,6 +107,7 @@ func (s *Service) fireTimers(ctx context.Context) error {
 		return nil
 	})
 }
+
 // raiseTimer returns the Inbox payload of a due timer. The memory
 // consolidation timer raises a critical action; businesses decide the rest.
 func (s *Service) raiseTimer(t Timer) Payload {

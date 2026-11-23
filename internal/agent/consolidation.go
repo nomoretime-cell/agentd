@@ -301,8 +301,12 @@ func parseEvidence(v string) ([]evidence, error) {
 // cache holds each transcript's searchable text.
 func (s *Service) quoteFound(source, quote string, cache map[string]string) (bool, error) {
 	name, _, _ := strings.Cut(source, "@")
+	if strings.HasPrefix(name, "knowledge/") && !strings.HasPrefix(name, "knowledge/.archive/") {
+		b, err := s.workspaceRead(name)
+		return err == nil && strings.Contains(string(b), quote), err
+	}
 	if !strings.HasPrefix(name, "sessions/") {
-		return false, errors.New("evidence must cite sessions/YYYY-MM-DD.jsonl")
+		return false, errors.New("evidence must cite sessions/YYYY-MM-DD.jsonl or knowledge/md/<doc>.md")
 	}
 	text, ok := cache[name]
 	if !ok {

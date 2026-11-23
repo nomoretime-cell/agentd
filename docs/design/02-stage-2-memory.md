@@ -2,7 +2,7 @@
 
 2026-11-23 · 在线版本（初稿，之后以本文件为准）：https://claude.ai/artifact/LJaZjYaeUwyB6RXt674s4V
 
-> **文档状态：第二阶段设计，演进路线的第 1–3 步（含 2a 模型分级、2b 整理安全机制、skill 草稿与闸门）已实现（2026-11-23），第 4 步起仍是草案。** 本文以[第一阶段架构基线](01-stage-1-architecture.md)为前提，只替换其中的 Memory 组件，其余四个组件（Inbox、Timers、Permissions、Outbox）保持不变。落地方式见文末[在 agentd 中的落地](#在-agentd-中的落地)。
+> **文档状态：第二阶段设计，演进路线的第 1–4 步（含 2a 模型分级、2b 整理安全机制、skill 草稿与闸门、knowledge 导入）已实现（2026-11-23），第 5 步按需增强仍是草案。** 本文以[第一阶段架构基线](01-stage-1-architecture.md)为前提，只替换其中的 Memory 组件，其余四个组件（Inbox、Timers、Permissions、Outbox）保持不变。落地方式见文末[在 agentd 中的落地](#在-agentd-中的落地)。
 >
 > - **取代基线的部分**：`session.jsonl` 从"可丢弃的滑动缓存"改为"只追加的完整原始记录"（`sessions/`）；目录结构从 `workspace/notes` 改为 `memory/`、`skills/`、`skills-drafts/`、`knowledge/`；新增"整理"（由 Timers 触发的一次普通会话），不新增后台循环。
 > - **与基线预算的冲突，需要单独决策**：用 SQLite FTS5 实现 `search` 会新增一张表，超出"4 张表"的预算。第一步改用文件检索（grep），可以不新增表。
@@ -382,7 +382,16 @@ always-on agent 没有天然的会话边界，需要人为切分，否则冻结�
 | W4 整理 | 内置 skill `skills/memory-consolidation/SKILL.md`（`internal/agent/defaults/skills/`）+ 一个定时器 | 整理是一次普通的定时运行，进度记在 `notes/memory-consolidation.md`。目前仍使用默认模型，不符合"关键动作用最强模型"，因此定时器默认不启用，待 2a 完成后再启用 |
 | `session.jsonl` | 保留为本地对话的滑动缓存 | 它只负责对话连贯性，原始记录由 `data/sessions/` 承担 |
 
-尚未实现：knowledge 导入（W2）、使用统计与归档（W6）、`search` 工具、作用域分目录、提炼层的版本管理。
+尚未实现：使用统计与归档（W6）、作用域分目录、FTS5 与向量检索、回归探针、verify / auto 闸门、模型升级后的全量重建。
+
+第 4 步 knowledge 的实现（2026-11-23，`knowledge.go`）：
+
+- **导入**：`POST /v1/knowledge/import {"path": ...}` 在后台导入一个文件或整个目录（跳过隐藏目录与不支持的格式），同一时间只有一个导入。md、markdown、txt 直接导入；pdf、docx、pptx、xlsx、html、csv、epub 交给配置的转换器（如 MarkItDown），转换器在与 `bash` 相同的沙箱中运行：无网络，只能读系统目录、转换器自身目录和文件副本。没配置转换器时这些格式会被拒绝并说明原因。
+- **存放**：转换后的 Markdown 在 `workspace/knowledge/md/<doc_id>.md`，模型只读；原文件在 `data/knowledge/raw/`，模型不可见；清单 `data/knowledge/manifest.json` 记录来源、sha256、大小、转换器、导入时间；每次导入的结果写入 `data/knowledge/imports.jsonl`。`doc_id` 由来源路径确定。
+- **去重与更新**：hash 未变则跳过；变了则替换 Markdown，旧的移入 `knowledge/.archive/`；导入目录时，之前从该目录导入、但文件已不存在的文档归档并移出索引。`POST /v1/knowledge/{doc_id}/remove` 手动归档。
+- **索引**：代码按清单生成 `knowledge/INDEX.md`（一行一个文档：标题、路径、大小），与 MEMORY.md 同一上限（200 行 / 8KB），超限的那个文件导入失败；索引装进每次运行的 system prompt。
+- **检索与证据**：`search` 覆盖 `knowledge/`（不含归档）；整理可以引用 `knowledge/md/<doc_id>.md` 中的原文作为 evidence。
+- **限制**：单个文件不超过 50MB，转换后不超过 1MiB（`read_file` 的上限），超过需拆分；不支持 URL 导入；集合与付费等级在第三阶段引入。
 
 第 3 步 skills 的实现（2026-11-23，`gate.go`）：
 
