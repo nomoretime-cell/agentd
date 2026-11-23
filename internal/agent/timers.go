@@ -87,7 +87,7 @@ func (s *Service) fireTimers(ctx context.Context) error {
 			return e
 		}
 		for _, t := range list {
-			_, _, e = insertEvent(ctx, tx, fmt.Sprintf("timer:%s:%d", t.ID, t.FireAt), s.timerEvent(t), now.UnixMilli())
+			_, _, e = insertEvent(ctx, tx, fmt.Sprintf("timer:%s:%d", t.ID, t.FireAt), s.raiseTimer(t), now.UnixMilli())
 			if e != nil {
 				return e
 			}
@@ -107,6 +107,15 @@ func (s *Service) fireTimers(ctx context.Context) error {
 		return nil
 	})
 }
+// raiseTimer returns the Inbox payload of a due timer. The memory
+// consolidation timer raises a critical action; businesses decide the rest.
+func (s *Service) raiseTimer(t Timer) Payload {
+	if t.ID == consolidationTimerID {
+		return Payload{Kind: kindConsolidation, Text: t.Prompt}
+	}
+	return s.timerEvent(t)
+}
+
 func (s *Service) timerLoop(ctx context.Context) {
 	tick := time.NewTicker(time.Duration(s.cfg.Limits.PollMS) * time.Millisecond)
 	defer tick.Stop()

@@ -25,6 +25,7 @@ type Service struct {
 	db, read      *sql.DB
 	lock          *os.File
 	model         Model
+	strong        Model // nil unless strong_model.enabled; critical actions never fall back to model
 	client        *http.Client
 	token         string
 	log           *slog.Logger
@@ -125,6 +126,9 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 	}
 	if s.model == nil {
 		s.model = NewHTTPModel(cfg.Model)
+	}
+	if cfg.StrongModel.Enabled {
+		s.strong = newStandardModel(cfg.StrongModel.ModelConfig)
 	}
 	err = transaction(context.Background(), s.db, func(tx *sql.Tx) error {
 		for _, q := range []string{"UPDATE inbox SET retries=retries+1,status=CASE WHEN retries+1>=3 THEN 'dead' ELSE 'pending' END WHERE status='running'", "UPDATE actions SET status='unknown',result='process interrupted; reconcile before retry' WHERE status='executing'", "UPDATE outbox SET status='unknown' WHERE status='sending'"} {
@@ -277,6 +281,7 @@ func (s *Service) redactText(v string, mask func(value, label string) string) st
 	}
 	replace(s.token)
 	replace(s.cfg.Model.APIKey)
+	replace(s.cfg.StrongModel.APIKey)
 	for _, a := range s.cfg.Actions {
 		replace(a.BearerToken)
 	}

@@ -25,8 +25,40 @@ type Outcome struct {
 
 func timeNow() string { return time.Now().Format(time.RFC3339) }
 
-func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
-	var out Outcome
+// Critical actions write what every later run reads: memory consolidation now,
+// skill drafting later. Code, not the prompt, binds them to the strong tier:
+// they never fall back to the default model, they get only file tools, and
+// they read only records that may leave this machine.
+const (
+	consolidationTimerID = "memory-consolidation"
+	kindConsolidation    = "consolidation"
+)
+
+var (
+	criticalKinds = map[string]bool{kindConsolidation: true}
+	criticalTools = map[string]bool{"read_file": true, "write_file": true, "edit_file": true}
+)
+
+type criticalKey struct{}
+
+func isCritical(ctx context.Context) bool { v, _ := ctx.Value(criticalKey{}).(bool); return v }
+
+// skippedError ends a critical run without retrying it. A critical action is
+// periodic: the next occurrence starts from the same progress, while retries
+// would dead-letter the event and stop the whole Inbox behind it.
+type skippedError struct{ error }
+
+func (e *skippedError) Unwrap() error { return e.error }
+
+func (s *Service) execute(ctx context.Context, batch []Event) (out Outcome, err error) {
+	if criticalKinds[batch[0].Payload.Kind] {
+		defer func() {
+			if err != nil {
+				err = &skippedError{err}
+			}
+		}()
+		return s.executeCritical(ctx, batch[0])
+	}
 	if out, ok, err := s.runBusiness(ctx, batch[0]); ok {
 		return out, err
 	}
@@ -98,8 +130,30 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 	if s.cfg.OpenCodeBinary != "" {
 		return s.executeOpenCode(ctx, batch[0], route, messages, out)
 	}
+	return s.runModel(ctx, s.model, s.cfg.Limits.MaxSteps, 128<<10, batch[0], messages, input.String(), out)
+}
+
+// executeCritical runs a critical action on the strong tier with no chat
+// history and no record of messages sent elsewhere.
+func (s *Service) executeCritical(ctx context.Context, ev Event) (Outcome, error) {
+	out := Outcome{Scope: localScope}
+	if s.strong == nil {
+		return out, errors.New("strong_model is not enabled; critical actions never run on the default model")
+	}
+	ctx = context.WithValue(ctx, scopeKey{}, out.Scope)
+	ctx = context.WithValue(ctx, criticalKey{}, true)
+	input := fmt.Sprintf("Event %d (%s): %s\n", ev.ID, ev.Payload.Kind, ev.Payload.Text)
+	messages := []Message{{Role: "system", Content: s.systemPromptFor(false) + criticalGuide}, {Role: "user", Content: input}}
+	sm := s.cfg.StrongModel
+	return s.runModel(ctx, s.strong, sm.MaxSteps, sm.MaxContextBytes, ev, messages, input, out)
+}
+
+const criticalGuide = "\nThis is a background maintenance run. Only file tools are available and nothing you write is sent to anyone. Transcripts show only records from the owner's private chats and local runs.\n"
+
+func (s *Service) runModel(ctx context.Context, model Model, maxSteps, maxContext int, first Event, messages []Message, input string, out Outcome) (Outcome, error) {
+	batch := []Event{first}
 	ordinal := 0
-	for step := 0; step < s.cfg.Limits.MaxSteps; step++ {
+	for step := 0; step < maxSteps; step++ {
 		if e := ctx.Err(); e != nil {
 			return out, e
 		}
@@ -111,10 +165,10 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 				total += len(tc.Function.Arguments)
 			}
 		}
-		if total > 128<<10 {
-			return out, errors.New("context budget exceeded")
+		if total > maxContext {
+			return out, errContextBudget
 		}
-		msg, e := s.model.Complete(ctx, messages, s.turnTools(ctx))
+		msg, e := model.Complete(ctx, messages, s.tools(ctx))
 		if e != nil {
 			return out, e
 		}
@@ -133,7 +187,7 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 			}
 			ordinal++
 			key := fmt.Sprintf("ev:%d:%d", batch[0].ID, ordinal)
-			result, pending, toolErr := s.tool(ctx, key, call, input.String(), &out)
+			result, pending, toolErr := s.tool(ctx, key, call, input, &out)
 			if toolErr != nil {
 				result = s.bounded("ERROR: " + toolErr.Error())
 			}
@@ -145,7 +199,27 @@ func (s *Service) execute(ctx context.Context, batch []Event) (Outcome, error) {
 			}
 		}
 	}
-	return out, errors.New("maximum model steps reached")
+	return out, errMaxSteps
+}
+
+var (
+	errContextBudget = errors.New("context budget exceeded")
+	errMaxSteps      = errors.New("maximum model steps reached")
+)
+
+// tools offers what this run may call; critical runs get only file tools.
+func (s *Service) tools(ctx context.Context) []Tool {
+	all := s.turnTools(ctx)
+	if !isCritical(ctx) {
+		return all
+	}
+	var some []Tool
+	for _, t := range all {
+		if criticalTools[t.Function.Name] {
+			some = append(some, t)
+		}
+	}
+	return some
 }
 
 // readPage fits already-masked text and its metadata into one JSON result.
@@ -212,6 +286,9 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		return "", nil, ErrDenied
 	}
 	name := call.Function.Name
+	if isCritical(ctx) && !criticalTools[name] {
+		return "", nil, ErrDenied
+	}
 	// Named HTTP operations use their own explicit policy, not shell permissions.
 	if name != "bash" && s.cfg.Permissions[name] != "allow" {
 		return "", nil, ErrDenied
@@ -232,6 +309,10 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 			// Transcripts hold the owner's private conversations.
 			if isSharedTurn(ctx) {
 				return "", nil, ErrDenied
+			}
+			if isCritical(ctx) {
+				res, e := s.readEgressTranscript(a.Path, a.Offset)
+				return res, nil, e
 			}
 			page, size, e := s.transcriptRead(a.Path, int64(a.Offset), s.cfg.Limits.MaxOutputBytes/2)
 			if e != nil {

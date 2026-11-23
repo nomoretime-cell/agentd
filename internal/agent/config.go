@@ -28,6 +28,7 @@ type Config struct {
 	DingTalk           DingTalkConfig       `yaml:"dingtalk"`
 	Listen             string               `yaml:"listen"`
 	Model              ModelConfig          `yaml:"model"`
+	StrongModel        StrongModelConfig    `yaml:"strong_model"`
 	Limits             Limits               `yaml:"limits"`
 	Timezone           string               `yaml:"timezone"`
 	Quiet              QuietHours           `yaml:"quiet_hours"`
@@ -44,6 +45,18 @@ type ModelConfig struct {
 	MaxTokens      int    `yaml:"max_tokens"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
+// StrongModelConfig is the tier that runs critical actions: work whose output
+// enters every later run. Enabling it consents to sending the records those
+// actions read to this service. Requests use only standard chat-completions
+// fields so hosted APIs accept them.
+type StrongModelConfig struct {
+	Enabled         bool `yaml:"enabled"`
+	ModelConfig     `yaml:",inline"`
+	MaxSteps        int `yaml:"max_steps"`
+	RunSeconds      int `yaml:"run_seconds"`
+	MaxContextBytes int `yaml:"max_context_bytes"`
+}
+
 type Limits struct {
 	RunSeconds         int `yaml:"run_seconds"`
 	ToolSeconds        int `yaml:"tool_seconds"`
@@ -79,7 +92,7 @@ func DefaultConfig() Config {
 		{"量子位", "https://www.qbitai.com/feed", "zh"},
 		{"TechCrunch AI", "https://techcrunch.com/category/artificial-intelligence/feed/", "en"},
 		{"Google AI", "https://blog.google/innovation-and-ai/technology/ai/rss/", "en"},
-	}, Listen: "127.0.0.1:8090", Model: ModelConfig{Endpoint: "http://localhost:8080/v1/chat/completions", MaxTokens: 2048, TimeoutSeconds: 120}, Limits: Limits{RunSeconds: 240, ToolSeconds: 15, MaxSteps: 12, MaxInputBytes: 16384, MaxOutputBytes: 16384, MaxBatch: 20, MaxHistoryMessages: 24, MaxRunsPerHour: 120, RetryBaseMS: 1000, DebounceMS: 1000, PollMS: 250, ApprovalSeconds: 3600}, Timezone: "UTC", DefaultTarget: "local", Targets: map[string]Target{"local": {Kind: "local"}}, Permissions: map[string]string{"read_file": "allow", "write_file": "allow", "edit_file": "allow", "set_timer": "allow", "send_message": "allow", "bash": "deny"}, Actions: map[string]Operation{}}
+	}, Listen: "127.0.0.1:8090", Model: ModelConfig{Endpoint: "http://localhost:8080/v1/chat/completions", MaxTokens: 2048, TimeoutSeconds: 120}, StrongModel: StrongModelConfig{ModelConfig: ModelConfig{TimeoutSeconds: 300}, MaxSteps: 40, RunSeconds: 1800, MaxContextBytes: 512 << 10}, Limits: Limits{RunSeconds: 240, ToolSeconds: 15, MaxSteps: 12, MaxInputBytes: 16384, MaxOutputBytes: 16384, MaxBatch: 20, MaxHistoryMessages: 24, MaxRunsPerHour: 120, RetryBaseMS: 1000, DebounceMS: 1000, PollMS: 250, ApprovalSeconds: 3600}, Timezone: "UTC", DefaultTarget: "local", Targets: map[string]Target{"local": {Kind: "local"}}, Permissions: map[string]string{"read_file": "allow", "write_file": "allow", "edit_file": "allow", "set_timer": "allow", "send_message": "allow", "bash": "deny"}, Actions: map[string]Operation{}}
 }
 func LoadConfig(path string) (Config, error) {
 	c := DefaultConfig()
@@ -131,6 +144,9 @@ func (c Config) Validate() error {
 	}
 	if c.Model.MaxTokens < 1 || c.Model.TimeoutSeconds < 1 {
 		return errors.New("invalid model limits")
+	}
+	if e := c.StrongModel.validate(); e != nil {
+		return fmt.Errorf("strong_model: %w", e)
 	}
 	l := c.Limits
 	if l.RunSeconds < 1 || l.ToolSeconds < 1 || l.MaxSteps < 1 || l.MaxSteps > 100 || l.MaxInputBytes < 1 || l.MaxInputBytes > 1048576 || l.MaxOutputBytes < 128 || l.MaxOutputBytes > 1048576 || l.MaxBatch < 1 || l.MaxBatch > 100 || l.MaxHistoryMessages < 0 || l.MaxHistoryMessages > 100 || l.MaxRunsPerHour < 1 || l.RetryBaseMS < 1 || l.DebounceMS < 0 || l.PollMS < 10 || l.ApprovalSeconds < 1 {
@@ -190,6 +206,27 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+func (c StrongModelConfig) validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if e := validateURL(c.Endpoint); e != nil {
+		return fmt.Errorf("endpoint: %w", e)
+	}
+	u, _ := url.Parse(c.Endpoint)
+	ip := net.ParseIP(u.Hostname())
+	if u.Scheme != "https" && u.Hostname() != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return errors.New("endpoint must use https unless it is on this machine")
+	}
+	if c.Name == "" {
+		return errors.New("name is required")
+	}
+	if c.MaxTokens < 0 || c.TimeoutSeconds < 1 || c.MaxSteps < 1 || c.MaxSteps > 200 || c.RunSeconds < 1 || c.MaxContextBytes < 1<<10 {
+		return errors.New("invalid limits")
+	}
+	return nil
+}
+
 func validateURL(s string) error {
 	u, e := url.Parse(s)
 	if e != nil {

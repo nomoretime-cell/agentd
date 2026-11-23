@@ -139,7 +139,7 @@ tool() 调用命名操作 ─► permissions: 需要审批 ─► actions(pendin
                             检查、修正、合并 ──► workspace/MEMORY.md + workspace/notes/
 ```
 
-原始数据（运行记录）只增不改；记忆（`MEMORY.md`、`notes/`）由模型维护，代码只限制上限。整理属于"关键动作"，设计上应使用最强档外部模型，这部分尚未实现。
+原始数据（运行记录）只增不改；记忆（`MEMORY.md`、`notes/`）由模型维护，代码只限制上限。整理属于"关键动作"：保留定时器 `memory-consolidation` 产生 `consolidation` 事件，`executeCritical` 只用 strong 档模型执行（未开启则跳过，不回退、不重试），只提供文件工具，读运行记录时只看到所有者私聊和本机运行的记录。
 
 ### 4. 两种执行器
 

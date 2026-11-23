@@ -42,15 +42,35 @@ type Model interface {
 type HTTPModel struct {
 	cfg    ModelConfig
 	client *http.Client
+	// standard limits requests to fields every hosted chat-completions API
+	// accepts; the local server also gets its sampling and template options.
+	standard bool
 }
 
 func NewHTTPModel(cfg ModelConfig) *HTTPModel {
 	return &HTTPModel{cfg: cfg, client: &http.Client{Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
+
+func newStandardModel(cfg ModelConfig) *HTTPModel {
+	m := NewHTTPModel(cfg)
+	m.standard = true
+	return m
+}
+
 func (m *HTTPModel) Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error) {
-	body := map[string]any{"model": m.cfg.Name, "messages": messages, "max_tokens": m.cfg.MaxTokens, "stream": false, "temperature": 0, "chat_template_kwargs": map[string]any{"enable_thinking": false}}
-	if len(tools) > 0 {
-		body["tools"], body["tool_choice"], body["parallel_tool_calls"] = tools, "auto", false
+	body := map[string]any{"model": m.cfg.Name, "messages": messages, "stream": false}
+	if m.standard {
+		if m.cfg.MaxTokens > 0 {
+			body["max_completion_tokens"] = m.cfg.MaxTokens
+		}
+		if len(tools) > 0 {
+			body["tools"], body["tool_choice"] = tools, "auto"
+		}
+	} else {
+		body["max_tokens"], body["temperature"], body["chat_template_kwargs"] = m.cfg.MaxTokens, 0, map[string]any{"enable_thinking": false}
+		if len(tools) > 0 {
+			body["tools"], body["tool_choice"], body["parallel_tool_calls"] = tools, "auto", false
+		}
 	}
 	b, e := json.Marshal(body)
 	if e != nil {
@@ -74,7 +94,8 @@ func (m *HTTPModel) Complete(ctx context.Context, messages []Message, tools []To
 		return Message{}, e
 	}
 	if res.StatusCode != 200 {
-		return Message{}, fmt.Errorf("model HTTP %d", res.StatusCode)
+		// Hosted APIs explain a rejected request in the body; keep a short excerpt.
+		return Message{}, fmt.Errorf("model HTTP %d: %s", res.StatusCode, strings.ToValidUTF8(string(b[:min(len(b), 300)]), ""))
 	}
 	var result struct {
 		Choices []struct {

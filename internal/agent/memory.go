@@ -176,31 +176,11 @@ func (s *Service) appendTranscript(rec map[string]any) {
 // file, because transcripts grow all day and have no total size cap. A page
 // ends on a record boundary when one fits.
 func (s *Service) transcriptRead(name string, offset int64, limit int) (page []byte, size int64, err error) {
-	rel, ok := strings.CutPrefix(path.Clean(name), "sessions/")
-	if !ok || rel == "" || strings.Contains(rel, "/") {
-		return nil, 0, ErrDenied
-	}
-	r, err := os.OpenRoot(filepath.Join(s.root, "data/sessions"))
-	if err != nil {
-		return nil, 0, err
-	}
-	defer r.Close()
-	f, err := r.Open(rel)
+	f, size, err := s.openTranscript(name, offset)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, 0, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, 0, ErrDenied
-	}
-	size = info.Size()
-	if offset < 0 || offset > size {
-		return nil, 0, errors.New("invalid offset")
-	}
 	page = make([]byte, min(int64(limit), size-offset))
 	n, err := f.ReadAt(page, offset)
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -264,6 +244,112 @@ func (s *Service) scopeFor(ctx context.Context, ev Event) runScope {
 
 func (sc runScope) stamp(rec map[string]any) {
 	rec["role"], rec["principal"], rec["conversation"] = sc.Role, sc.Principal, sc.Conversation
+}
+
+func (s *Service) openTranscript(name string, offset int64) (*os.File, int64, error) {
+	rel, ok := strings.CutPrefix(path.Clean(name), "sessions/")
+	if !ok || rel == "" || strings.Contains(rel, "/") {
+		return nil, 0, ErrDenied
+	}
+	r, err := os.OpenRoot(filepath.Join(s.root, "data/sessions"))
+	if err != nil {
+		return nil, 0, err
+	}
+	defer r.Close()
+	f, err := r.Open(rel)
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := f.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = ErrDenied
+	}
+	if err == nil && (offset < 0 || offset > info.Size()) {
+		err = errors.New("invalid offset")
+	}
+	if err != nil {
+		f.Close()
+		return nil, 0, err
+	}
+	return f, info.Size(), nil
+}
+
+// egressVisible reports whether a transcript record may go to the strong
+// tier's external service: only the owner's private chats and local runs
+// (decision D1). Records without a scope predate it and stay on this machine.
+func egressVisible(line []byte) bool {
+	var sc runScope
+	if json.Unmarshal(line, &sc) != nil {
+		return false
+	}
+	return sc.Principal == "owner" || sc.Principal == "local"
+}
+
+// readEgressTranscript pages whole records of a transcript for a critical run,
+// leaving out records that may not leave this machine. next_offset counts file
+// bytes, so paging resumes correctly across omitted records.
+func (s *Service) readEgressTranscript(name string, offset int) (string, error) {
+	f, size, err := s.openTranscript(name, int64(offset))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	for budget := s.cfg.Limits.MaxOutputBytes / 2; budget >= 16; budget /= 2 {
+		content, next, omitted, err := s.collectEgress(f, size, int64(offset), budget)
+		if err != nil {
+			return "", err
+		}
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(map[string]any{"path": s.redact(name), "size": size, "content": content, "next_offset": next, "omitted_records": omitted})
+		if res := strings.TrimSuffix(buf.String(), "\n"); len(res) <= s.cfg.Limits.MaxOutputBytes {
+			return res, nil
+		}
+	}
+	return "", fmt.Errorf("read_file cannot fit any content at offset %d within limits.max_output_bytes=%d; raise that limit", offset, s.cfg.Limits.MaxOutputBytes)
+}
+
+func (s *Service) collectEgress(f *os.File, size, offset int64, budget int) (content string, next int64, omitted int, err error) {
+	r := bufio.NewReader(io.NewSectionReader(f, offset, size-offset))
+	next = offset
+	if offset > 0 {
+		// Pointed into the middle of a record: its scope is unknown, so skip it.
+		prev := make([]byte, 1)
+		if _, err = f.ReadAt(prev, offset-1); err != nil {
+			return "", 0, 0, err
+		}
+		if prev[0] != '\n' {
+			line, e := r.ReadBytes('\n')
+			if e != nil {
+				return "", next, 0, nil
+			}
+			next += int64(len(line))
+			omitted++
+		}
+	}
+	var b strings.Builder
+	for b.Len() < budget {
+		line, e := r.ReadBytes('\n')
+		if e != nil {
+			break // a record still being written is read next time
+		}
+		if !egressVisible(line) {
+			next += int64(len(line))
+			omitted++
+			continue
+		}
+		view := s.maskedFile(string(line))
+		if b.Len()+len(view) > budget {
+			if b.Len() > 0 {
+				break
+			}
+			view = strings.ToValidUTF8(view[:budget], "") + " [record truncated]\n"
+		}
+		b.WriteString(view)
+		next += int64(len(line))
+	}
+	return b.String(), next, omitted, nil
 }
 
 func (s *Service) recordTool(ctx context.Context, key string, call ToolCall, result string, pending *Action, err error) {

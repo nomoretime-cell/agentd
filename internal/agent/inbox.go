@@ -161,7 +161,11 @@ func (s *Service) workerLoop(ctx context.Context) {
 		var runCtx context.Context
 		var cancel context.CancelFunc
 		if len(batch) > 0 {
-			runCtx, cancel = context.WithTimeout(ctx, time.Duration(s.cfg.Limits.RunSeconds)*time.Second)
+			seconds := s.cfg.Limits.RunSeconds
+			if criticalKinds[batch[0].Payload.Kind] {
+				seconds = s.cfg.StrongModel.RunSeconds
+			}
+			runCtx, cancel = context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
 			s.activeCancel = cancel
 			s.activeAborted = false
 			s.starts = append(s.starts, now)
@@ -173,9 +177,14 @@ func (s *Service) workerLoop(ctx context.Context) {
 			cancel()
 			s.mu.Lock()
 			aborted := s.activeAborted || ctx.Err() != nil
+			var skipped *skippedError
+			isSkipped := errors.As(runErr, &skipped)
 			commitCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
 			if aborted {
 				err = s.returnBatch(commitCtx, batch, false)
+			} else if isSkipped {
+				// Effects of a failed critical run are dropped; the event is done.
+				err = s.commitBatch(commitCtx, batch, Outcome{Scope: outcome.Scope})
 			} else if runErr != nil {
 				err = s.returnBatch(commitCtx, batch, true)
 			} else {
@@ -188,7 +197,9 @@ func (s *Service) workerLoop(ctx context.Context) {
 			switch {
 			case aborted:
 				status = "aborted"
-			case runErr != nil:
+			case isSkipped && err == nil:
+				status = "skipped"
+			case runErr != nil && !isSkipped:
 				status = "failed"
 			case err != nil:
 				status = "commit_failed"

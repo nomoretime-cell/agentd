@@ -44,7 +44,11 @@ make dingtalk-live
 
 - **运行记录**：每次运行的输入、工具调用和结果、回答、状态，脱敏后追加到 `data/sessions/YYYY-MM-DD.jsonl`（按配置时区分天）。每条记录带 `role`（目前固定 `default`）、`principal`（`local` 本机与定时任务、`owner` 所有者私聊、`user-<hash>` 其他人私聊、`group-<hash>` 群聊、`unknown` 无法确定来源）和 `conversation`（会话的哈希），不写平台原始 ID。OpenCode 自带的工具（如 websearch）只能记下 OpenCode 事件里报告的名称、状态、输入，以及截断到 2KB 的输出或失败原因，事件里没有的内容记录不到。模型可以用 `read_file` 分页读取 `sessions/YYYY-MM-DD.jsonl`，不能修改，读取本身不会写入记录；回复会被其他群成员看到的轮次（钉钉群、企微群）不能读取。文件只增不减，备份时包含 `data/sessions/`。
 - **记忆文件**：`workspace/MEMORY.md` 是每次运行都会加载的索引，由模型维护，超过 200 行或 8KB 的写入会被拒绝；细节放在 `workspace/notes/`。
-- **整理**：启用下面的定时器后，agent 每天在静默时段按内置的 `skills/memory-consolidation/SKILL.md`（随程序发布，源文件在 `internal/agent/defaults/skills/`；在 `workspace/skills/` 下放同名文件可覆盖） 对照运行记录检查、修正、合并记忆，进度记在 `notes/memory-consolidation.md`。整理会改写之后每次运行都会读到的记忆，按[设计](docs/design/02-stage-2-memory.md#关键动作与模型分级)应由最强档的外部模型执行；这项模型分级尚未实现，目前整理会使用默认模型；整理也还没有候选版本和回滚（设计见[整理的安全机制](docs/design/02-stage-2-memory.md#整理的安全机制)）。建议在这两项完成前不要启用。把 `active` 改为 `false` 即可停用。
+- **整理**：ID 为 `memory-consolidation` 的定时器触发整理，agent 按内置的 `skills/memory-consolidation/SKILL.md`（源文件在 `internal/agent/defaults/skills/`；在 `workspace/skills/` 下放同名文件可覆盖）对照运行记录检查、修正、合并记忆，进度记在 `notes/memory-consolidation.md`。整理会改写之后每次运行都会读到的记忆，属于关键动作：
+  - **只由 strong 档模型执行**，在配置的 `strong_model` 中填写任一 OpenAI 兼容接口（如 OpenAI、Gemini 的 chat completions 地址）并设 `enabled: true`。未开启或调用失败时本次整理跳过（运行记录状态 `skipped`），不会改用本地模型，也不会重试。
+  - **开启即同意外发**：整理时所有者私聊和本机运行的记录、以及记忆文件会发往该服务；群聊、其他用户和旧记录不会发送。
+  - 整理只能用读写文件的工具，不能发消息、设定时器或执行命令。
+  - 整理目前仍直接改写记忆，候选版本与回滚尚未实现（设计见[整理的安全机制](docs/design/02-stage-2-memory.md#整理的安全机制)），完成前建议不要启用定时器。把 `active` 改为 `false` 即可停用。
 
 ```sh
 curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
