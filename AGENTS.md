@@ -25,7 +25,7 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 
 以下约束是设计理念在本仓库的具体落点。改变任何一条，都要在同一变更中说明原因，并更新对应阶段的文档。
 
-1. **规模预算**：1 个 Go 进程，1 个业务包 `internal/agent`，5 个核心组件，4 张 SQLite 业务表，6 个基础工具。
+1. **规模预算**：1 个 Go 进程，1 个业务包 `internal/agent`，5 个核心组件，4 张 SQLite 业务表，7 个基础工具（2026-11-23 起加入 `search`，见[开发路线](docs/design/91-convention-roadmap.md) D2）。
 2. **核心不认识具体渠道和业务。** 核心文件（`inbox.go`、`timers.go`、`outbox.go`、`permissions.go`、`sandbox.go`、`memory.go`、`loop.go`、`store.go`、`service.go`）里不出现具体 IM 平台名或具体业务名，由 `boundary_test.go` 检查。
    - **渠道**：只负责平台协议、身份校验和一次发送。核心通过 `im.go` 的 `imChannel` 接口（`deliver`、`owner`、`run`、`connected`）调用，钉钉和企微各一个实现。渠道专属的路由、准入、群聊策略和脱敏也放在 `im.go`。
    - **业务**：核心只通过三个入口接入：执行循环调 `runBusiness`，`Append` 调 `admitBusiness`，定时器调 `timerEvent`。目前只有新闻一个业务，入口都在 `news.go`，不设计通用的业务结构；出现第二个业务时再抽象。
