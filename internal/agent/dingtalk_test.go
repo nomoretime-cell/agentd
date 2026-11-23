@@ -691,16 +691,16 @@ func TestScheduledOwnerNewsReceipt(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
-	n := Notification{Target: s.newsTarget(), Content: "AI news"}
-	if got := s.deliverOwnerNews(context.Background(), n); got != "sent" {
+	n := Notification{Target: s.ownerTarget(), Content: "AI news"}
+	if got := s.im.deliver(context.Background(), n); got != "sent" {
 		t.Fatal(got)
 	}
 	limited = true
-	if got := s.deliverOwnerNews(context.Background(), n); got != "pending" {
+	if got := s.im.deliver(context.Background(), n); got != "pending" {
 		t.Fatal(got)
 	}
 	n.Target = "group"
-	if s.deliverOwnerNews(context.Background(), n) != "failed" || authCalls != 1 || sendCalls != 2 {
+	if s.im.deliver(context.Background(), n) != "failed" || authCalls != 1 || sendCalls != 2 {
 		t.Fatal("recipient restriction or token cache failed")
 	}
 }

@@ -20,8 +20,8 @@ func (s *Service) enqueueTx(ctx context.Context, tx *sql.Tx, n Notification) err
 		if _, e := s.imRoute(ctx, tx, n.Target); e != nil {
 			return e
 		}
-	} else if strings.HasPrefix(n.Target, "dingtalk-owner:") || strings.HasPrefix(n.Target, "wecom-owner:") {
-		if n.Target != s.newsTarget() || !s.canSendNews() || !strings.HasPrefix(n.Key, "ai-news:") {
+	} else if imOwnerTarget(n.Target) {
+		if n.Target != s.ownerTarget() || !s.canMessageOwner() || !proactiveKey(n.Key) {
 			return ErrDenied
 		}
 	} else if _, ok := s.cfg.Targets[n.Target]; !ok {
@@ -83,7 +83,8 @@ func (s *Service) deliverOne(ctx context.Context) error {
 		return nil
 	}
 	var n Notification
-	e := s.db.QueryRowContext(ctx, "SELECT id,dedup_key,target,content,deliver_at,status,retries FROM outbox WHERE status='pending' AND deliver_at<=? AND target NOT GLOB ? AND target NOT GLOB ? ORDER BY id LIMIT 1", now.UnixMilli(), s.cfg.inactiveProvider()+":*", s.cfg.inactiveProvider()+"-owner:*").Scan(&n.ID, &n.Key, &n.Target, &n.Content, &n.DeliverAt, &n.Status, &n.Retries)
+	parkedReply, parkedOwner := s.cfg.parkedTargetGlobs()
+	e := s.db.QueryRowContext(ctx, "SELECT id,dedup_key,target,content,deliver_at,status,retries FROM outbox WHERE status='pending' AND deliver_at<=? AND target NOT GLOB ? AND target NOT GLOB ? ORDER BY id LIMIT 1", now.UnixMilli(), parkedReply, parkedOwner).Scan(&n.ID, &n.Key, &n.Target, &n.Content, &n.DeliverAt, &n.Status, &n.Retries)
 	if errors.Is(e, sql.ErrNoRows) {
 		s.mu.Unlock()
 		return nil
@@ -106,12 +107,8 @@ func (s *Service) deliverOne(ctx context.Context) error {
 		}
 	}
 	target, ok := s.cfg.Targets[n.Target]
-	if imReplyTarget(n.Target) {
+	if imReplyTarget(n.Target) || (n.Target == s.ownerTarget() && proactiveKey(n.Key)) {
 		target = Target{Kind: "im"}
-		ok = true
-	}
-	if n.Target == s.newsTarget() && strings.HasPrefix(n.Key, "ai-news:") {
-		target = Target{Kind: "owner-news"}
 		ok = true
 	}
 	if !ok {
@@ -120,7 +117,7 @@ func (s *Service) deliverOne(ctx context.Context) error {
 		return e
 	}
 	// Approval cards bypass quiet hours; ordinary model-generated notifications cannot claim urgency.
-	if !strings.HasPrefix(n.Key, "approval:") && target.Kind != "im" && target.Kind != "owner-news" {
+	if !strings.HasPrefix(n.Key, "approval:") && target.Kind != "im" {
 		due := s.quietUntil(now)
 		if due.After(now) {
 			_, e = s.db.ExecContext(ctx, "UPDATE outbox SET deliver_at=? WHERE id=?", due.UnixMilli(), n.ID)
@@ -138,14 +135,8 @@ func (s *Service) deliverOne(ctx context.Context) error {
 	retries := n.Retries
 	due := n.DeliverAt
 	switch target.Kind {
-	case "im", "owner-news":
-		if s.cfg.provider() == "wecom" {
-			status = s.deliverWeCom(ctx, n)
-		} else if target.Kind == "owner-news" {
-			status = s.deliverOwnerNews(ctx, n)
-		} else {
-			status = s.deliverDingTalk(ctx, n)
-		}
+	case "im":
+		status = s.im.deliver(ctx, n)
 		s.log.Info("IM delivery result", "provider", s.cfg.provider(), "outbox_id", n.ID, "target", n.Target, "status", status)
 		if status == "offline" {
 			status = "pending"

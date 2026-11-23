@@ -21,8 +21,42 @@ type IMRoute struct {
 }
 type imTargetKey struct{}
 
+// imChannel is the one IM platform this process uses. Core modules call it
+// without knowing which platform it is.
+type imChannel interface {
+	// deliver sends one notification and interprets the platform receipt as
+	// sent, pending (retry later), offline (not connected), failed or unknown.
+	deliver(ctx context.Context, n Notification) string
+	// owner returns the target for proactive messages to the owner and
+	// whether the platform is configured to send them.
+	owner() (target string, enabled bool)
+}
+
+func newIMChannel(s *Service) imChannel {
+	if s.cfg.provider() == "wecom" {
+		return &weComChannel{s: s}
+	}
+	return &dingTalkChannel{s: s}
+}
+
 func imReplyTarget(target string) bool {
 	return strings.HasPrefix(target, "dingtalk:") || strings.HasPrefix(target, "wecom:")
+}
+
+func imOwnerTarget(target string) bool {
+	return strings.HasPrefix(target, "dingtalk-owner:") || strings.HasPrefix(target, "wecom-owner:")
+}
+
+// Targets of the provider that is not selected stay queued until it is selected again.
+func (c Config) parkedTargetGlobs() (reply, owner string) {
+	return c.inactiveProvider() + ":*", c.inactiveProvider() + "-owner:*"
+}
+
+func (s *Service) ownerTarget() string { t, _ := s.im.owner(); return t }
+
+func (s *Service) canMessageOwner() bool {
+	_, enabled := s.im.owner()
+	return enabled && s.cfg.Permissions["send_message"] == "allow"
 }
 
 func dingTalkTarget(id int64) string { return "dingtalk:" + strconv.FormatInt(id, 10) }

@@ -70,7 +70,7 @@ func (s *Service) readNews(ctx context.Context, feed NewsFeed) ([]newsItem, erro
 
 func (s *Service) aiNews(ctx context.Context, ev Event) (Outcome, error) {
 	var out Outcome
-	if !s.canSendNews() {
+	if !s.canMessageOwner() {
 		return out, nil
 	}
 	feeds := s.cfg.NewsFeeds
@@ -106,7 +106,7 @@ func (s *Service) testNewsFeed(name string) (NewsFeed, bool) {
 // Send a clearly labelled sample even when the source has no new articles.
 func (s *Service) newsTest(ctx context.Context, ev Event) (Outcome, error) {
 	var out Outcome
-	if !s.canSendNews() {
+	if !s.canMessageOwner() {
 		return out, ErrDenied
 	}
 	feed, ok := s.testNewsFeed(ev.Payload.Name)
@@ -139,7 +139,7 @@ func (s *Service) newsTest(ctx context.Context, ev Event) (Outcome, error) {
 	if budget < len("…") {
 		return out, fmt.Errorf("news sample link exceeds message limit")
 	}
-	out.Notifications = []Notification{{Key: fmt.Sprintf("ai-news:test:%d", ev.ID), Target: s.newsTarget(), Content: header + clipHeadline(sample[0].Title, budget) + footer}}
+	out.Notifications = []Notification{{Key: fmt.Sprintf("ai-news:test:%d", ev.ID), Target: s.ownerTarget(), Content: header + clipHeadline(sample[0].Title, budget) + footer}}
 	return out, nil
 }
 
@@ -149,7 +149,7 @@ func (s *Service) newsTest(ctx context.Context, ev Event) (Outcome, error) {
 func (s *Service) newsDigest(ctx context.Context, ev Event, items []newsItem) (Outcome, error) {
 	var out Outcome
 	rows, err := s.read.QueryContext(ctx, `SELECT deliver_at,content,dedup_key FROM outbox
- WHERE target=? AND dedup_key GLOB 'ai-news:*' AND status IN ('pending','sending','sent','unknown')`, s.newsTarget())
+ WHERE target=? AND dedup_key GLOB 'ai-news:*' AND status IN ('pending','sending','sent','unknown')`, s.ownerTarget())
 	if err != nil {
 		return out, err
 	}
@@ -239,7 +239,7 @@ func (s *Service) newsDigest(ctx context.Context, ev Event, items []newsItem) (O
 		if b.Len() == 0 {
 			return
 		}
-		out.Notifications = append(out.Notifications, Notification{Key: fmt.Sprintf("%s:part:%d", digestKey, len(out.Notifications)+1), Target: s.newsTarget(), Content: header + b.String()})
+		out.Notifications = append(out.Notifications, Notification{Key: fmt.Sprintf("%s:part:%d", digestKey, len(out.Notifications)+1), Target: s.ownerTarget(), Content: header + b.String()})
 		b.Reset()
 	}
 	for _, i := range fresh {
@@ -259,7 +259,7 @@ func (s *Service) newsDigest(ctx context.Context, ev Event, items []newsItem) (O
 			// in the Outbox key so its headline is still sent exactly once locally.
 			flush()
 			content := header + prefix + i.Title + "\n（原文链接过长）"
-			out.Notifications = append(out.Notifications, Notification{Key: fmt.Sprintf("%s:long-url:%s", digestKey, hash), Target: s.newsTarget(), Content: clipHeadline(content, limit)})
+			out.Notifications = append(out.Notifications, Notification{Key: fmt.Sprintf("%s:long-url:%s", digestKey, hash), Target: s.ownerTarget(), Content: clipHeadline(content, limit)})
 			continue
 		}
 		entry := prefix + clipHeadline(i.Title, titleBudget) + suffix
@@ -336,22 +336,13 @@ func (s *Service) translateHeadlines(ctx context.Context, items []newsItem) erro
 // Legacy DingTalk timer and test events have no news_target in their payload.
 func (s *Service) newsScope() string {
 	if s.cfg.provider() == "wecom" {
-		return s.newsTarget()
+		return s.ownerTarget()
 	}
 	return ""
 }
-func (s *Service) newsTarget() string {
-	if s.cfg.provider() == "wecom" {
-		return "wecom-owner:" + stableID(s.cfg.WeCom.BotID) + ":" + s.cfg.WeCom.Owner
-	}
-	return "dingtalk-owner:" + s.cfg.DingTalk.AllowedSender
-}
-func (s *Service) canSendNews() bool {
-	if s.cfg.provider() == "wecom" {
-		return !s.cfg.WeCom.DiscoveryOnly && s.cfg.WeCom.Owner != "" && s.cfg.Permissions["send_message"] == "allow"
-	}
-	return s.cfg.DingTalk.Enabled && !s.cfg.DingTalk.DiscoveryOnly && s.cfg.DingTalk.AllowedSender != "" && s.cfg.Permissions["send_message"] == "allow"
-}
+
+// Only news notifications may be sent to the owner without an incoming message.
+func proactiveKey(key string) bool { return strings.HasPrefix(key, "ai-news:") }
 
 func newsLinkKey(raw string) string {
 	u, err := url.Parse(raw)

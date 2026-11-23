@@ -151,14 +151,24 @@ type wecomConnection struct {
 	done chan struct{}
 }
 
-func (s *Service) deliverWeCom(ctx context.Context, n Notification) string {
+// weComChannel sends replies and proactive owner messages over the long
+// connection that also receives callbacks.
+type weComChannel struct{ s *Service }
+
+func (c *weComChannel) owner() (string, bool) {
+	w := c.s.cfg.WeCom
+	return "wecom-owner:" + stableID(w.BotID) + ":" + w.Owner, !w.DiscoveryOnly && w.Owner != ""
+}
+
+func (c *weComChannel) deliver(ctx context.Context, n Notification) string {
+	s := c.s
 	if s.cfg.Permissions["send_message"] != "allow" {
 		return "failed"
 	}
 	chat := s.cfg.WeCom.Owner
 	content := strings.ReplaceAll(n.Content, "<@", "＜@")
-	if n.Target == s.newsTarget() {
-		if !s.canSendNews() {
+	if n.Target == s.ownerTarget() {
+		if !s.canMessageOwner() {
 			return "failed"
 		}
 	} else {

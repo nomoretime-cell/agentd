@@ -19,9 +19,8 @@ import (
 )
 
 type Service struct {
-	robotToken        string
-	robotTokenUntil   time.Time
 	cfg               Config
+	im                imChannel
 	root              string
 	db, read          *sql.DB
 	lock              *os.File
@@ -91,6 +90,7 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 			s.Close()
 		}
 	}()
+	s.im = newIMChannel(s)
 	s.db, s.read, err = openDB(root)
 	if err != nil {
 		return nil, err

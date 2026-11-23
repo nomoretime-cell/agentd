@@ -19,10 +19,10 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 	}
 	if p.Kind == "news_test" {
 		if s.cfg.provider() == "wecom" {
-			p.NewsTarget = s.newsTarget()
+			p.NewsTarget = s.ownerTarget()
 			key = "wecom:" + stableID(p.NewsTarget+"\x00"+key)
 		}
-		if !s.canSendNews() {
+		if !s.canMessageOwner() {
 			return 0, false, ErrDenied
 		}
 		if _, ok := s.testNewsFeed(p.Name); !ok {

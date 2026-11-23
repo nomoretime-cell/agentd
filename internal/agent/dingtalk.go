@@ -211,7 +211,29 @@ func (s *Service) acceptDingTalk(ctx context.Context, f dingTalkFrame) dingTalkA
 	return ack
 }
 
-func (s *Service) deliverDingTalk(ctx context.Context, n Notification) string {
+// dingTalkChannel replies through the expiring session webhook of the incoming
+// message and sends proactive owner messages through the robot API.
+type dingTalkChannel struct {
+	s *Service
+	// Only the serial Outbox dispatcher accesses this short-lived token.
+	token      string
+	tokenUntil time.Time
+}
+
+func (c *dingTalkChannel) owner() (string, bool) {
+	d := c.s.cfg.DingTalk
+	return "dingtalk-owner:" + d.AllowedSender, d.Enabled && !d.DiscoveryOnly && d.AllowedSender != ""
+}
+
+func (c *dingTalkChannel) deliver(ctx context.Context, n Notification) string {
+	if n.Target == c.s.ownerTarget() {
+		return c.deliverOwner(ctx, n)
+	}
+	return c.deliverReply(ctx, n)
+}
+
+func (c *dingTalkChannel) deliverReply(ctx context.Context, n Notification) string {
+	s := c.s
 	r, e := s.imRoute(ctx, s.read, n.Target)
 	if e != nil || r.ExpiresAt <= time.Now().UnixMilli() || s.cfg.Permissions["send_message"] != "allow" {
 		return "failed"
@@ -364,13 +386,12 @@ func (s *Service) dingTalkLoop(ctx context.Context) {
 	}
 }
 
-// Only the serial Outbox dispatcher accesses this short-lived token.
-func (s *Service) deliverOwnerNews(ctx context.Context, n Notification) string {
-	c := s.cfg.DingTalk
-	if !s.canSendNews() || n.Target != s.newsTarget() {
+func (ch *dingTalkChannel) deliverOwner(ctx context.Context, n Notification) string {
+	s, c := ch.s, ch.s.cfg.DingTalk
+	if !s.canMessageOwner() || n.Target != s.ownerTarget() {
 		return "failed"
 	}
-	if s.robotToken == "" || !time.Now().Before(s.robotTokenUntil) {
+	if ch.token == "" || !time.Now().Before(ch.tokenUntil) {
 		body, _ := json.Marshal(map[string]string{"appKey": c.ClientID, "appSecret": c.ClientSecret})
 		req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.dingtalk.com/v1.0/oauth2/accessToken", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -390,14 +411,14 @@ func (s *Service) deliverOwnerNews(ctx context.Context, n Notification) string {
 			}
 			return "failed"
 		}
-		s.robotToken = auth.AccessToken
-		s.robotTokenUntil = time.Now().Add(time.Duration(auth.ExpireIn-60) * time.Second)
+		ch.token = auth.AccessToken
+		ch.tokenUntil = time.Now().Add(time.Duration(auth.ExpireIn-60) * time.Second)
 	}
 	param, _ := json.Marshal(map[string]string{"content": imText(n.Content)})
 	body, _ := json.Marshal(map[string]any{"robotCode": c.ClientID, "userIds": []string{c.AllowedSender}, "msgKey": "sampleText", "msgParam": string(param)})
 	req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-acs-dingtalk-access-token", s.robotToken)
+	req.Header.Set("x-acs-dingtalk-access-token", ch.token)
 	resp, e := s.client.Do(req)
 	if e != nil {
 		return "unknown"
@@ -410,7 +431,7 @@ func (s *Service) deliverOwnerNews(ctx context.Context, n Notification) string {
 	}
 	e = json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&result)
 	if resp.StatusCode == 401 {
-		s.robotToken = ""
+		ch.token = ""
 		return "pending"
 	}
 	if resp.StatusCode == 429 || len(result.FlowControlledStaffIdList) > 0 {

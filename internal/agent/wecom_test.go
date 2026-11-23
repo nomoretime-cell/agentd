@@ -381,7 +381,7 @@ func TestWeComUnacknowledgedSendIsUnknown(t *testing.T) {
 	go func() { defer close(stopped); s.serveWeCom(ctx, conn) }()
 	defer func() { cancel(); <-stopped }()
 	waitFor(t, time.Second, func() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.wecomConn != nil })
-	_, err = s.db.Exec("INSERT INTO outbox(dedup_key,target,content,deliver_at) VALUES('ai-news:test:drop',?,'test',0)", s.newsTarget())
+	_, err = s.db.Exec("INSERT INTO outbox(dedup_key,target,content,deliver_at) VALUES('ai-news:test:drop',?,'test',0)", s.ownerTarget())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,7 +17,7 @@ func TestIncrementalNewsMigratesExistingDigest(t *testing.T) {
 	at := time.Now().Truncate(time.Second)
 	old := "https://example.com/update"
 	prior := "AI 资讯 · 11-20 00:24\n\n来源｜旧标题\n11-20 00:19 · " + old + "?utm_source=a\n"
-	_, e := s.db.Exec("INSERT INTO outbox(dedup_key,target,content,deliver_at,status) VALUES('ai-news:10',?,?,?,'sent')", s.newsTarget(), prior, at.UnixMilli())
+	_, e := s.db.Exec("INSERT INTO outbox(dedup_key,target,content,deliver_at,status) VALUES('ai-news:10',?,?,?,'sent')", s.ownerTarget(), prior, at.UnixMilli())
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -38,7 +38,7 @@ func TestIncrementalNewsMigratesExistingDigest(t *testing.T) {
 	if len(out.Notifications) != 1 || !strings.Contains(out.Notifications[0].Content, "新文章") || strings.Contains(out.Notifications[0].Content, old) {
 		t.Fatal(out)
 	}
-	_, e = s.db.Exec("INSERT INTO outbox(dedup_key,target,content,deliver_at,status) VALUES('ai-news:11',?,?,?,'unknown')", s.newsTarget(), out.Notifications[0].Content, at.Add(time.Hour).UnixMilli())
+	_, e = s.db.Exec("INSERT INTO outbox(dedup_key,target,content,deliver_at,status) VALUES('ai-news:11',?,?,?,'unknown')", s.ownerTarget(), out.Notifications[0].Content, at.Add(time.Hour).UnixMilli())
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -217,7 +217,7 @@ func TestNewsSampleDoesNotMoveDigestBaseline(t *testing.T) {
 	now := time.Now()
 	const sampleURL = "https://example.org/sample"
 	_, err := s.db.Exec("INSERT INTO outbox(dedup_key,target,content,deliver_at,status) VALUES(?,?,?,?,?)",
-		"ai-news:test:5", s.newsTarget(), "【新闻推送测试】来源\n样例\n2026-01-01 · "+sampleURL, now.UnixMilli(), "sent")
+		"ai-news:test:5", s.ownerTarget(), "【新闻推送测试】来源\n样例\n2026-01-01 · "+sampleURL, now.UnixMilli(), "sent")
 	if err != nil {
 		t.Fatal(err)
 	}
