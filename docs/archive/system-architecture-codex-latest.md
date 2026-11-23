@@ -2,7 +2,7 @@
 
 agentd 面向个人或小团队的长期后台任务，采用三个核心模块、一个 Go 宿主进程、一套持久化存储，以及独立执行沙箱。事件驱动有限 Run，任务、会话与动作记录跨 Run 保留。
 
-本文是架构总览，依据 [README 架构解析](../design/background-always-on-agents.md)、[最新版系统设计](always-on-agent-design-codex-latest.md) 和 [Event Inbox Go 实现设计](event-inbox-design-codex.md)。图中的内部方框表示代码职责，不代表独立微服务。接口示例属于设计契约，不表示代码已经实现。
+本文是架构总览，依据 [README 架构解析](../design/00-background-always-on-agents.md)、[最新版系统设计](always-on-agent-design-codex-latest.md) 和 [Event Inbox Go 实现设计](event-inbox-design-codex.md)。图中的内部方框表示代码职责，不代表独立微服务。接口示例属于设计契约，不表示代码已经实现。
 
 **1 整体模块与接口**
 

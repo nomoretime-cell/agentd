@@ -1,8 +1,8 @@
 # agentd 第二阶段：记忆模块设计（部分实现）
 
-2026-11-23 · 在线版本：https://claude.ai/artifact/LJaZjYaeUwyB6RXt674s4V
+2026-11-23 · 在线版本（初稿，之后以本文件为准）：https://claude.ai/artifact/LJaZjYaeUwyB6RXt674s4V
 
-> **文档状态：第二阶段设计，演进路线的第 1、2 步已实现（2026-11），其余仍是草案。** 本文以[第一阶段架构基线](stage-1-architecture-baseline.md)为前提，只替换其中的 Memory 组件，其余四个组件（Inbox、Timers、Permissions、Outbox）保持不变。落地方式见文末[在 agentd 中的落地](#在-agentd-中的落地)。
+> **文档状态：第二阶段设计，演进路线的第 1、2 步已实现（2026-11），其余仍是草案。** 本文以[第一阶段架构基线](01-stage-1-architecture.md)为前提，只替换其中的 Memory 组件，其余四个组件（Inbox、Timers、Permissions、Outbox）保持不变。落地方式见文末[在 agentd 中的落地](#在-agentd-中的落地)。
 >
 > - **取代基线的部分**：`session.jsonl` 从"可丢弃的滑动缓存"改为"只追加的完整原始记录"（`sessions/`）；目录结构从 `workspace/notes` 改为 `memory/`、`skills/`、`skills-drafts/`、`knowledge/`；新增"整理"（由 Timers 触发的一次普通会话），不新增后台循环。
 > - **与基线预算的冲突，需要单独决策**：用 SQLite FTS5 实现 `search` 会新增一张表，超出"4 张表"的预算。第一步改用文件检索（grep），可以不新增表。
@@ -11,14 +11,15 @@
 
 记忆模块由四类数据和三个机制组成：原始数据（session、knowledge）只读且永久保留，提炼数据（memory、skills）是可随时重建的缓存。目标是让 agent 跨会话越用越好，同时在模型能力大幅提升时架构不失效。
 
-六条原则，均从"模型无状态，记忆 = 未来会话的上下文里出现什么"推出：
+七条原则，均从"模型无状态，记忆 = 未来会话的上下文里出现什么"推出：
 
-1. **事实与派生分离。** 原始记录只追加、不修改；notes、skills、索引都是派生物。更强的模型可以从原始数据重新提炼，旧模型的错误不会永久固化（event sourcing 思路）。
+1. **事实与派生分离。** 原始记录只追加、不修改；notes、skills、索引都是派生物。更强的模型可以从原始数据重新提炼，旧模型的错误不会永久固化（event sourcing 思路）。整理也不原地改写：每次产出一个候选版本，检查通过后才替换当前版本，旧版本保留可回滚。
 2. **代码管不变量，模型管判断。** 代码负责只追加、容量上限、原子写、来源追溯、归档不删除、变更审核；记什么、怎么组织、何时沉淀为 skill 由模型决定。模型变强时只删 prompt 指导，不改代码。
 3. **文件是唯一接口。** 所有记忆都是模型能用通用工具（read / write / search）直接读写的纯文本，不存在模型看不见的记忆库。
 4. **加载层小而固定，按需层可增长。** 每次会话只加载有硬上限的索引与目录，详细内容按需读取。
 5. **离线整理为主，在线写入为辅。** 在线写入会分散注意力且不知道任务结局；离线整理能看到完整结果，可对照原始数据校验。
 6. **关键动作用最强模型。** 产出会进入之后每一次运行的动作（如整理记忆、起草 skill），由代码绑定到最强档的外部模型执行，不回退到弱模型。见[关键动作与模型分级](#关键动作与模型分级)。
+7. **保留证据，不只保留结论。** 每条提炼出的事实带上用户原话和出处；被新事实推翻的旧事实标为失效、留在历史里，而不是删掉。结论会因改写而失真（例如"我这周在帮 A 公司"被改写成"用户在 A 公司工作"），原话不会。见[整理的安全机制](#整理的安全机制)。
 
 不做的事：固定抽取 schema、数字触发写进 prompt、只靠向量检索、独立的抽取管线、细粒度记忆分类体系。
 
@@ -77,7 +78,7 @@
 
 全部用纯文本：JSONL 存 session，Markdown + YAML frontmatter 存其余。frontmatter 只放代码需要读的字段，正文由模型自由组织。
 
-下面是一个作用域内的**逻辑结构**。物理位置以[运行状态目录与路径约定](storage-layout.md)为准：状态根目录是仓库下的 `.agentd/`，按角色和服务对象分目录，模型通过固定的虚拟路径访问。
+下面是一个作用域内的**逻辑结构**。物理位置以[运行状态目录与路径约定](90-convention-storage-layout.md)为准：状态根目录是仓库下的 `.agentd/`，按角色和服务对象分目录，模型通过固定的虚拟路径访问。
 
 ```text
 <一个作用域>/
@@ -119,12 +120,20 @@
 ---
 description: 用户偏好中文简洁回复，技术术语保留英文   # 一句话摘要，供检索和写索引行参考
 status: verified          # verified | unconfirmed
-sources: [s_20261120_b3, knowledge:doc_7f2a]   # 来源，供整理校验
+evidence:                 # 必填：原话 + 出处，供整理校验和代码核对
+  - quote: "回复简短点，术语别翻译"          # 原文照抄，不改时态和语气
+    source: sessions/2026-11-20.jsonl@48213  # 文件 + 字节偏移，或 knowledge:<doc_id>
 valid_until: 2027-03-31   # 可选，有时效的事实
+verify: 可选，事实依赖外部状态时写明怎么复核（如"查 config.yaml 的 model.endpoint"）
 updated: 2026-11-23
 ---
 正文自由组织。可用 [[other-topic]] 链接其他条目。
+
+## 历史
+- 2026-09～2026-11-20：用户偏好详细解释。失效原因：用户改口，见 sessions/2026-11-20.jsonl@48213
 ```
+
+`## 历史` 段收纳被推翻的旧事实，写明失效时间和原因；它不进入索引，但整理和检索都能看到，避免下次把旧事实当新发现重新写回来。
 
 ### skill 文件（兼容 Agent Skills / agentskills.io）
 
@@ -168,10 +177,35 @@ MEMORY.md 不由 W7 生成，做法与 Claude Code 一致：模型在 W3、W4 �
 整理会话的 prompt 只说明目的和不变量，不规定具体做法。建议涵盖五件事：
 
 1. **校验**：对照新增的 session 检查已有 memory，改正错误，把被证实的条目标为 verified。
-2. **提炼**：只记"看原文也看不出来"的东西：验证过的规则、计划、偏好、坑。
-3. **合并与替换**：相似条目合成一条；与新事实矛盾的旧条目直接覆盖。
+2. **提炼**：只记"看原文也看不出来"的东西：验证过的规则、计划、偏好、坑。每条附上原话和出处（evidence），证据只能来自原始层，不能来自其他 memory 条目，避免摘要的摘要层层失真。
+3. **合并与失效**：相似条目合成一条；与新事实矛盾的旧条目移入该文件的 `## 历史` 段并写明失效原因，不直接删除。
 4. **skill 草稿**：用户纠正过做法、同类任务重复出现、一个不简单的流程被验证有效时起草。优先修改已有 skill，最后才新建；修改前必须先读。不记环境特有的失败和偶发错误。
 5. **归档与校对索引**：按使用统计归档长期未用的条目，处理过期的 valid_until，并删去 MEMORY.md 中对应的行；顺带核对 MEMORY.md 与主题文件是否一一对应。
+
+### 整理的安全机制
+
+整理是一次改写所有后续运行上下文的批量写入。业界的主要担心是它会"悄悄把一次的坏习惯固化成长期规则"，以及改写过程中丢掉时间和语气信息。因此整理不直接改当前版本，而是走"候选 → 检查 → 提升"：
+
+```text
+当前版本 memory/ ──复制──► 候选版本 ──整理会话改写──► 候选版本'
+                                                     │
+                       代码检查（确定性，必须全过）◄──┘
+                         ├─ MEMORY.md 上限、frontmatter 必填字段
+                         ├─ 每条新增或改动的 evidence.quote 在 source 指向的原文里逐字存在
+                         ├─ 没有静默删除：消失的条目必须出现在 ## 历史 或 .archive/
+                         └─ 改动量超过阈值（如一次改动超过三成条目）时转人工确认
+                                                     │
+                       回归探针（可选，strong 档）◄──┘
+                         用候选版本回答 state/probes.jsonl 中的固定问题，
+                         得分低于当前版本则不提升
+                                                     │
+                       提升：原子替换当前版本，保留最近 N 个旧版本，记录 diff
+```
+
+- **代码能做的检查交给代码。** 证据逐字存在、无静默删除、上限，都是字符串和文件比较，不需要模型判断，也不随模型变强而失效。
+- **规则型记忆视同 skill。** "以后总是/不要……"这类会改变行为的条目，和 skill 一样进入草稿，经闸门生效；陈述性事实（偏好、环境、决策）不需要。
+- **从原始层重新提炼。** 判断真假时回到 sessions 原文，不以上一次的摘要为准；模型升级后的全量重建也走同一流程。
+- **使用时复核。** 带 `verify` 的事实描述的是会变的外部状态（配置、代码、账号），模型在据此执行有外部副作用的操作前先按 `verify` 复核；复核结果与记忆不符时，以复核为准并留给下次整理修正。
 
 ### 读取路径
 
@@ -248,7 +282,7 @@ always-on agent 没有天然的会话边界，需要人为切分，否则冻结�
 | 层 | 增长是否可接受 | 控制手段 |
 | --- | --- | --- |
 | 加载层（MEMORY.md、skills 目录、knowledge 索引） | 不可接受 | 代码硬上限（如索引 200 行、skills 目录 50 条）。超限时写入报错并返回当前条目，模型必须先合并。不靠 prompt 里的"请保持精简" |
-| memory 正文 | 适度可接受 | 合并相似条目、矛盾即覆盖、valid_until 到期失效、长期未读归档、能从原文查到的不记 |
+| memory 正文 | 适度可接受 | 合并相似条目、矛盾即失效（移入历史段）、valid_until 到期失效、长期未读归档、能从原文查到的不记 |
 | skills 正文 | 适度可接受 | 优先修改已有 skill；重叠的合并为大类；14 天未用标 stale、30 天归档（Hermes 默认值）；被定时任务引用的或人工固定的豁免 |
 | sessions/、knowledge/ | 可接受 | 只检索不加载；旧数据可压缩或转冷存储 |
 
@@ -256,12 +290,13 @@ always-on agent 没有天然的会话边界，需要人为切分，否则冻结�
 
 - **只归档不删除。** 归档条目移出索引但仍可检索。因为原始层永远保留，归档错了也能重新提炼，所以提炼层可以大胆删减。
 - **监控撞上限的频率。** 频繁撞限说明记得太细（提高抽象层次），或作用域该拆分（见下一节）。
+- **每次整理记一行指标**（写入 `state/consolidation.jsonl`）：MEMORY.md 行数与字节、本次新增 / 合并 / 失效 / 归档条数、代码检查未通过项、回归探针得分、是否提升。不看指标就无法判断记忆是在变好还是在漂移。
 
 ## 作用域、权限与闸门
 
 ### 作用域
 
-**决策：默认隔离，跨角色只经公司共享层，经审核单向提升。** 详细目录与虚拟路径见[运行状态目录与路径约定](storage-layout.md)。
+**决策：默认隔离，跨角色只经公司共享层，经审核单向提升。** 详细目录与虚拟路径见[运行状态目录与路径约定](90-convention-storage-layout.md)。
 
 作用域分三层，每层各有自己的 MEMORY.md 与 .archive/，各自计算上限：
 
@@ -324,14 +359,15 @@ always-on agent 没有天然的会话边界，需要人为切分，否则冻结�
 
 1. **原始层与装配**：完整 session 记录（W1）；memory/ 文件 + 模型维护的 MEMORY.md 与代码硬上限；冻结前缀。这一步先做，因为原始数据没记下的部分以后无法补。
 2. **整理**：用定时器触发整理会话；进度记录；git 提交；使用统计与归档。
-    - **2a. 模型分级**：配置 strong 档，整理等关键动作绑定 strong 档且不回退。整理定时器应在这一步完成后再启用。
-3. **skills**：草稿区、manual 闸门、skills 目录进入前缀。
+    - **2a. 模型分级**：配置 strong 档，整理等关键动作绑定 strong 档且不回退。
+    - **2b. 整理的安全机制**：候选版本、代码检查（证据逐字存在、无静默删除、上限、改动量阈值）、提升与旧版本保留、整理指标；memory 文件加 `evidence` 和 `## 历史`。整理定时器应在 2a、2b 都完成后再启用。
+3. **skills**：草稿区、manual 闸门、skills 目录进入前缀；规则型记忆走同一闸门。
 4. **knowledge 导入**：导入命令 + 转换器 + INDEX.md；`search` 接入 FTS5（trigram 分词）。
-5. **按需增强**：多作用域；向量检索 + RRF；verify 闸门；模型升级后的全量重建。
+5. **按需增强**：多作用域；向量检索 + RRF（混合检索在公开评测中是收益最大的单项改进）；回归探针；verify 闸门；模型升级后的全量重建。
 
 ## 在 agentd 中的落地
 
-第 1、2 步已实现，没有新增表、工具或后台循环，仍在第一阶段的规模预算内。实现时按 agentd 现有结构做了映射，与上文设计的差异如下。下表是**当前**的物理路径；迁移到 `.agentd/` 和按角色分目录后的位置，见[运行状态目录与路径约定](storage-layout.md)第 6 节。
+第 1、2 步已实现，没有新增表、工具或后台循环，仍在第一阶段的规模预算内。实现时按 agentd 现有结构做了映射，与上文设计的差异如下。下表是**当前**的物理路径；迁移到 `.agentd/` 和按角色分目录后的位置，见[运行状态目录与路径约定](90-convention-storage-layout.md)第 6 节。
 
 | 设计 | agentd 中的实现 | 说明 |
 | --- | --- | --- |
@@ -342,7 +378,26 @@ always-on agent 没有天然的会话边界，需要人为切分，否则冻结�
 | W4 整理 | `workspace/skills/memory-consolidation/SKILL.md` + 一个定时器 | 整理是一次普通的定时运行，进度记在 `notes/memory-consolidation.md`。目前仍使用默认模型，不符合"关键动作用最强模型"，因此定时器默认不启用，待 2a 完成后再启用 |
 | `session.jsonl` | 保留为本地对话的滑动缓存 | 它只负责对话连贯性，原始记录由 `data/sessions/` 承担 |
 
-尚未实现：模型分级（2a）、skill 草稿与闸门（W5）、knowledge 导入（W2）、使用统计与归档（W6）、`search` 工具、作用域分目录、提炼层的 git 版本管理。
+尚未实现：模型分级（2a）、整理的安全机制（2b）、skill 草稿与闸门（W5）、knowledge 导入（W2）、使用统计与归档（W6）、`search` 工具、作用域分目录、提炼层的版本管理。
+
+与本设计不一致、需在 2b 中修正的现状：
+
+- 整理目前直接改写 `workspace/MEMORY.md` 和 `notes/`，没有候选版本和回滚。
+- `memory-consolidation/SKILL.md` 第 3 步写的是"用新事实替换旧事实"，应改为移入 `## 历史`；也还没有要求写 `evidence`。
+- 运行记录的读取结果带有 `next_offset`，足以作为 evidence 的 `source` 偏移，不需要新增字段。
+
+## 与业界做法的对照（2026-11）
+
+| 方面 | 业界做法 | 本设计 |
+| --- | --- | --- |
+| 加载层 | Claude Code：一事一文件 + 模型维护的 MEMORY.md，按行数和字节截断 | 相同，且写入时拒绝超限 |
+| 后台整理 | Claude Managed Agents dreaming：输入记忆库 + 1～100 个会话，输出一个**新的**记忆库，原库不变，人审后再切换；Letta sleep-time | 候选版本 + 提升，和 dreaming 一致；另加代码检查和回归探针，dreaming 文档未提供这类检查 |
+| 原始数据 | 多数产品只保留提炼后的记忆，会话按保留期过期 | 原始层永久保留，提炼层可重建，这一点比多数产品更严格 |
+| 矛盾与时间 | Graphiti / Zep 用有效期字段标失效而非删除；LAPSE 研究发现主流系统改写时会丢失时态，建议保留原话 | 历史段 + evidence 原话 |
+| 使用前复核 | GitHub Copilot memory 带代码引用，行动前对照当前分支复核 | `verify` 字段，仅用于会变的外部状态 |
+| 程序性记忆 | Hermes：后台复盘生成 skill，Curator 归档；Agent Skills 格式 | 相同，生效走闸门 |
+| 检索 | 混合检索（稀疏 + 稠密）在控制检索预算后效果最好；各家排行榜差距多来自检索预算 | 先 FTS5，再按需加向量 + RRF；检索结果有长度上限 |
+| 尚未覆盖 | 实体解析、知识图谱、学习到的重要性评分 | 有意不做：依赖特定模型或 schema，模型变强后容易需要重写 |
 
 ## 参考资料
 
@@ -351,6 +406,11 @@ always-on agent 没有天然的会话边界，需要人为切分，否则冻结�
 - [Claude Code memory](https://code.claude.com/docs/en/memory)：CLAUDE.md、一事一文件 + 模型维护的 MEMORY.md 索引（加载前 200 行 / 25 KB）
 - [Anthropic Agent Skills](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview)：SKILL.md 格式与按需加载
 - [Hermes Agent](https://github.com/NousResearch/hermes-agent)：有上限的 MEMORY.md / USER.md、后台复盘生成 skill、Curator 归档、FTS5 会话检索
+- [Claude Managed Agents: dreams](https://platform.claude.com/docs/en/managed-agents/dreams)：整理输出新记忆库、不修改输入
+- [LAPSE: Memory Consolidation Flattens the Temporal Shape of User Facts](https://arxiv.org/abs/2609.36457)：改写丢失时态，建议保留原话作证据
+- [Hindsight: The Consolidation Problem in Agent Memory](https://hindsight.vectorize.io/blog/2026/05/21/agent-memory-consolidation)：recency-wins + 显式失效、衰减与淘汰的取舍
+- [Beyond Memory Leaderboards](https://arxiv.org/abs/2607.16848)：控制检索预算后的对比，混合检索收益最大
+- [Episodic-to-semantic consolidation 综述](https://davidamitchell.github.io/Research/research/2026-07-20-agent-memory-consolidation-episodic-semantic.html)：Copilot memory 的引用与行动前复核
 - [Letta sleep-time agents](https://docs.letta.com/guides/agents/architectures/sleeptime)：后台整理记忆
 - [Mem0](https://arxiv.org/abs/2504.19413)：ADD / UPDATE / DELETE / NOOP 对账
 - [Graphiti](https://github.com/getzep/graphiti)：双时间有效期，失效而非删除

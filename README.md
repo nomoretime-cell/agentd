@@ -14,7 +14,7 @@ make build
 - 模型：`http://localhost:8080/v1/chat/completions`，模型名称见 `config.yaml`。
 - API 密钥：首次启动生成 `data/api-token`，除健康检查外均需 Bearer Token。
 - 默认投递：保存到 `data/deliveries/`；普通通知遵循配置中的夜间静默时段。
-- 运行状态：目前位于仓库下的 `data/` 和 `workspace/`（`-root .`）。计划迁入仓库下的 `.agentd/`，迁移前本文命令中的路径保持不变，见[运行状态目录与路径约定](docs/design/storage-layout.md)。
+- 运行状态：目前位于仓库下的 `data/` 和 `workspace/`（`-root .`）。计划迁入仓库下的 `.agentd/`，迁移前本文命令中的路径保持不变，见[运行状态目录与路径约定](docs/design/90-convention-storage-layout.md)。
 - Go 工具链、依赖、构建缓存和测试数据均保存在项目 `.tools/`、`.cache/` 中。
 
 ```sh
@@ -43,7 +43,7 @@ make dingtalk-live
 
 - **运行记录**：每次运行的输入、工具调用和结果、回答、状态，脱敏后追加到 `data/sessions/YYYY-MM-DD.jsonl`（按配置时区分天）。OpenCode 自带的工具（如 websearch）只能记下 OpenCode 事件里报告的名称、状态、输入，以及截断到 2KB 的输出或失败原因，事件里没有的内容记录不到。模型可以用 `read_file` 分页读取 `sessions/YYYY-MM-DD.jsonl`，不能修改，读取本身不会写入记录；回复会被其他群成员看到的轮次（钉钉群、企微群）不能读取。文件只增不减，备份时包含 `data/sessions/`。
 - **记忆文件**：`workspace/MEMORY.md` 是每次运行都会加载的索引，由模型维护，超过 200 行或 8KB 的写入会被拒绝；细节放在 `workspace/notes/`。
-- **整理**：启用下面的定时器后，agent 每天在静默时段按 `workspace/skills/memory-consolidation/SKILL.md` 对照运行记录检查、修正、合并记忆，进度记在 `notes/memory-consolidation.md`。整理会改写之后每次运行都会读到的记忆，按[设计](docs/design/stage-2-memory-design.md#关键动作与模型分级)应由最强档的外部模型执行；这项模型分级尚未实现，目前整理会使用默认模型，建议在它完成前不要启用。把 `active` 改为 `false` 即可停用。
+- **整理**：启用下面的定时器后，agent 每天在静默时段按 `workspace/skills/memory-consolidation/SKILL.md` 对照运行记录检查、修正、合并记忆，进度记在 `notes/memory-consolidation.md`。整理会改写之后每次运行都会读到的记忆，按[设计](docs/design/02-stage-2-memory.md#关键动作与模型分级)应由最强档的外部模型执行；这项模型分级尚未实现，目前整理会使用默认模型；整理也还没有候选版本和回滚（设计见[整理的安全机制](docs/design/02-stage-2-memory.md#整理的安全机制)）。建议在这两项完成前不要启用。把 `active` 改为 `false` 即可停用。
 
 ```sh
 curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
@@ -53,13 +53,14 @@ curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
 
 ## 文档
 
-文档按设计、指南、报告、归档分类，关系和阅读顺序见 [docs 索引](docs/README.md)。常用的几份：
+文档按设计、现状、报告、归档分类，关系和阅读顺序见 [docs 索引](docs/README.md)。常用的几份：
 
-- [运行、API、权限与故障恢复](docs/guides/runtime.md)
-- [钉钉接入步骤与验证记录](docs/guides/dingtalk.md)
-- [第一阶段架构基线（已实现）](docs/design/stage-1-architecture-baseline.md)
-- [第二阶段：记忆模块设计（部分实现）](docs/design/stage-2-memory-design.md)
-- [运行状态目录与路径约定（目标布局，迁移未实施）](docs/design/storage-layout.md)
+- [当前软件架构：模块、数据流与状态位置](docs/current/architecture.md)
+- [运行、API、权限与故障恢复](docs/current/operations.md)
+- [钉钉接入步骤](docs/current/dingtalk-setup.md)（首次接入的验证记录见 [reports/2026-11-17-dingtalk-integration.md](docs/reports/2026-11-17-dingtalk-integration.md)）
+- [第一阶段架构基线（已实现）](docs/design/01-stage-1-architecture.md)
+- [第二阶段：记忆模块设计（部分实现）](docs/design/02-stage-2-memory.md)
+- [运行状态目录与路径约定（目标布局，迁移未实施）](docs/design/90-convention-storage-layout.md)
 
 默认禁止任意 shell；外部写操作通过配置好的命名 HTTP 操作执行，支持人工审批和结果未知保护。完整实现范围、沙箱平台限制及设计取舍见运行文档。
 

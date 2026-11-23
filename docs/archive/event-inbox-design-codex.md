@@ -1,6 +1,6 @@
 # Event Inbox 模块 Go 实现设计
 
-本文定义 agentd 的 Event Inbox 实现边界、数据结构、Go 接口、事务流程和验收条件，基于 [README](../design/background-always-on-agents.md) 与 [最新版总体设计](always-on-agent-design-codex-latest.md)。目标是单机、小团队场景下可靠接收事件、串行推进任务，并在进程中断后恢复。
+本文定义 agentd 的 Event Inbox 实现边界、数据结构、Go 接口、事务流程和验收条件，基于 [README](../design/00-background-always-on-agents.md) 与 [最新版总体设计](always-on-agent-design-codex-latest.md)。目标是单机、小团队场景下可靠接收事件、串行推进任务，并在进程中断后恢复。
 
 首版使用 Go 标准库、SQLite 和进程内唤醒通知。Inbox 是运行控制器的内部能力，不是独立微服务；它不理解业务意图，不直接执行外部写动作，也不实现模型推理。本文代码是实现契约与示意片段，不是已经交付的运行代码。
 
