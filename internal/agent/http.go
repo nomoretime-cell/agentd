@@ -130,6 +130,10 @@ func (s *Service) Handler() http.Handler {
 		}
 		respond(w, map[string]int64{"id": id}, s.ResolveDelivery(r.Context(), id, req.Status))
 	})
+	mux.HandleFunc("POST /v1/memory/{op}", func(w http.ResponseWriter, r *http.Request) {
+		e := s.MemoryControl(r.PathValue("op"))
+		respond(w, map[string]any{"memory": s.memoryStatus()}, e)
+	})
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		paused := s.paused
@@ -151,7 +155,7 @@ func (s *Service) Handler() http.Handler {
 		if s.cfg.OpenCodeBinary != "" {
 			executor = "opencode"
 		}
-		respond(w, map[string]any{"executor": executor, "paused": paused, "active": active, "counts": counts, "model": s.cfg.Model.Name, "im_provider": s.cfg.provider(), "wecom": map[string]any{"enabled": s.cfg.provider() == "wecom", "connected": wcConnected, "discovery_only": s.cfg.WeCom.DiscoveryOnly, "allow_all_groups": s.cfg.WeCom.AllowAllGroups, "group_owner_tools": s.cfg.WeCom.GroupOwnerTools}, "dingtalk": map[string]any{"enabled": s.cfg.provider() == "dingtalk" && s.cfg.DingTalk.Enabled, "connected": dtConnected, "discovery_only": s.cfg.DingTalk.DiscoveryOnly}}, nil)
+		respond(w, map[string]any{"memory": s.memoryStatus(), "executor": executor, "paused": paused, "active": active, "counts": counts, "model": s.cfg.Model.Name, "im_provider": s.cfg.provider(), "wecom": map[string]any{"enabled": s.cfg.provider() == "wecom", "connected": wcConnected, "discovery_only": s.cfg.WeCom.DiscoveryOnly, "allow_all_groups": s.cfg.WeCom.AllowAllGroups, "group_owner_tools": s.cfg.WeCom.GroupOwnerTools}, "dingtalk": map[string]any{"enabled": s.cfg.provider() == "dingtalk" && s.cfg.DingTalk.Enabled, "connected": dtConnected, "discovery_only": s.cfg.DingTalk.DiscoveryOnly}}, nil)
 	})
 	for _, table := range []string{"inbox", "timers", "actions", "outbox"} {
 		mux.HandleFunc("GET /v1/"+table, func(w http.ResponseWriter, r *http.Request) {

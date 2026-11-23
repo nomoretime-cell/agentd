@@ -50,6 +50,7 @@
 | 核心：五原语 | `inbox.go` | 事件写入（去重键）、按顺序 claim、执行、提交或退回重试、死信 |
 | | `timers.go` | cron / 一次性定时器，到点把 prompt 写成 Inbox 事件 |
 | | `memory.go` | 系统提示组装（稳定前缀）、`MEMORY.md` 上限、运行记录 `data/sessions/`、工作区读写 |
+| | `consolidation.go` | 整理的候选版本、代码检查（证据、历史、删除、上限、改动量）、提升 / 待确认 / 回滚、整理指标 |
 | | `permissions.go` | 工具权限、命名 HTTP 操作的冻结请求、审批、执行与结果未知处理 |
 | | `outbox.go` | 通知排队、静默时段、按目标投递（im / webhook / local）、重试 |
 | 核心：运行 | `loop.go` | 一次运行：组装消息、模型循环、6 个工具的分发、分页读取 |
@@ -135,11 +136,17 @@ tool() 调用命名操作 ─► permissions: 需要审批 ─► actions(pendin
    （只追加，模型只读）            │                            静态头 → 记忆指南 → IDENTITY.md
                                   │ read_file sessions/...    → MEMORY.md（≤200 行 / 8KB）
                                   ▼                           → 命名操作 → 技能提示 → 当前时间
-         记忆整理定时器 ──► 模型按 skills/memory-consolidation/SKILL.md
-                            检查、修正、合并 ──► workspace/MEMORY.md + workspace/notes/
+   记忆整理定时器 ──► strong 档模型按 skills/memory-consolidation/SKILL.md
+   （只读 owner/local 记录）  检查、修正、合并 ──► data/memory/candidate/（副本）
+                                                        │ 代码检查：证据逐字存在、历史不减、
+                                                        │ 不删笔记、索引上限、改动量
+                                  ┌─────────────────────┼──────────────────────┐
+                                  ▼ 通过                 ▼ 改动过大              ▼ 失败
+                     替换 workspace/MEMORY.md、notes/   held/，等人确认        rejected/，本次作废
+                     旧版本 → data/memory/versions/
 ```
 
-原始数据（运行记录）只增不改；记忆（`MEMORY.md`、`notes/`）由模型维护，代码只限制上限。整理属于"关键动作"：保留定时器 `memory-consolidation` 产生 `consolidation` 事件，`executeCritical` 只用 strong 档模型执行（未开启则跳过，不回退、不重试），只提供文件工具，读运行记录时只看到所有者私聊和本机运行的记录。
+原始数据（运行记录）只增不改；记忆（`MEMORY.md`、`notes/`）由模型维护，代码只限制上限。整理属于"关键动作"：保留定时器 `memory-consolidation` 产生 `consolidation` 事件，`executeCritical` 只用 strong 档模型执行（未开启则跳过，不回退、不重试），只提供文件工具，读运行记录时只看到所有者私聊和本机运行的记录。整理写的是 `data/memory/candidate/` 里的副本，`consolidation.go` 检查通过后才替换当前记忆，旧版本留在 `data/memory/versions/`。
 
 ### 4. 两种执行器
 

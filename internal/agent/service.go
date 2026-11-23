@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -37,6 +38,7 @@ type Service struct {
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
 	memoryMu      sync.Mutex
+	consolidating atomic.Bool
 	started       bool
 	lastSend      time.Time
 	starts        []time.Time
@@ -62,7 +64,7 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 			return nil, errors.New("OpenCode requires a model endpoint ending in /chat/completions")
 		}
 	}
-	for _, name := range []string{"data", "data/deliveries", "data/outputs", "data/sessions", "workspace", "workspace/notes", "workspace/skills", "workspace/scratch"} {
+	for _, name := range []string{"data", "data/deliveries", "data/outputs", "data/sessions", "data/memory", "workspace", "workspace/notes", "workspace/skills", "workspace/scratch"} {
 		path := filepath.Join(root, name)
 		if err = os.MkdirAll(path, 0700); err != nil {
 			return nil, err
@@ -110,6 +112,11 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 	s.token = strings.TrimSpace(string(b))
 	if len(s.token) < 32 {
 		return nil, errors.New("API token must have at least 32 characters")
+	}
+	// Finish a memory promotion a crash interrupted before templates could
+	// mistake its half-moved workspace for a new one.
+	if err = s.finishPromotion(); err != nil {
+		return nil, err
 	}
 	// Templates are copied once and then belong to the operator and the model.
 	for _, name := range []string{"MEMORY.md", "IDENTITY.md"} {

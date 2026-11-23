@@ -136,7 +136,7 @@ func (s *Service) execute(ctx context.Context, batch []Event) (out Outcome, err 
 // executeCritical runs a critical action on the strong tier with no chat
 // history and no record of messages sent elsewhere.
 func (s *Service) executeCritical(ctx context.Context, ev Event) (Outcome, error) {
-	out := Outcome{Scope: localScope}
+	out := Outcome{Scope: maintenanceScope}
 	if s.strong == nil {
 		return out, errors.New("strong_model is not enabled; critical actions never run on the default model")
 	}
@@ -145,7 +145,16 @@ func (s *Service) executeCritical(ctx context.Context, ev Event) (Outcome, error
 	input := fmt.Sprintf("Event %d (%s): %s\n", ev.ID, ev.Payload.Kind, ev.Payload.Text)
 	messages := []Message{{Role: "system", Content: s.systemPromptFor(false) + criticalGuide}, {Role: "user", Content: input}}
 	sm := s.cfg.StrongModel
-	return s.runModel(ctx, s.strong, sm.MaxSteps, sm.MaxContextBytes, ev, messages, input, out)
+	if ev.Payload.Kind != kindConsolidation {
+		return s.runModel(ctx, s.strong, sm.MaxSteps, sm.MaxContextBytes, ev, messages, input, out)
+	}
+	s.consolidating.Store(true)
+	defer s.consolidating.Store(false)
+	if err := s.prepareCandidate(); err != nil {
+		return out, err
+	}
+	out, err := s.runModel(context.WithValue(ctx, candidateKey{}, true), s.strong, sm.MaxSteps, sm.MaxContextBytes, ev, messages, input, out)
+	return s.finishConsolidation(ev, out, err)
 }
 
 const criticalGuide = "\nThis is a background maintenance run. Only file tools are available and nothing you write is sent to anyone. Transcripts show only records from the owner's private chats and local runs.\n"
@@ -321,7 +330,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 			res, e := s.readPage(map[string]any{"path": s.redact(a.Path), "size": size}, []byte(s.maskedFile(string(page))), a.Offset, int(size))
 			return res, nil, e
 		}
-		b, e := s.workspaceRead(a.Path)
+		b, e := s.workspaceReadIn(s.memoryHome(ctx), a.Path)
 		if e != nil {
 			return "", nil, e
 		}
@@ -344,7 +353,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if e := decodeArgs(call.Function.Arguments, &a); e != nil {
 			return "", nil, e
 		}
-		e := s.workspaceWrite(a.Path, a.Content, a.Expected)
+		e := s.workspaceWriteIn(s.memoryHome(ctx), a.Path, a.Content, a.Expected)
 		return "file saved", nil, e
 	case "edit_file":
 		var a struct {
@@ -356,7 +365,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if e := decodeArgs(call.Function.Arguments, &a); e != nil {
 			return "", nil, e
 		}
-		b, e := s.workspaceRead(a.Path)
+		b, e := s.workspaceReadIn(s.memoryHome(ctx), a.Path)
 		if e != nil {
 			return "", nil, e
 		}
@@ -366,7 +375,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if digest(b) != a.Expected {
 			return "", nil, ErrConflict
 		}
-		return "file edited", nil, s.workspaceWrite(a.Path, strings.Replace(string(b), a.Old, a.New, 1), a.Expected)
+		return "file edited", nil, s.workspaceWriteIn(s.memoryHome(ctx), a.Path, strings.Replace(string(b), a.Old, a.New, 1), a.Expected)
 	case "set_timer":
 		if target, _ := ctx.Value(imTargetKey{}).(string); target != "" {
 			return "", nil, errors.New("Scheduled IM replies are unavailable. No timer was created.")

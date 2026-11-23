@@ -206,6 +206,7 @@ MEMORY.md 不由 W7 生成，做法与 Claude Code 一致：模型在 W3、W4 �
 - **规则型记忆视同 skill。** "以后总是/不要……"这类会改变行为的条目，和 skill 一样进入草稿，经闸门生效；陈述性事实（偏好、环境、决策）不需要。
 - **从原始层重新提炼。** 判断真假时回到 sessions 原文，不以上一次的摘要为准；模型升级后的全量重建也走同一流程。
 - **使用时复核。** 带 `verify` 的事实描述的是会变的外部状态（配置、代码、账号），模型在据此执行有外部副作用的操作前先按 `verify` 复核；复核结果与记忆不符时，以复核为准并留给下次整理修正。
+- **证据只来自观察到的内容。** 可引用的是运行的输入与回答、工具的返回结果；工具参数（模型自己写进文件或消息的文字）和关键动作自身的记录都不算证据，否则整理可以引用自己刚写下的内容自证。
 
 ### 读取路径
 
@@ -381,13 +382,16 @@ always-on agent 没有天然的会话边界，需要人为切分，否则冻结�
 | W4 整理 | 内置 skill `skills/memory-consolidation/SKILL.md`（`internal/agent/defaults/skills/`）+ 一个定时器 | 整理是一次普通的定时运行，进度记在 `notes/memory-consolidation.md`。目前仍使用默认模型，不符合"关键动作用最强模型"，因此定时器默认不启用，待 2a 完成后再启用 |
 | `session.jsonl` | 保留为本地对话的滑动缓存 | 它只负责对话连贯性，原始记录由 `data/sessions/` 承担 |
 
-尚未实现：整理的安全机制（2b）、skill 草稿与闸门（W5）、knowledge 导入（W2）、使用统计与归档（W6）、`search` 工具、作用域分目录、提炼层的版本管理。
+尚未实现：skill 草稿与闸门（W5）、knowledge 导入（W2）、使用统计与归档（W6）、`search` 工具、作用域分目录、提炼层的版本管理。
 
-与本设计不一致、需在 2b 中修正的现状：
+2b 的实现（2026-11-23，`consolidation.go`）与上文设计的差异：
 
-- 整理目前直接改写 `workspace/MEMORY.md` 和 `notes/`，没有候选版本和回滚。
-- `memory-consolidation/SKILL.md` 第 3 步写的是"用新事实替换旧事实"，应改为移入 `## 历史`；也还没有要求写 `evidence`。
-- 运行记录的读取结果带有 `next_offset`，足以作为 evidence 的 `source` 偏移，不需要新增字段。
+- **版本用目录而不是 git。** 候选在 `data/memory/candidate/`，提升时当前版本移入 `data/memory/versions/<时间戳>/`（保留 10 个），提升过程有标记文件，崩溃后下次启动补完。回滚把上一版本提升回来，当前版本同样留作版本，所以回滚本身可撤销。
+- **检查项**：MEMORY.md 上限；不得删除笔记文件；归档不可改；改动或新增的笔记必须有 evidence，每条引文至少 4 个字符，且逐字出现在所引运行记录中、本次运行可见（owner / local）的输入、回答或工具结果里；`## 历史` 只增不减。改动超过现有条目 30%（至少 5 条时）或删去 MEMORY.md 30% 以上的行（至少 10 行时）转为待确认。
+- **结果**：通过则提升（`promoted`）；没有改动则不产生版本（`unchanged`）；检查失败则丢弃并留一份在 `data/memory/rejected/`（`rejected`，运行记为 `skipped`）；需确认则移到 `data/memory/held/` 并通知默认目标（`held`），由 `POST /v1/memory/promote` 或 `/discard` 处理。每次一行指标写入 `data/memory/consolidation.jsonl`。
+- **规则型记忆**：skill 闸门（B1）之前，整理把这类条目写入 `notes/rule-proposals.md` 供所有者查看，不写进索引。这一条靠 skill 约束，代码不检查，B1 时改为走闸门。
+- **未实现**：回归探针、`verify` 字段的使用时复核、knowledge 作为证据来源（`knowledge:<doc_id>` 目前会被拒绝）。
+- 达到步数或上下文上限而停止的运行仍会检查并提升已完成的部分；模型调用失败等其他错误则整体丢弃。
 
 ## 与业界做法的对照（2026-11）
 

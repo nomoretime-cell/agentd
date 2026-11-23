@@ -28,11 +28,20 @@ import (
 var defaults embed.FS
 
 func (s *Service) workspaceRead(name string) ([]byte, error) {
+	return s.workspaceReadIn(filepath.Join(s.root, "workspace"), name)
+}
+
+// isMemoryPath reports whether a model path is memory: MEMORY.md and notes/.
+// A consolidation run reads and writes these in its candidate copy.
+func isMemoryPath(name string) bool { return name == "MEMORY.md" || strings.HasPrefix(name, "notes/") }
+
+// workspaceReadIn reads a model path with memory paths resolved in home.
+func (s *Service) workspaceReadIn(home, name string) ([]byte, error) {
 	name = path.Clean(name)
 	if name == "." || strings.HasPrefix(name, "../") || path.IsAbs(name) {
 		return nil, ErrDenied
 	}
-	b, e := s.workspaceFile(name)
+	b, e := s.workspaceFile(home, name)
 	if errors.Is(e, os.ErrNotExist) && strings.HasPrefix(name, "skills/") {
 		if built, err := defaults.ReadFile("defaults/" + name); err == nil {
 			return built, nil
@@ -41,8 +50,11 @@ func (s *Service) workspaceRead(name string) ([]byte, error) {
 	return b, e
 }
 
-func (s *Service) workspaceFile(name string) ([]byte, error) {
+func (s *Service) workspaceFile(home, name string) ([]byte, error) {
 	dir := filepath.Join(s.root, "workspace")
+	if isMemoryPath(name) {
+		dir = home
+	}
 	if strings.HasPrefix(name, "outputs/") {
 		dir = filepath.Join(s.root, "data/outputs")
 		name = strings.TrimPrefix(name, "outputs/")
@@ -73,16 +85,21 @@ func (s *Service) workspaceFile(name string) ([]byte, error) {
 }
 func digest(b []byte) string { sum := sha256.Sum256(b); return hex.EncodeToString(sum[:]) }
 func (s *Service) workspaceWrite(name, content, expected string) error {
+	return s.workspaceWriteIn(filepath.Join(s.root, "workspace"), name, content, expected)
+}
+
+// workspaceWriteIn writes a model path with memory paths resolved in home.
+func (s *Service) workspaceWriteIn(home, name, content, expected string) error {
 	s.memoryMu.Lock()
 	defer s.memoryMu.Unlock()
 	name = path.Clean(name)
 	var dir, relative string
 	switch {
 	case name == "MEMORY.md":
-		dir = filepath.Join(s.root, "workspace")
+		dir = home
 		relative = name
 	case strings.HasPrefix(name, "notes/"):
-		dir = filepath.Join(s.root, "workspace/notes")
+		dir = filepath.Join(home, "notes")
 		relative = strings.TrimPrefix(name, "notes/")
 	case strings.HasPrefix(name, "scratch/"):
 		dir = filepath.Join(s.root, "workspace/scratch")
@@ -216,6 +233,10 @@ var (
 	// unknownScope marks a run whose origin could not be resolved. It is never
 	// treated as the owner's.
 	unknownScope = runScope{Role: defaultRole, Principal: "unknown", Conversation: "unknown"}
+	// maintenanceScope marks critical runs. Their records echo what they read
+	// and wrote, so later critical runs neither read them nor accept them as
+	// evidence.
+	maintenanceScope = runScope{Role: defaultRole, Principal: "maintenance", Conversation: "maintenance"}
 )
 
 func scopeFrom(ctx context.Context) runScope {

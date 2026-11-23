@@ -120,6 +120,7 @@ func TestCriticalTranscriptReadLeavesOutNonOwnerRecords(t *testing.T) {
 		`{"type":"run","text":"LEGACY"}`,
 		`{"principal":"user-2","role":"default","conversation":"u","text":"OTHER_USER"}`,
 		`{"principal":"unknown","role":"default","conversation":"unknown","text":"UNKNOWN"}`,
+		`{"principal":"maintenance","role":"default","conversation":"maintenance","text":"MAINTENANCE"}`,
 	}
 	for i := range 40 {
 		lines = append(lines, `{"principal":"owner","role":"default","conversation":"a","text":"OWNER_PAGE_`+strings.Repeat("x", 40)+string(rune('A'+i%26))+`"}`)
@@ -161,7 +162,7 @@ func TestCriticalTranscriptReadLeavesOutNonOwnerRecords(t *testing.T) {
 		offset = page.Next
 	}
 	got := seen.String()
-	for _, hidden := range []string{"GROUP", "LEGACY", "OTHER_USER", "UNKNOWN"} {
+	for _, hidden := range []string{"GROUP", "LEGACY", "OTHER_USER", "UNKNOWN", "MAINTENANCE"} {
 		if strings.Contains(got, hidden) {
 			t.Fatalf("%s record reached a critical run", hidden)
 		}
@@ -169,7 +170,7 @@ func TestCriticalTranscriptReadLeavesOutNonOwnerRecords(t *testing.T) {
 	if !strings.Contains(got, "OWNER_1") || !strings.Contains(got, "LOCAL_1") || strings.Count(got, "OWNER_PAGE_") != 40 {
 		t.Fatalf("owner and local records missing: %q", got)
 	}
-	if omitted != 4 {
+	if omitted != 5 {
 		t.Fatalf("omitted %v records", omitted)
 	}
 	// An offset inside a record skips that record instead of guessing its scope.

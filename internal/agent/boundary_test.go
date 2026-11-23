@@ -11,7 +11,7 @@ import (
 // "架构不变量" 2). Channels and businesses plug in through im.go and their own
 // files; a match here means a rule leaked into the core.
 func TestCoreKnowsNoChannelOrBusiness(t *testing.T) {
-	core := []string{"inbox.go", "timers.go", "outbox.go", "permissions.go", "sandbox.go", "memory.go", "loop.go", "store.go", "service.go"}
+	core := []string{"inbox.go", "timers.go", "outbox.go", "permissions.go", "sandbox.go", "memory.go", "consolidation.go", "loop.go", "store.go", "service.go"}
 	forbidden := regexp.MustCompile(`(?i:dingtalk|wecom)|news|News|钉钉|企微|企业微信|新闻|资讯`)
 	for _, name := range core {
 		b, err := os.ReadFile(name)

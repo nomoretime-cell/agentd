@@ -46,6 +46,7 @@ JSON 请求必须包含 Content-Type: application/json，并携带认证。未�
 | POST /v1/events | `{key,text}`：普通人工消息 |
 | POST /v1/timers | `{id,cron_expr,fire_at,prompt,active}`，fire_at 为 Unix 毫秒 |
 | POST /v1/control | `{command:"pause" / "stop" / "resume"}` |
+| POST /v1/memory/{op} | 记忆整理结果：`promote` 提升待确认的候选，`discard` 丢弃它，`rollback` 回到上一版本（当前版本留作版本，可再次回滚撤销）。整理运行中返回 409 |
 | POST /v1/events/{id}/resolve | `{operation:"retry" / "skip"}`：重试 dead 或显式跳过 dead/pending |
 | POST /v1/action-requests | `{key,name,arguments,text}`：提交已配置的命名外部动作 |
 | POST /v1/actions/{id}/decision | `{decision:"approve" / "reject"}` |

@@ -48,7 +48,8 @@ make dingtalk-live
   - **只由 strong 档模型执行**，在配置的 `strong_model` 中填写任一 OpenAI 兼容接口（如 OpenAI、Gemini 的 chat completions 地址）并设 `enabled: true`。未开启或调用失败时本次整理跳过（运行记录状态 `skipped`），不会改用本地模型，也不会重试。
   - **开启即同意外发**：整理时所有者私聊和本机运行的记录、以及记忆文件会发往该服务；群聊、其他用户和旧记录不会发送。
   - 整理只能用读写文件的工具，不能发消息、设定时器或执行命令。
-  - 整理目前仍直接改写记忆，候选版本与回滚尚未实现（设计见[整理的安全机制](docs/design/02-stage-2-memory.md#整理的安全机制)），完成前建议不要启用定时器。把 `active` 改为 `false` 即可停用。
+  - **先改候选，检查通过才生效**（[设计](docs/design/02-stage-2-memory.md#整理的安全机制)）：整理只改 `data/memory/candidate/` 里的副本。宿主检查每条新增或改动的笔记都带有逐字出自运行记录的原话（`evidence`），没有删除笔记或历史，索引不超限。通过后替换当前记忆，旧版本保留在 `data/memory/versions/`。检查失败则本次作废；改动过大则等待确认。
+  - 处理结果：`POST /v1/memory/promote`（采用待确认的整理）、`/discard`（丢弃）、`/rollback`（回到上一版本，可再次回滚撤销）。`GET /v1/status` 的 `memory` 显示是否有待确认的整理和版本数；每次整理的结果记在 `data/memory/consolidation.jsonl`。把定时器的 `active` 改为 `false` 即可停用。
 
 ```sh
 curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
