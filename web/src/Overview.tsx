@@ -12,12 +12,12 @@ import {
   ClipboardCheck,
   Inbox,
   LayoutDashboard,
-  LockKeyhole,
   Radio,
   RefreshCw,
   ChartColumn,
   PanelLeft,
   History,
+  MessagesSquare,
 } from "lucide-react"
 import { DailyActivity } from "./features/overview/DailyActivity"
 import { LedgerChart } from "./features/overview/LedgerChart"
@@ -34,6 +34,10 @@ import {
   type Kind,
 } from "./features/overview/items"
 
+const OwnerChat = lazy(() =>
+  import("./features/chat/OwnerChat").then((m) => ({ default: m.OwnerChat }))
+)
+
 const RunHistory = lazy(() =>
   import("./features/runs/RunHistory").then((m) => ({ default: m.RunHistory }))
 )
@@ -47,18 +51,16 @@ const icons = {
 const kinds = Object.keys(categories) as Kind[]
 const formatNumber = (n: number) => n.toLocaleString("zh-CN")
 
-export function Overview({
-  token,
-  lock,
-}: {
-  token: string
-  lock?: () => void
-}) {
+export function Overview() {
   const client = useQueryClient()
   const [hash, setHash] = useState(() => location.hash)
   const runtimeView = hash === "#runtime"
   const runsView = hash === "#runs" || hash.startsWith("#runs?")
-  const routeParams = new URLSearchParams(hash.slice(runsView ? 6 : 1))
+  const chatView = hash === "#chat" || hash.startsWith("#chat?")
+  const pageTitle = chatView ? "对话" : runsView ? "会话与运行" : "工作概览"
+  const routeParams = new URLSearchParams(
+    hash.slice(runsView || chatView ? 6 : 1)
+  )
   const actionID = routeParams.get("action")
   const [compact, setCompact] = useState(false)
   const [kind, setKind] = useState<Kind>("actions")
@@ -72,13 +74,13 @@ export function Overview({
   }, [])
   const status = useQuery({
     queryKey: ["status"],
-    queryFn: ({ signal }) => request(token, "status", statusSchema, { signal }),
+    queryFn: ({ signal }) => request("status", statusSchema, { signal }),
     refetchInterval: 5000,
   })
   const work = useQuery({
     queryKey: ["work", kind, offset],
     queryFn: ({ signal }) =>
-      request(token, `workbench?kind=${kind}&offset=${offset}`, workSchema, {
+      request(`workbench?kind=${kind}&offset=${offset}`, workSchema, {
         signal,
       }),
     refetchInterval: 5000,
@@ -114,11 +116,13 @@ export function Overview({
   return (
     <div className={compact ? "workspace compact" : "workspace"}>
       <aside className="sidebar">
-        <Brand subtitle={lock ? "所有者工作台" : "演示工作台"} />
+        <Brand subtitle="所有者工作台" />
         <nav aria-label="工作台导航">
           <span className="nav-label">工作台</span>
           <a
-            className={runtimeView || runsView ? undefined : "nav-main"}
+            className={
+              runtimeView || runsView || chatView ? undefined : "nav-main"
+            }
             href="#overview"
             title="工作概览"
           >
@@ -132,6 +136,14 @@ export function Overview({
           >
             <History size={17} />
             会话与运行
+          </a>
+          <a
+            href="#chat"
+            title="对话"
+            className={chatView ? "nav-main" : undefined}
+          >
+            <MessagesSquare size={17} />
+            对话
           </a>
           <span className="nav-label">运行管理</span>
           <a href="#trend" title="每日活动">
@@ -151,12 +163,6 @@ export function Overview({
             运行信息
           </a>
         </nav>
-        {lock && (
-          <button className="lock" onClick={lock}>
-            <LockKeyhole size={16} />
-            锁定工作台
-          </button>
-        )}
       </aside>
       <main className="canvas" id="overview">
         <header className="topbar">
@@ -170,29 +176,20 @@ export function Overview({
           </button>
           <span>工作台</span>
           <ChevronRight size={14} />
-          {runsView ? "会话与运行" : "工作概览"}
+          {pageTitle}
           <div className="date">
             {new Intl.DateTimeFormat("zh-CN", { dateStyle: "full" }).format(
               new Date()
             )}
           </div>
           <ThemeMenu />
-          {lock && (
-            <button
-              onClick={lock}
-              className="mobile-lock"
-              aria-label="锁定工作台"
-            >
-              <LockKeyhole size={17} />
-            </button>
-          )}
         </header>
         <div className="content">
           <div className="page-head">
             <div>
-              <h1>{runsView ? "会话与运行" : "工作概览"}</h1>
+              <h1>{pageTitle}</h1>
             </div>
-            {!runsView && (
+            {!runsView && !chatView && (
               <div className="head-actions">
                 {service && (
                   <span>
@@ -219,31 +216,43 @@ export function Overview({
               </div>
             )}
           </div>
-          {!runsView && (status.error || work.error) && (
+          {!runsView && !chatView && (status.error || work.error) && (
             <p role="alert">{(status.error || work.error)?.message}</p>
           )}
           <nav className="dashboard-views" aria-label="概览视图">
             <a
               href="#overview"
-              aria-current={runtimeView || runsView ? undefined : "page"}
+              aria-current={
+                runtimeView || runsView || chatView ? undefined : "page"
+              }
             >
               概览
             </a>
             <a href="#runs" aria-current={runsView ? "page" : undefined}>
               会话与运行
             </a>
+            <a href="#chat" aria-current={chatView ? "page" : undefined}>
+              对话
+            </a>
             <a href="#runtime" aria-current={runtimeView ? "page" : undefined}>
               运行信息
             </a>
           </nav>
-          {runsView && (
-            <Suspense fallback={<p role="status">正在打开运行记录…</p>}>
-              <RunHistory token={token} search={hash.slice(6)} />
+          {chatView && (
+            <Suspense fallback={<p role="status">正在打开对话…</p>}>
+              <OwnerChat
+                id={routeParams.get("id") || ""}
+                paused={service?.paused ?? false}
+              />
             </Suspense>
           )}
-          {!runtimeView && !runsView && (
+          {runsView && (
+            <Suspense fallback={<p role="status">正在打开运行记录…</p>}>
+              <RunHistory search={hash.slice(6)} />
+            </Suspense>
+          )}
+          {!runtimeView && !runsView && !chatView && (
             <DailyActivity
-              token={token}
               pending={
                 work.data &&
                 Object.values(work.data.counts).reduce((n, v) => n + v, 0)
@@ -391,7 +400,7 @@ export function Overview({
             )}
           </section>
           {runtimeView && <LedgerChart counts={service?.counts} />}
-          {!runsView && !!updated && (
+          {!runsView && !chatView && !!updated && (
             <div className="timestamp">
               待办与运行状态更新于{" "}
               {new Date(updated).toLocaleTimeString("zh-CN")}
@@ -403,12 +412,14 @@ export function Overview({
         <ActionDetail
           key={actionID}
           id={actionID}
-          token={token}
+
           statusNames={statusNames}
           close={() => {
-            if (runsView) {
+            if (runsView || chatView) {
               routeParams.delete("action")
-              location.replace("#runs?" + routeParams.toString())
+              location.replace(
+                (chatView ? "#chat?" : "#runs?") + routeParams.toString()
+              )
               return
             }
             history.replaceState(

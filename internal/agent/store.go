@@ -75,6 +75,7 @@ type Payload struct {
 	ActionID  string          `json:"action_id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
+	WebChat   string          `json:"web_chat,omitempty"`
 }
 type Timer struct {
 	ID     string `json:"id"`
@@ -123,7 +124,7 @@ func openDB(root string) (*sql.DB, *sql.DB, error) {
 	if e = w.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil {
 		return fail(e)
 	}
-	if version > 3 {
+	if version > 4 {
 		return fail(errors.New("database schema is newer than this binary"))
 	}
 	if version < 2 {
@@ -149,6 +150,17 @@ ALTER TABLE outbox ADD COLUMN origin_event INTEGER;
 ALTER TABLE outbox ADD COLUMN origin_attempt TEXT;
 CREATE INDEX idx_outbox_origin ON outbox(origin_event);
 PRAGMA user_version=3;`)
+			return err
+		})
+		if e != nil {
+			return fail(e)
+		}
+	}
+	if version < 4 {
+		e = transaction(ctx, w, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `ALTER TABLE inbox ADD COLUMN chat_head INTEGER;
+       CREATE INDEX idx_inbox_chat ON inbox(payload->>'web_chat',id) WHERE payload->>'web_chat' IS NOT NULL;
+       PRAGMA user_version=4;`)
 			return err
 		})
 		if e != nil {

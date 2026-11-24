@@ -23,12 +23,10 @@ function formatArguments(value: string) {
 }
 export function ActionDetail({
   id,
-  token,
   close,
   statusNames,
 }: {
   id: string
-  token: string
   close: () => void
   statusNames: Record<string, string>
 }) {
@@ -36,12 +34,12 @@ export function ActionDetail({
   const path = "actions/" + encodeURIComponent(id)
   const query = useQuery({
     queryKey: ["action", id],
-    queryFn: ({ signal }) => request(token, path, actionSchema, { signal }),
+    queryFn: ({ signal }) => request(path, actionSchema, { signal }),
     refetchInterval: 3000,
   })
   const mutation = useMutation({
     mutationFn: (decision: "approve" | "reject") =>
-      request(token, path + "/decision", z.object({ id: z.string() }), {
+      request(path + "/decision", z.object({ id: z.string() }), {
         method: "POST",
         body: JSON.stringify({ decision }),
       }),

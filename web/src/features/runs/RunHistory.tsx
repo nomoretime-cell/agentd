@@ -103,13 +103,7 @@ function timestamp(value: string, tz: string) {
     : date.toLocaleString("zh-CN", { timeZone: tz, hour12: false })
 }
 
-export function RunHistory({
-  token,
-  search,
-}: {
-  token: string
-  search: string
-}) {
+export function RunHistory({ search }: { search: string }) {
   const params = new URLSearchParams(search)
   const id = params.get("run")
   const viewingAction = params.has("action")
@@ -126,7 +120,7 @@ export function RunHistory({
     enabled: view === "runs",
     initialPageParam: "",
     queryFn: ({ pageParam, signal }) =>
-      request(token, "runs?" + (pageParam || filter), pageSchema, { signal }),
+      request("runs?" + (pageParam || filter), pageSchema, { signal }),
     getNextPageParam: (last) => {
       if (!last.next) return undefined
       const next = new URLSearchParams(filter)
@@ -275,6 +269,7 @@ export function RunHistory({
                 >
                   <option value="">全部渠道</option>
                   <option value="local">本地</option>
+                  <option value="web">网页对话</option>
                   <option value="wecom">企业微信</option>
                   <option value="dingtalk">钉钉</option>
                 </select>
@@ -292,9 +287,9 @@ export function RunHistory({
         </form>
       )}
       {view === "conversations" ? (
-        <ConversationList token={token} filter={filter} />
+        <ConversationList filter={filter} />
       ) : view === "deliveries" ? (
-        <DeliveryList token={token} />
+        <DeliveryList />
       ) : (
         <>
           <div className="section-head">
@@ -371,7 +366,7 @@ export function RunHistory({
       {message && !viewingAction && (
         <MessageDetail
           key={message}
-          token={token}
+
           id={message}
           params={new URLSearchParams(search)}
         />
@@ -379,7 +374,7 @@ export function RunHistory({
       {id && !message && !viewingAction && (
         <RunDetail
           key={id}
-          token={token}
+
           id={id}
           timezone={first?.timezone}
           filters={params}
@@ -390,12 +385,10 @@ export function RunHistory({
 }
 
 function RunDetail({
-  token,
   id,
   timezone,
   filters,
 }: {
-  token: string
   id: string
   timezone?: string
   filters: URLSearchParams
@@ -404,7 +397,7 @@ function RunDetail({
     queryKey: ["run", id],
     refetchInterval: (q) => (q.state.data?.status === "running" ? 2000 : false),
     queryFn: ({ signal }) =>
-      request(token, "runs/" + encodeURIComponent(id), runSchema, { signal }),
+      request("runs/" + encodeURIComponent(id), runSchema, { signal }),
   })
   const r = detail.data
   const messageLink = (message: string) => {
@@ -477,6 +470,18 @@ function RunDetail({
                   角色 {r.role || "历史未记录"} · 服务对象{" "}
                   {r.principal || "历史未记录"}
                 </p>
+                {r.channel === "web" && (
+                  <p>
+                    <a
+                      className="history-link"
+                      href={
+                        "#chat?" + new URLSearchParams({ id: r.conversation })
+                      }
+                    >
+                      继续这段对话
+                    </a>
+                  </p>
+                )}
                 {r.conversation && (
                   <a className="history-link" href={runLink(byConversation)}>
                     查看同一会话的记录

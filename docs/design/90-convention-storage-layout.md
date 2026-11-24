@@ -54,6 +54,8 @@
 - `<role>`：在配置中声明，只允许 `[a-z0-9-]`。只有一个角色时固定为 `default`。
 - `<principal>`：由宿主根据身份生成，取值为 `owner`、`local`、`user-<hash>`、`group-<hash>`，其中 `<hash>` 用 `stableID`。平台 ID 不进路径，避免特殊字符和账号暴露；对应关系记在 `data/principals.jsonl`。
 
+网页会话的输入、批次关联和回复存于现有 `data/state.db`。使用 OpenCode 时，网页会话标识派生独立的执行器会话 ID，项目目录沿用 `data/opencode/projects/<sid>/`。
+
 ## 3. 模型看到的虚拟路径
 
 模型使用的路径与当前实现一致，prompt 和 skill 不需要随目录调整而修改。宿主在每次运行开始时按作用域映射：

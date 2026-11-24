@@ -146,6 +146,9 @@ func (t ocTokens) usage() tokenUsage {
 
 func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute, messages []Message, out Outcome) (Outcome, error) {
 	key := "local"
+	if ev.Payload.WebChat != "" {
+		key = ev.Payload.WebChat
+	}
 	if route != nil && route.BotID == "" {
 		key = "dingtalk\x00" + s.cfg.DingTalk.ClientID + "\x00" + route.ConversationID + "\x00" + route.Sender
 	}

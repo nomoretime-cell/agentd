@@ -141,12 +141,12 @@ func (c Config) Validate() error {
 	}
 	if c.WebOrigin != "" {
 		origin, err := url.Parse(c.WebOrigin)
-		if err != nil || origin.Hostname() == "" || origin.User != nil || origin.Scheme+"://"+origin.Host != c.WebOrigin {
+		if err != nil || origin.Hostname() == "" || strings.Contains(origin.Hostname(), "*") || origin.User != nil || origin.Scheme+"://"+origin.Host != c.WebOrigin {
 			return errors.New("web_origin must be an exact origin without a path")
 		}
-		loopback := origin.Hostname() == "localhost" || net.ParseIP(origin.Hostname()).IsLoopback()
-		if origin.Scheme != "https" && !(origin.Scheme == "http" && loopback) {
-			return errors.New("web_origin requires HTTPS or loopback HTTP")
+		httpHost := origin.Hostname() == "localhost" || net.ParseIP(origin.Hostname()) != nil
+		if origin.Scheme != "https" && !(origin.Scheme == "http" && httpHost) {
+			return errors.New("web_origin requires HTTPS, or HTTP with an explicit IP address or localhost")
 		}
 	}
 	if _, e := time.LoadLocation(c.Timezone); e != nil {

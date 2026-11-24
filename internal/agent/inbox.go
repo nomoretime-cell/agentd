@@ -44,6 +44,13 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 		}
 		p.Arguments, _ = json.Marshal(obj)
 	}
+	dedup := "external:" + key
+	if p.WebChat != "" {
+		if !validChatID(p.WebChat) || p.Kind != "message" {
+			return 0, false, ErrDenied
+		}
+		dedup = "chat:" + p.WebChat + ":" + key
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	err = transaction(ctx, s.db, func(tx *sql.Tx) error {
@@ -53,7 +60,7 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 			due = now + int64(s.cfg.Limits.DebounceMS)
 			var window int64
 			// Only ordinary messages may open/join a debounce window, never retries or controls.
-			e := tx.QueryRowContext(ctx, "SELECT available_at FROM inbox WHERE status='pending' AND retries=0 AND available_at>? AND json_extract(payload,'$.kind')='message' ORDER BY id LIMIT 1", now).Scan(&window)
+			e := tx.QueryRowContext(ctx, "SELECT available_at FROM inbox WHERE status='pending' AND retries=0 AND available_at>? AND json_extract(payload,'$.kind')='message' AND coalesce(payload->>'web_chat','')=? ORDER BY id LIMIT 1", now, p.WebChat).Scan(&window)
 			if e == nil {
 				due = window
 			} else if !errors.Is(e, sql.ErrNoRows) {
@@ -61,7 +68,7 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 			}
 		}
 		var e error
-		id, inserted, e = insertEvent(ctx, tx, "external:"+key, p, due)
+		id, inserted, e = insertEvent(ctx, tx, dedup, p, due)
 		return e
 	})
 	if err == nil {
@@ -112,7 +119,7 @@ ORDER BY id LIMIT ?`, parked, scopedKinds, scopeField, s.eventScope(), parked, s
 			if ev.Status != "pending" || ev.AvailableAt > now {
 				break
 			}
-			if len(batch) > 0 && (ev.Payload.Kind != "message" || batch[0].Payload.Kind != "message" || ev.AvailableAt != batch[0].AvailableAt || ev.Retries != batch[0].Retries) {
+			if len(batch) > 0 && (ev.Payload.Kind != "message" || batch[0].Payload.Kind != "message" || ev.AvailableAt != batch[0].AvailableAt || ev.Retries != batch[0].Retries || ev.Payload.WebChat != batch[0].Payload.WebChat) {
 				break
 			}
 			size += len(ev.Payload.Text)
@@ -122,7 +129,12 @@ ORDER BY id LIMIT ?`, parked, scopedKinds, scopeField, s.eventScope(), parked, s
 			batch = append(batch, ev)
 		}
 		for _, ev := range batch {
-			if _, e = tx.ExecContext(ctx, "UPDATE inbox SET status='running' WHERE id=? AND status='pending'", ev.ID); e != nil {
+			// The last input carries the link so a combined reply follows all its inputs.
+			var head any
+			if ev.Payload.WebChat != "" && ev.ID == batch[len(batch)-1].ID {
+				head = batch[0].ID
+			}
+			if _, e = tx.ExecContext(ctx, "UPDATE inbox SET status='running',chat_head=? WHERE id=? AND status='pending'", head, ev.ID); e != nil {
 				return e
 			}
 			if s.progressFor(ev.Payload) && s.cfg.Permissions["send_message"] == "allow" {
@@ -304,7 +316,7 @@ func (s *Service) commitBatch(ctx context.Context, batch []Event, out Outcome, r
 			if existing.Name != a.Name || existing.Args != a.Args {
 				return ErrConflict
 			}
-			if existing.Status == "pending_approval" {
+			if existing.Status == "pending_approval" && batch[0].Payload.WebChat == "" {
 				text := fmt.Sprintf("Approval required: %s\nAction: %s\nFrozen request: %s\nApprove/reject using POST /v1/actions/%s/decision. Expires: %s", a.Name, a.ID, a.Args, a.ID, time.UnixMilli(a.ExpiresAt).Format(time.RFC3339))
 				if e = s.enqueueTx(ctx, tx, Notification{Key: "approval:" + a.ID, Target: out.ReplyTarget, Content: s.bounded(text), DeliverAt: time.Now().UnixMilli()}); e != nil {
 					return e

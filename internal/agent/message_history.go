@@ -73,7 +73,7 @@ func (s *Service) messageDetail(ctx context.Context, id string) (messageTrace, e
 		if err != nil || event < 1 {
 			return m, sql.ErrNoRows
 		}
-		err = s.read.QueryRowContext(ctx, `SELECT i.id,i.reply_at,j.value->>'attempt',j.value->>'conversation',coalesce(o.content,j.value->>'body'),coalesce(o.target,'local'),coalesce(o.status,'committed'),coalesce(o.confirmed_by,'') FROM inbox i JOIN json_each(i.replies) j LEFT JOIN outbox o ON o.dedup_key=j.value->>'delivery_key' WHERE i.id=? AND j.value->>'id'=?`, event, id).Scan(&m.Event, &m.At, &attempt, &m.Conversation, &m.Body, &m.Target, &m.Status, &m.ConfirmedBy)
+		err = s.read.QueryRowContext(ctx, `SELECT i.id,i.reply_at,j.value->>'attempt',j.value->>'conversation',coalesce(o.content,j.value->>'body'),coalesce(o.target,i.payload->>'web_chat','local'),coalesce(o.status,'committed'),coalesce(o.confirmed_by,'') FROM inbox i JOIN json_each(i.replies) j LEFT JOIN outbox o ON o.dedup_key=j.value->>'delivery_key' WHERE i.id=? AND j.value->>'id'=?`, event, id).Scan(&m.Event, &m.At, &attempt, &m.Conversation, &m.Body, &m.Target, &m.Status, &m.ConfirmedBy)
 		if err != nil {
 			return m, err
 		}

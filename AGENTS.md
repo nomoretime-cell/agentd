@@ -74,19 +74,19 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 
 - **每份状态只由一处维护。** 服务端数据用 TanStack Query 读取和缓存，查询键包含影响结果的参数。需分享或刷新后恢复的筛选放在 URL，表单草稿和弹窗开关留在组件内，派生值在渲染时计算。跨页面共享的纯客户端状态出现后再考虑 Zustand。Effect 用于订阅等外部同步，并负责清理。[React 的 Effect 指南](https://react.dev/learn/you-might-not-need-an-effect) · [TanStack Query 缓存默认行为](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults)
 - **以服务端回执呈现结果。** 例如审批页展示动作 ID 和已冻结的参数，用户提交期间禁用重复提交，收到回执后刷新相关查询。写请求超时或遇到冲突时先重读状态，有外部副作用的请求关闭自动重试。动作结果查 Actions，投递结果查 Outbox；界面上的“已批准”“已执行”“平台已受理”分别以对应记录为据。[操作接口](docs/current/operations.md)
-- **首版由所有者输入现有 API token 解锁。** 页面只在内存中保留 token，请求本服务的 `/v1/*` 时通过 `Authorization: Bearer <token>` 携带。刷新后重新解锁，再从 Go 读取状态。凭证不得进入 URL、`VITE_*` 变量、构建产物、日志或浏览器存储（含 `sessionStorage`）。模型输出和事件正文按文本渲染，使用 Markdown 时禁用原始 HTML 并校验链接协议。[Vite 环境变量](https://vite.dev/guide/env-and-mode)
-- **由 Go 校验请求来源。** 所有业务 API 验证 Bearer。请求带有 `Origin` 时，精确匹配受信页面的协议、主机和端口；无 `Origin` 时沿用 Bearer 鉴权，兼容 CLI 和浏览器同源读取。开发代理保留浏览器的 `Origin`，仅在开发时额外信任显式配置的本机 Vite 来源。[HTTP 入口](internal/agent/http.go)
+- **工作台从可信网络直接进入。** 浏览器直接从同一服务请求工作台数据，刷新或打开会话链接后可继续操作。所有者 API token 仅用于管理客户端。凭证不得进入 URL、前端构建产物、日志或浏览器存储。模型输出和事件正文按文本渲染，使用 Markdown 时禁用原始 HTML 并校验链接协议。
+- **由 Go 限定工作台入口。** 页面请求携带公开标记 `X-Agentd-Workbench: 1`。Go 只开放工作台已注册的操作，校验 Host，写请求还须提供精确匹配的 Origin。反向代理保留 Origin，按实际页面来源配置 `web_origin`。其他管理操作要求 Bearer。[HTTP 入口](internal/agent/http.go)
 
 ### 静态托管与构建
 
-- 发布时由单个 agentd 进程同源提供页面和 API。解锁前可加载页面外壳及其静态资源，业务数据经受保护的 API 读取。使用客户端路由时，对工作台页面路径的 GET 导航返回 `index.html`，使深链接可以直接打开和刷新。`/healthz` 和 `/v1/*` 仍由现有 HTTP 入口处理，已认证时访问未注册的 API 路径以及请求缺失的静态资源都应得到 404。
+- 发布时由单个 agentd 进程同源提供页面和 API。浏览器直接加载页面及其数据，无需单独启动演示服务。使用客户端路由时，对工作台页面路径的 GET 导航返回 `index.html`，使深链接可以直接打开和刷新。`/healthz` 和 `/v1/*` 仍由现有 HTTP 入口处理，工作台访问未注册的 API 路径以及请求缺失的静态资源都应得到 404。
 - 发布所需的前端构建和资源打包顺序由 Makefile 表达。干净检出并准备好 Go 工具链后，`make test` 和 `make vet` 可独立运行，无需先生成 `web/dist`。用发布产物验收页面能打开、引用的脚本和样式能加载。[构建入口](Makefile)
 
 ### 界面与验收
 
 - **面向所有者的文案默认使用简体中文。** 按钮、状态、表单校验和错误说明遵循同一用语，排查所需的动作 ID 和原始错误保留原值。日期按简体中文习惯显示，涉及定时计划时标明所用时区。
 - **用主题变量表达语义。** 在样式入口定义背景、前景、边框、焦点和危险操作等 CSS 变量，通过 Tailwind 的主题映射使用。优先使用原生按钮、链接和带标签的输入框；弹窗、菜单等复杂控件复用 shadcn/ui 的键盘和焦点行为。状态同时提供文字。自动刷新列表时保持当前选中项、焦点和阅读位置。[shadcn/ui 主题](https://ui.shadcn.com/docs/theming) · [WAI 弹窗交互](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)
-- **从用户入口验证。** 前端建成后提供类型检查、ESLint 和生产构建脚本。功能测试覆盖加载、空结果、请求失败及恢复。用 Playwright 在临时 Go 实例上走通审批：打开页面、解锁、提交决定、刷新、重新解锁、读回该动作的服务端状态。另测无凭证不能读取业务数据、非可信来源即使携带有效测试凭证也不能提交。按角色和可访问名称定位控件，验证键盘操作及窄屏布局，外部执行器使用本地替身。[Playwright 测试指南](https://playwright.dev/docs/best-practices)
+- **从用户入口验证。** 前端建成后提供类型检查、ESLint 和生产构建脚本。功能测试覆盖加载、空结果、请求失败及恢复。用 Playwright 在临时 Go 实例上走通审批：直接打开页面、提交决定、刷新并读回该动作的服务端状态。另测仅供管理客户端使用的接口需要 Bearer、非可信来源即使携带有效测试凭证也不能提交。按角色和可访问名称定位控件，验证键盘操作及窄屏布局，外部执行器使用本地替身。[Playwright 测试指南](https://playwright.dev/docs/best-practices)
 
 ## 安全边界
 

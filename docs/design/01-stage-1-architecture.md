@@ -19,7 +19,7 @@
 
 | 必备组件 | 对应源码文件 | 持久化载体 | 最小闭环机制 |
 | :--- | :--- | :--- | :--- |
-| **1. Event Inbox** | `internal/agent/inbox.go` | **`inbox` 表（12 列）** | 落库即 ACK、`dedup_key` 去重、**固定 1 秒窗口合批**、单 Worker 严格按序消费 |
+| **1. Event Inbox** | `internal/agent/inbox.go` | **`inbox` 表（13 列）** | 落库即 ACK、`dedup_key` 去重、**固定 1 秒窗口合批**、单 Worker 严格按序消费 |
 | **2. Timers** | `internal/agent/timers.go` | **`timers` 表（5 列）** | `cron_expr` 可空合一支持单次 Follow-up 与周期 Schedule；到期同事务转入 `inbox` |
 | **3. Memory** | `internal/agent/memory.go` | **文件目录（0 张表）** | `IDENTITY.md` + `MEMORY.md`（常驻索引）+ `notes/*.md`（按需详情与任务进度）+ `session.jsonl`（可丢弃滑动上下文缓存） |
 | **4. Permissions** | `internal/agent/permissions.go` | **`actions` 表（8 列）** + 代码守卫 | 宿主隔离密钥 + `allow/ask/deny` 拦截 + **外部写动作状态记账（含审批挂起与 `unknown` 防重）** |
@@ -149,7 +149,7 @@ agentd/
 ├── data/                       # [宿主私有，子进程不可见]
 │   ├── agentd.lock             # 单实例排他文件锁
 │   ├── paused.lock             # 存在时表示处于全局暂停态（跨重启保留）
-│   ├── state.db                # 现行 4 张表（36 列）
+│   ├── state.db                # 现行 4 张表（37 列）
 │   └── session.jsonl           # 近期对话滑动窗口缓存（非动作事实证据，超阈值摘要轮转）
 └── workspace/                  # [Memory 载体：纯文本目录，Git 可追踪]
     ├── IDENTITY.md             # [每次必加载 · Agent 只读] 用户长期指令
@@ -185,4 +185,6 @@ agentd/
 
 工作台 W2 的 schema v2 在同一事务内迁移 v1。Inbox 增加回复的提交时间、正式回复、最近调用时间和按调用 ID 保存的模型回执。Outbox 增加首次送达确认时间和确认方式。原事件载荷、去重键及四张表的职责沿用 v1，旧行新增列为空。
 
-schema v3 在单次事务中为 Inbox 增加运行索引和私有上下文快照，为 Outbox 增加来源事件和尝试标识。一次批次的回复、终态证据和通知入队同时提交。现行结构共 36 列，旧库按 v1 → v2 → v3 顺序升级。
+schema v3 在单次事务中为 Inbox 增加运行索引和私有上下文快照，为 Outbox 增加来源事件和尝试标识。一次批次的回复、终态证据和通知入队同时提交。v3 结构共 36 列，旧库按 v1 → v2 → v3 顺序升级。
+
+W3 使用 schema v4。网页消息以可选载荷字段 `web_chat` 记录会话，Inbox 增加可空的 `chat_head`，在领取时把合批的最后一个网页输入关联到保存回复的首个事件。工作台和模型按此关系恢复相同顺序的对话。旧载荷与去重键保持原格式，四张表合计 37 列。

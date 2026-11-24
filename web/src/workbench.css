@@ -70,7 +70,6 @@ pre {
   letter-spacing: -0.015em;
 }
 .brand-icon,
-.key-icon,
 .empty-icon,
 .runtime-icon,
 .item-icon {
@@ -100,8 +99,7 @@ small,
   display: grid;
   gap: 2px;
 }
-.sidebar nav a,
-.lock {
+.sidebar nav a {
   display: flex;
   gap: 11px;
   align-items: center;
@@ -109,8 +107,7 @@ small,
   font-size: 0.89rem;
   border-radius: 8px;
 }
-.sidebar nav a:hover,
-.lock:hover {
+.sidebar nav a:hover {
   background: var(--sidebar-accent);
 }
 .nav-main {
@@ -121,9 +118,6 @@ small,
 .nav-label {
   padding: 22px 12px 3px;
   font-size: 0.72rem;
-}
-.lock {
-  margin-top: auto;
 }
 .canvas {
   min-width: 0;
@@ -180,11 +174,6 @@ small,
   background: var(--accent);
   outline: none;
 }
-.unlock-theme {
-  position: absolute;
-  top: 24px;
-  right: clamp(20px, 4vw, 64px);
-}
 .dashboard-views {
   display: inline-flex;
   gap: 3px;
@@ -206,9 +195,6 @@ small,
 }
 .dark .dashboard-views a[aria-current] {
   background: var(--input);
-}
-.mobile-lock {
-  display: none;
 }
 .content {
   max-width: 1480px;
@@ -250,8 +236,7 @@ small,
 }
 .stat,
 .panel,
-.ledger,
-.unlock-card {
+.ledger {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -307,8 +292,7 @@ small,
 }
 .runtime-icon,
 .empty-icon,
-.item-icon,
-.key-icon {
+.item-icon {
   background: var(--tint);
   color: var(--brand);
   border-radius: 10px;
@@ -511,8 +495,7 @@ small,
   .compact .nav-label {
     display: none;
   }
-  .compact .sidebar nav a,
-  .compact .lock {
+  .compact .sidebar nav a {
     font-size: 0;
     justify-content: center;
     gap: 0;
@@ -581,60 +564,7 @@ small,
 .decisions {
   padding: 16px 0;
 }
-.unlock-screen {
-  min-height: 100svh;
-  display: grid;
-  place-items: center;
-  padding: 80px 20px;
-  background: var(--muted);
-}
-.unlock-brand {
-  position: absolute;
-  top: 26px;
-  left: clamp(20px, 4vw, 64px);
-}
-.unlock-card {
-  width: min(100%, 420px);
-  padding: 34px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  box-shadow: 0 14px 48px #0206170e;
-}
-.key-icon {
-  width: 50px;
-  height: 50px;
-  margin-bottom: 24px;
-}
-.unlock-card h1 {
-  font-size: 1.8rem;
-}
-.unlock-card p {
-  margin: 10px 0 24px;
-  line-height: 1.7;
-  font-size: 0.9rem;
-  color: var(--muted-ink);
-}
-.unlock-card label {
-  font-size: 0.84rem;
-  font-weight: 600;
-}
-.unlock-card input {
-  width: 100%;
-  margin: 8px 0 6px;
-  border: 1px solid var(--input);
-  border-radius: 7px;
-  padding: 8px 12px;
-}
-.unlock-card button {
-  margin-top: 22px;
-  width: 100%;
-}
-.unlock-card small {
-  font-size: 0.75rem;
-}
-[role="alert"],
-.unlock-card [role="alert"] {
+[role="alert"] {
   padding: 9px 12px;
   margin: 8px 0;
   color: var(--destructive);
@@ -670,8 +600,7 @@ small,
   .sidebar .brand {
     margin: 0;
   }
-  .sidebar nav,
-  .lock {
+  .sidebar nav {
     display: none;
   }
   .topbar {
@@ -687,10 +616,6 @@ small,
   }
   .queue {
     order: -1;
-  }
-  .mobile-lock {
-    display: block;
-    margin-left: auto;
   }
   .stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -926,4 +851,157 @@ small,
   flex-wrap: wrap;
   gap: 12px;
   padding-top: 10px;
+}
+
+.chat-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 28%) minmax(0, 1fr);
+  overflow: hidden;
+}
+.chat-index {
+  padding: 16px;
+  border-right: 1px solid var(--line);
+  min-width: 0;
+  max-height: 72svh;
+  overflow: auto;
+}
+.chat-head,
+.chat-compose > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.chat-index nav {
+  display: grid;
+  gap: 4px;
+  margin-top: 16px;
+}
+.chat-index nav a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+.chat-index nav a[aria-current],
+.chat-index nav a:hover {
+  background: var(--muted);
+}
+.chat-index nav span,
+.chat-thread h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-index svg {
+  flex-shrink: 0;
+}
+.chat-empty {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  min-height: 52svh;
+  padding: 24px;
+  text-align: center;
+}
+.chat-empty p,
+.chat-placeholder {
+  color: var(--muted-ink);
+  font-size: 0.88rem;
+}
+.chat-thread {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  height: clamp(440px, 68svh, 780px);
+}
+.chat-thread header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.chat-scroll {
+  padding: 16px 20px;
+  overflow: auto;
+  overflow-anchor: none;
+}
+.chat-more {
+  display: block;
+  margin: 0 auto 12px;
+  text-decoration: underline;
+}
+.chat-turn {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 16px;
+}
+.bubble {
+  max-width: 90%;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.bubble.mine {
+  align-self: flex-end;
+  background: var(--muted);
+}
+.bubble p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+  margin-top: 3px;
+}
+.chat-meta {
+  align-self: flex-end;
+  color: var(--muted-ink);
+  font-size: 0.75rem;
+}
+.chat-compose {
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+.chat-compose textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 58px;
+  max-height: 140px;
+  background: var(--canvas);
+  border: 1px solid var(--input);
+  border-radius: 7px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.9rem;
+}
+.chat-compose > div {
+  margin-top: 6px;
+}
+.chat-compose button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--foreground);
+  color: var(--background);
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+@media (max-width: 760px) {
+  .chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .chat-index {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    max-height: 185px;
+  }
+  .chat-thread {
+    height: clamp(410px, 65svh, 650px);
+  }
+  .chat-empty {
+    min-height: 210px;
+  }
 }

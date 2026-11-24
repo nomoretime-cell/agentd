@@ -69,11 +69,9 @@ function coverage(day: Day, metric: Metric) {
 type Selection = { metric: Metric; date: string }
 
 export function DailyActivity({
-  token,
   pending,
   children,
 }: {
-  token: string
   pending?: number
   children: ReactNode
 }) {
@@ -84,7 +82,7 @@ export function DailyActivity({
   const query = useQuery({
     queryKey: ["activity", range],
     queryFn: ({ signal }) =>
-      request(token, "activity?days=" + range, overview, { signal }),
+      request("activity?days=" + range, overview, { signal }),
     refetchInterval: 30000,
   })
   const data = query.data,
@@ -246,7 +244,7 @@ export function DailyActivity({
       {selection && data && (
         <ActivityDetails
           key={selection.date + selection.metric}
-          token={token}
+
           selection={selection}
           timezone={data.timezone}
           day={data.days.find((d) => d.date === selection.date)}
@@ -266,14 +264,12 @@ const deliveryNames: Record<string, string> = {
   failed: "投递失败",
 }
 function ActivityDetails({
-  token,
   selection,
   timezone,
   day,
   close,
   restore,
 }: {
-  token: string
   selection: Selection
   timezone: string
   day?: Day
@@ -286,7 +282,6 @@ function ActivityDetails({
     initialPageParam: "",
     queryFn: ({ signal, pageParam }) =>
       request(
-        token,
         "activity/" +
           metric +
           "?" +

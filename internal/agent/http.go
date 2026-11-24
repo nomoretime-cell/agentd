@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +18,9 @@ import (
 
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
+	workbench := http.NewServeMux()
+	s.registerWebChats(workbench)
+	mux.Handle("/", workbench)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 		defer cancel()
@@ -97,7 +102,7 @@ func (s *Service) Handler() http.Handler {
 		}
 		respond(w, map[string]int64{"id": id}, s.ResolveEvent(r.Context(), id, req.Operation))
 	})
-	mux.HandleFunc("POST /v1/actions/{id}/decision", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("POST /v1/actions/{id}/decision", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Decision string `json:"decision"`
 		}
@@ -163,7 +168,7 @@ func (s *Service) Handler() http.Handler {
 		}
 		respond(w, map[string]string{"draft": r.PathValue("name"), "decision": r.PathValue("decision")}, s.DecideDraft(r.PathValue("name"), r.PathValue("decision"), req.Reason))
 	})
-	mux.HandleFunc("GET /v1/activity", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("GET /v1/activity", func(w http.ResponseWriter, r *http.Request) {
 		days := 7
 		if raw := r.URL.Query().Get("days"); raw != "" {
 			days, _ = strconv.Atoi(raw)
@@ -171,41 +176,41 @@ func (s *Service) Handler() http.Handler {
 		data, err := s.dailyActivity(r.Context(), days, time.Now())
 		respond(w, data, err)
 	})
-	mux.HandleFunc("GET /v1/activity/{kind}", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("GET /v1/activity/{kind}", func(w http.ResponseWriter, r *http.Request) {
 		data, err := s.activityDetails(r.Context(), r.PathValue("kind"), r.URL.Query())
 		respond(w, data, err)
 	})
-	mux.HandleFunc("GET /v1/conversations", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("GET /v1/conversations", func(w http.ResponseWriter, r *http.Request) {
 		p, e := s.conversations(r.Context(), r.URL.Query())
 		respond(w, p, e)
 	})
-	mux.HandleFunc("GET /v1/deliveries", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("GET /v1/deliveries", func(w http.ResponseWriter, r *http.Request) {
 		p, e := s.noticeHistory(r.Context(), r.URL.Query())
 		respond(w, p, e)
 	})
-	mux.HandleFunc("GET /v1/replies/{id}", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("GET /v1/replies/{id}", func(w http.ResponseWriter, r *http.Request) {
 		m, e := s.messageDetail(r.Context(), r.PathValue("id"))
 		respond(w, m, e)
 	})
-	mux.HandleFunc("GET /v1/runs", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("GET /v1/runs", func(w http.ResponseWriter, r *http.Request) {
 		page, err := s.runHistory(r.Context(), r.URL.Query())
 		respond(w, page, err)
 	})
-	mux.HandleFunc("GET /v1/runs/{id}", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("GET /v1/runs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		record, err := s.historicalRun(r.Context(), r.PathValue("id"))
 		respond(w, record, err)
 	})
-	mux.HandleFunc("GET /v1/workbench", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("GET /v1/workbench", func(w http.ResponseWriter, r *http.Request) {
 		page, err := s.workItems(r.Context(), r.URL.Query().Get("kind"), r.URL.Query().Get("offset"))
 		respond(w, page, err)
 	})
-	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		a, err := s.action(r.Context(), r.PathValue("id"))
 		a.Args, a.Hint, a.Result = s.redact(a.Args), s.redact(a.Hint), s.redact(a.Result)
 		a.Name, a.Key = s.redact(a.Name), s.redact(a.Key)
 		respond(w, a, err)
 	})
-	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		paused := s.paused
 		active := s.activeCancel != nil
@@ -234,21 +239,39 @@ func (s *Service) Handler() http.Handler {
 			respond(w, rows, e)
 		})
 	}
+	// The web client marks fetch requests with a non-simple header. Foreign sites
+	// cannot set it through a form or cross-origin fetch without CORS permission.
+	_, port, _ := net.SplitHostPort(s.cfg.Listen)
+	public, _ := url.Parse(s.cfg.WebOrigin)
+	trusted := func(origin string) bool {
+		return origin == "http://"+s.cfg.Listen || origin == "http://localhost:"+port || (s.cfg.WebOrigin != "" && origin == s.cfg.WebOrigin)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
+		r.Body = http.MaxBytesReader(w, r.Body, int64(s.cfg.Limits.MaxInputBytes+4096))
 		if r.URL.Path != "/healthz" {
-			auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if subtle.ConstantTimeCompare([]byte(auth), []byte(s.token)) != 1 {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "valid bearer token required"})
+			origin := r.Header.Get("Origin")
+			if origin != "" && !trusted(origin) {
+				writeJSON(w, 403, map[string]string{"error": "browser cross-origin access disabled"})
 				return
 			}
-			if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+s.cfg.Listen && origin != s.cfg.WebOrigin {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "browser cross-origin access disabled"})
+			if r.Header.Get("X-Agentd-Workbench") == "1" && r.Header.Get("Authorization") == "" {
+				localHost := r.Host == s.cfg.Listen || r.Host == "localhost:"+port
+				publicHost := public != nil && public.Host != "" && r.Host == public.Host
+				if (!localHost && !publicHost) || r.Header.Get("Sec-Fetch-Site") == "cross-site" || (r.Method != "GET" && r.Method != "HEAD" && origin == "") {
+					writeJSON(w, 403, map[string]string{"error": "untrusted workbench request"})
+					return
+				}
+				workbench.ServeHTTP(w, r)
+				return
+			}
+			auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if subtle.ConstantTimeCompare([]byte(auth), []byte(s.token)) != 1 {
+				writeJSON(w, 401, map[string]string{"error": "valid bearer token required"})
 				return
 			}
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, int64(s.cfg.Limits.MaxInputBytes+4096))
 		mux.ServeHTTP(w, r)
 	})
 }

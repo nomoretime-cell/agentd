@@ -2,6 +2,7 @@ package agent
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -43,6 +44,37 @@ func TestWorkbenchOrigin(t *testing.T) {
 		s.Handler().ServeHTTP(rec, req)
 		if rec.Code != tc.want {
 			t.Fatalf("origin %q: got %d want %d", tc.origin, rec.Code, tc.want)
+		}
+	}
+}
+
+func TestDirectWorkbenchAccess(t *testing.T) {
+	cfg := testConfig()
+	cfg.WebOrigin = "http://192.0.2.10"
+	s := openTest(t, cfg, nil)
+	handler := s.Handler()
+	for _, tc := range []struct {
+		method, path, host, origin, site string
+		want                             int
+	}{
+		{"GET", "/v1/status", cfg.Listen, "", "same-origin", 200},
+		{"GET", "/v1/status", "192.0.2.10", "", "", 200},
+		{"GET", "/v1/status", "other.invalid", "", "", 403},
+		{"GET", "/v1/status", cfg.Listen, "", "cross-site", 403},
+		{"POST", "/v1/chats", cfg.Listen, cfg.WebOrigin, "same-origin", 200},
+		{"POST", "/v1/chats", cfg.Listen, "", "", 403},
+		{"POST", "/v1/chats", cfg.Listen, "http://192.0.2.11", "", 403},
+		{"POST", "/v1/control", cfg.Listen, cfg.WebOrigin, "", 404},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader("{}"))
+		req.Host = tc.host
+		req.Header.Set("Origin", tc.origin)
+		req.Header.Set("Sec-Fetch-Site", tc.site)
+		req.Header.Set("X-Agentd-Workbench", "1")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s %s host %q origin %q site %q: got %d want %d", tc.method, tc.path, tc.host, tc.origin, tc.site, rec.Code, tc.want)
 		}
 	}
 }

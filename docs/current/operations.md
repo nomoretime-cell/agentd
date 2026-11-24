@@ -2,7 +2,7 @@
 
 本文描述当前代码的启动、接口、权限与故障处理，随代码更新。
 
-实现依据：[第一阶段架构基线](../design/01-stage-1-architecture.md)。核心代码位于一个 `internal/agent` 包，数据库为四张表、26 个业务字段。运行平台是 macOS / Linux；没有 Redis、外部数据库或容器依赖。模型通过 OpenAI 兼容的 Chat Completions API 连接。
+实现依据：[第一阶段架构基线](../design/01-stage-1-architecture.md)。核心代码位于一个 `internal/agent` 包，数据库为四张表，当前 schema v4 共 37 列。运行平台是 macOS / Linux；没有 Redis、外部数据库或容器依赖。模型通过 OpenAI 兼容的 Chat Completions API 连接。
 
 **启动与本地依赖**
 
@@ -16,7 +16,7 @@ make build
 
 Go 工具链保存在 `.tools/go/`，模块缓存、构建缓存、临时文件都在 `.cache/`。`scripts/go` 设置这些路径，不修改系统 Go 或用户全局 Go 环境。已安装本地工具链和下载模块后，构建可离线进行。工具链版本在 bootstrap 中固定，下载后核验官方 SHA-256；依赖版本由 go.mod/go.sum 固定。
 
-默认监听 `127.0.0.1:8090`；本地模型地址为 `http://localhost:8080/v1/chat/completions`，模型名称在 config.yaml 中配置。初次启动自动生成 `data/api-token`，权限为 0600；业务 API 都要求 Bearer Token，不输出 Token 到日志。配置私密凭证时使用被 Git 忽略的 `config.local.yaml`，并以 `-config config.local.yaml` 启动；该文件是完整配置，不是叠加文件。
+默认监听 `127.0.0.1:8090`；本地模型地址为 `http://localhost:8080/v1/chat/completions`，模型名称在 config.yaml 中配置。初次启动自动生成 `data/api-token`，权限为 0600；管理客户端使用 Bearer Token，不输出 Token 到日志。配置私密凭证时使用被 Git 忽略的 `config.local.yaml`，并以 `-config config.local.yaml` 启动；该文件是完整配置，不是叠加文件。
 
 ```sh
 TOKEN=$(cat .agentd/data/api-token)
@@ -31,7 +31,7 @@ curl -s http://127.0.0.1:8090/v1/outbox -H "Authorization: Bearer $TOKEN"
 
 普通通知默认遵循北京时间 23:00–08:00 静默期，审批提示不受静默期影响。需要立刻体验本地通知时，将配置中的 quiet_hours.start / end 都设为空字符串并重启。不要删除数据库来“重试”通知。
 
-带工作台的发布版公开提供页面和静态资源，业务 API 复用同一监听地址。浏览器来源与监听地址或显式配置的 `web_origin` 精确匹配，CLI 可省略 Origin。所有者可从 `/v1/conversations`、`/v1/runs`、`/v1/deliveries` 浏览历史，按返回的运行 ID 或消息 ID 打开 `/v1/runs/{id}`、`/v1/replies/{id}` 核对上下文和回执。详见[工作台说明](../../web/README.md)。
+带工作台的发布版公开提供页面和静态资源，业务 API 复用同一监听地址。工作台无需登录，能够访问该入口的人均可查看会话并审批动作。工作台请求的 Host 和写操作的 Origin 须与监听地址或显式配置的 `web_origin` 匹配，CLI 可省略 Origin。所有者可从 `/v1/conversations`、`/v1/runs`、`/v1/deliveries` 浏览历史，按返回的运行 ID 或消息 ID 打开 `/v1/runs/{id}`、`/v1/replies/{id}` 核对上下文和回执。详见[工作台说明](../../web/README.md)。
 
 **HTTP 接口**
 
@@ -42,6 +42,9 @@ JSON 请求必须包含 Content-Type: application/json，并携带认证。未�
 | GET /healthz | 数据库健康检查，无认证，不暴露配置 |
 | GET /v1/workbench | `kind=actions/inbox/outbox/drafts`，`offset` 默认 0；返回全部类别的待办数和所选类别的一页（最多 20 项） |
 | GET /v1/actions/{id} | 单个动作的脱敏冻结参数、状态与结果，用于审批后核对 |
+| GET /v1/chats、POST /v1/chats | 分页浏览对话、分配新网页会话标识 |
+| GET /v1/chats/{id}/messages、POST /v1/chats/{id}/messages | 按游标查询网页会话的输入、回复和审批，使用稳定 key 提交消息 |
+| GET /v1/chats/{id}/submissions/{key} | 查询发送回执，id 为 0 表示暂未查到，无需触发模型 |
 | GET /v1/status | 暂停、执行状态、各表条数 |
 | GET /v1/inbox | 最近 200 条事件 |
 | GET /v1/timers | 最近 200 个定时器 |
@@ -110,7 +113,7 @@ actions:
 
 allow 外部写与 ask 获批写都先登记 actions，再将 approved 原子改为 executing，随后才发起远端请求；成功回填 succeeded/result。执行意图键绑定原事件和命名操作，不绑定可能被模型重排的工具序号；同一原事件内每种命名写操作只接受一组冻结参数，重复相同调用复用回执，改变参数则拒绝继续。如需用同一操作执行多个不同写入，应提交独立事件。审批恢复中的相同操作仍复用原动作键。本地默认投递目标允许通知时，若模型在恢复后直接结束，宿主会向本地 Outbox 写入带动作 ID 去重的执行回执。相同未核对的写意图也不能通过新事件绕过 unknown。
 
-ask 将 pending_approval、审批通知和输入完成在一个事务中提交，结束本轮。批准/拒绝接口校验现状态与到期时间并生成稳定事件。批准后校验当前配置、冻结目的地址和有效期，执行一次，再让模型根据事实继续。拒绝与过期同样生成恢复事件。自动 allow 动作也给出未来有效期；没有采用设计中“expires_at=当前时间”的字面写法，否则统一的到期校验会立即拒绝它。
+ask 在同一事务中提交 pending_approval 和输入完成。网页任务由原会话展示审批入口，其他入口沿用审批通知机制，结束本轮。批准/拒绝接口校验现状态与到期时间并生成稳定事件。批准后校验当前配置、冻结目的地址和有效期，执行一次，再让模型根据事实继续。拒绝与过期同样生成恢复事件。自动 allow 动作也给出未来有效期；没有采用设计中“expires_at=当前时间”的字面写法，否则统一的到期校验会立即拒绝它。
 
 外部返回明确拒绝状态时记 failed；网络异常、5xx、重定向及无法确定是否产生副作用的结果保留 unknown。接入真实业务时，应校验目标 API 的错误语义；通用 HTTP 适配器不会证明第三方副作用恰好一次。投递 429 有界退避，其他不明确结果也不会盲目重发。
 

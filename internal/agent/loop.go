@@ -77,7 +77,9 @@ func (s *Service) execute(ctx context.Context, batch []Event) (out Outcome, err 
 	}
 	out.ReplyTarget = target
 	out.Scope = localScope
-	if route != nil {
+	if chat := batch[0].Payload.WebChat; chat != "" {
+		out.Scope = webChatScope(chat)
+	} else if route != nil {
 		out.Scope = s.imScope(route)
 	}
 	ctx = context.WithValue(ctx, imTargetKey{}, target)
@@ -90,10 +92,17 @@ func (s *Service) execute(ctx context.Context, batch []Event) (out Outcome, err 
 		ctx = context.WithValue(ctx, teamTurnKey{}, true)
 		prompt = s.teamPrompt()
 	} else {
-		prompt = s.capturedPrompt(target == "", captureFrom(ctx))
+		prompt = s.capturedPrompt(target == "" && batch[0].Payload.WebChat == "", captureFrom(ctx))
 	}
 	messages := []Message{{Role: "system", Content: prompt}}
-	if target == "" {
+	if chat := batch[0].Payload.WebChat; chat != "" {
+		messages[0].Content += "\nYou are replying in the owner's web conversation. Your final text is returned privately here. Use send_message only when the owner requests a separate notification."
+		prior, err := s.webChatHistory(ctx, chat, batch[0].ID)
+		if err != nil {
+			return out, err
+		}
+		messages = append(messages, prior...)
+	} else if target == "" {
 		messages = append(messages, s.loadSession()...)
 	} else {
 		hist, err := s.chatHistory(ctx, route, batch[0].ID)
@@ -116,7 +125,7 @@ func (s *Service) execute(ctx context.Context, batch []Event) (out Outcome, err 
 			ctx = context.WithValue(ctx, resumedActionKey{}, a)
 			// A local approval has a host receipt even when the model finishes
 			// silently. Stage it with the outcome, once, at commit time.
-			if target == "" && s.cfg.Targets[s.cfg.DefaultTarget].Kind == "local" && s.cfg.Permissions["send_message"] == "allow" {
+			if ev.Payload.WebChat == "" && target == "" && s.cfg.Targets[s.cfg.DefaultTarget].Kind == "local" && s.cfg.Permissions["send_message"] == "allow" {
 				defer func() {
 					if err == nil && out.Approval == nil && len(out.Notifications) == 0 {
 						content := s.redact(fmt.Sprintf("Action %s: %s\n%s", a.Name, a.Status, a.Result))

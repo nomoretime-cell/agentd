@@ -1,10 +1,11 @@
 import { createServer, request as proxyRequest } from "node:http"
 import { once } from "node:events"
 import { test, expect } from "@playwright/test"
-import { startDemo } from "./demo-server.mjs"
 import { startInstance } from "./instance.mjs"
 
-test("所有者审批、回执与刷新后重新解锁", async ({ page, request }) => {
+const webHeaders = { "X-Agentd-Workbench": "1" }
+
+test("所有者审批、回执与刷新后直接读回", async ({ page, request }) => {
   const instance = await startInstance()
   try {
     const { url, token } = instance
@@ -20,11 +21,6 @@ test("所有者审批、回执与刷新后重新解锁", async ({ page, request 
     })
     expect(denied.status()).toBe(403)
     await page.goto(url)
-    async function unlock() {
-      await page.getByLabel("访问令牌").fill(token)
-      await page.getByRole("button", { name: "进入工作台" }).click()
-    }
-    await unlock()
     const first = page.getByRole("button", { name: /create_ticket/ }).first()
     await first.click()
     const dialog = page.getByRole("dialog")
@@ -35,10 +31,7 @@ test("所有者审批、回执与刷新后重新解锁", async ({ page, request 
     })
     expect(instance.executions()).toBe(1)
     await page.reload()
-    await expect(
-      page.getByRole("heading", { name: "解锁工作台" })
-    ).toBeVisible()
-    await unlock()
+    await expect(page.getByLabel("访问令牌")).toHaveCount(0)
     await expect(dialog.getByText("已执行", { exact: true })).toBeVisible()
     await page.keyboard.press("Escape")
     await expect(dialog).toHaveCount(0)
@@ -76,8 +69,6 @@ test("转发端口上的可信页面可拒绝动作", async ({ page }) => {
   try {
     upstream = instance.url
     await page.goto(origin)
-    await page.getByLabel("访问令牌").fill(instance.token)
-    await page.getByRole("button", { name: "进入工作台" }).click()
     await page
       .getByRole("button", { name: /create_ticket/ })
       .first()
@@ -94,8 +85,8 @@ test("转发端口上的可信页面可拒绝动作", async ({ page }) => {
   }
 })
 
-test("隔离演示直接进入工作台，刷新可继续查看", async ({ page, request }) => {
-  const demo = await startDemo()
+test("单一服务直接进入工作台，刷新可继续查看", async ({ page, request }) => {
+  const demo = await startInstance()
   try {
     await page.goto(demo.url)
     await expect(page.getByRole("heading", { name: "工作概览" })).toBeVisible()
@@ -118,6 +109,7 @@ test("隔离演示直接进入工作台，刷新可继续查看", async ({ page,
     expect(
       (
         await request.post(demo.url + "/v1/control", {
+          headers: { ...webHeaders, Origin: demo.url },
           data: { command: "pause" },
         })
       ).status()
@@ -135,13 +127,14 @@ test("隔离演示直接进入工作台，刷新可继续查看", async ({ page,
 })
 
 test("历史运行可筛选、深链接、刷新并返回原列表", async ({ page, request }) => {
-  const demo = await startDemo()
+  const demo = await startInstance()
   try {
     const prompt = "请记录本次交接结果"
     await expect
       .poll(async () => {
         const res = await request.get(
-          demo.url + "/v1/runs?q=" + encodeURIComponent(prompt)
+          demo.url + "/v1/runs?q=" + encodeURIComponent(prompt),
+          { headers: webHeaders }
         )
         return (await res.json()).items?.length ?? 0
       })
@@ -181,11 +174,13 @@ test("历史运行可筛选、深链接、刷新并返回原列表", async ({ pa
 })
 
 test("首页的按日用量能核对到调用及相应运行", async ({ page, request }) => {
-  const demo = await startDemo()
+  const demo = await startInstance()
   try {
     await expect
       .poll(async () => {
-        const r = await request.get(demo.url + "/v1/activity")
+        const r = await request.get(demo.url + "/v1/activity", {
+          headers: webHeaders,
+        })
         return (await r.json()).days?.at(-1)?.replies
       })
       .toBe(1)
@@ -220,14 +215,18 @@ test("首页的按日用量能核对到调用及相应运行", async ({ page, re
 })
 
 test("会话、历史版本和投递回执可双向追溯", async ({ page, request }) => {
-  const demo = await startDemo()
+  const demo = await startInstance()
   try {
     await expect
       .poll(
         async () =>
-          (await (await request.get(demo.url + "/v1/activity")).json()).days.at(
-            -1
-          ).replies
+          (
+            await (
+              await request.get(demo.url + "/v1/activity", {
+                headers: webHeaders,
+              })
+            ).json()
+          ).days.at(-1).replies
       )
       .toBe(1)
     await page.goto(demo.url + "/#runs?view=conversations")
@@ -262,6 +261,110 @@ test("会话、历史版本和投递回执可双向追溯", async ({ page, reque
         () => document.documentElement.scrollWidth <= innerWidth
       )
     ).toBe(true)
+  } finally {
+    await demo.stop()
+  }
+})
+
+test("对话跨会话、刷新与审批续跑", async ({ page, request }) => {
+  const instance = await startInstance()
+  try {
+    const { url, token } = instance
+    expect((await request.get(url + "/v1/chats")).status()).toBe(401)
+    expect(
+      (
+        await request.post(url + "/v1/chats", {
+          headers: {
+            Authorization: "Bearer " + token,
+            Origin: "https://elsewhere.invalid",
+          },
+          data: {},
+        })
+      ).status()
+    ).toBe(403)
+    await page.goto(url)
+    await page
+      .getByRole("navigation", { name: "工作台导航" })
+      .getByRole("link", { name: "对话", exact: true })
+      .click()
+    await expect(page).toHaveURL(url + "/#chat")
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("对话")
+    async function send(text) {
+      await page.getByRole("textbox", { name: "消息内容" }).fill(text)
+      await page.getByRole("button", { name: "发送", exact: true }).click()
+    }
+    const thread = page.getByRole("region", { name: "对话内容" })
+    await page.getByRole("button", { name: "新建会话" }).click()
+    await send("蓝鲸计划")
+    await expect(
+      thread.getByText("收到，蓝鲸计划", { exact: true })
+    ).toBeVisible({ timeout: 10000 })
+    const first = page.url()
+    await page.getByRole("button", { name: "新建会话" }).click()
+    await expect(page).not.toHaveURL(first)
+    await send("金鱼计划")
+    await expect(
+      thread.getByText("收到，金鱼计划", { exact: true })
+    ).toBeVisible()
+    const second = page.url()
+    await page.goto(first)
+    await page.reload()
+    await send("上一条消息是什么？")
+    await expect(
+      thread.getByText("本会话上一条消息是：蓝鲸计划", { exact: true })
+    ).toBeVisible({ timeout: 10000 })
+    await send("创建工单")
+    await thread.getByRole("link", { name: "待审批", exact: true }).click()
+    const dialog = page.getByRole("dialog")
+    await dialog.getByRole("button", { name: "批准动作" }).click()
+    await expect(dialog.getByText("已执行", { exact: true })).toBeVisible({
+      timeout: 10000,
+    })
+    await page.keyboard.press("Escape")
+    await expect(page).toHaveURL(first)
+    await expect(
+      thread.getByText("工单处理已结束，请查看审批回执。", { exact: true })
+    ).toBeVisible({ timeout: 10000 })
+    expect(instance.executions()).toBe(1)
+    await page.goto(second)
+    await expect(thread.getByText("金鱼计划", { exact: true })).toBeVisible()
+    await expect(thread.getByText(/蓝鲸计划|工单处理已结束/)).toHaveCount(0)
+    await page.setViewportSize({ width: 375, height: 760 })
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth
+      )
+    ).toBe(true)
+  } finally {
+    await instance.stop()
+  }
+})
+
+test("发送回执中断后，刷新可恢复且不会重复入队", async ({ page, request }) => {
+  const demo = await startInstance()
+  try {
+    await page.goto(demo.url + "/#chat")
+    await page.getByRole("button", { name: "新建会话" }).click()
+    await expect(page.getByLabel("消息内容")).toBeVisible()
+    const id = new URLSearchParams(new URL(page.url()).hash.slice(6)).get("id")
+    await page.route("**/v1/chats/*/messages", async (route) => {
+      if (route.request().method() !== "POST") return route.continue()
+      const res = await route.fetch()
+      expect(res.ok()).toBe(true)
+      await route.abort("failed")
+    })
+    await page.getByLabel("消息内容").fill("只创建一次")
+    await page.getByRole("button", { name: "发送", exact: true }).click()
+    await expect(page.getByRole("button", { name: "确认回执" })).toBeVisible()
+    await page.reload()
+    await page.getByRole("button", { name: "确认回执" }).click()
+    await expect(
+      page.getByText("收到，只创建一次", { exact: true })
+    ).toBeVisible({ timeout: 10000 })
+    const p = await request.get(demo.url + "/v1/chats/" + id + "/messages", {
+      headers: webHeaders,
+    })
+    expect((await p.json()).items).toHaveLength(1)
   } finally {
     await demo.stop()
   }

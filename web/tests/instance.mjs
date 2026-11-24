@@ -18,18 +18,51 @@ export async function startInstance(webOrigin) {
   const root = await mkdtemp(join(cache, "web-preview-"))
   const tokenPath = join(root, "data/api-token")
   let executions = 0
-  const stub = createServer((req, res) => {
+  const stub = createServer(async (req, res) => {
     res.setHeader("content-type", "application/json")
     if (req.url === "/action") {
       executions++
       res.end(JSON.stringify({ receipt: "本地测试工单已登记" }))
     } else if (req.url === "/chat/completions") {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      const { messages } = JSON.parse(Buffer.concat(chunks).toString())
+      let message = { role: "assistant", content: "已记录处理结果。" }
+      if (messages[0]?.content.includes("owner's web conversation")) {
+        const users = messages.filter((m) => m.role === "user")
+        const current = users
+          .at(-1)
+          .content.trim()
+          .replace(/^Event \d+ \(message\): /, "")
+        if (current.includes("Host receipt:"))
+          message.content = "工单处理已结束，请查看审批回执。"
+        else if (current.includes("创建工单")) {
+          message = {
+            role: "assistant",
+            content: "",
+            tool_calls: [
+              {
+                id: "demo-ticket",
+                type: "function",
+                function: {
+                  name: "bash",
+                  arguments: JSON.stringify({
+                    action: "create_ticket",
+                    arguments: { title: current },
+                  }),
+                },
+              },
+            ],
+          }
+        } else if (current.includes("上一条"))
+          message.content =
+            "本会话上一条消息是：" + (users.at(-2)?.content ?? "尚无历史消息")
+        else message.content = "收到，" + current
+      }
       res.end(
         JSON.stringify({
           usage: { prompt_tokens: 24, completion_tokens: 8, total_tokens: 32 },
-          choices: [
-            { message: { role: "assistant", content: "已记录处理结果。" } },
-          ],
+          choices: [{ message }],
         })
       )
     } else {

@@ -237,7 +237,7 @@ func (s *Service) Decide(ctx context.Context, id, decision string) error {
 		if _, e = tx.ExecContext(ctx, "UPDATE actions SET status=?,result=? WHERE id=? AND status='pending_approval'", want, "operator decision: "+want, id); e != nil {
 			return e
 		}
-		_, _, e = insertEvent(ctx, tx, "action:"+id+":decision", Payload{Kind: "approval", ActionID: id, Text: "Approval decision recorded."}, time.Now().UnixMilli())
+		e = queueActionContinuation(ctx, tx, id, "decision", "Approval decision recorded.")
 		return e
 	})
 	if e == nil {
@@ -271,7 +271,7 @@ func (s *Service) expireActions(ctx context.Context) error {
 			if _, e = tx.ExecContext(ctx, "UPDATE actions SET status='rejected',result='approval expired' WHERE id=? AND status IN ('pending_approval','approved')", id); e != nil {
 				return e
 			}
-			if _, _, e = insertEvent(ctx, tx, "action:"+id+":expired", Payload{Kind: "approval", ActionID: id, Text: "Approval expired."}, time.Now().UnixMilli()); e != nil {
+			if e = queueActionContinuation(ctx, tx, id, "expired", "Approval expired."); e != nil {
 				return e
 			}
 		}
@@ -296,11 +296,23 @@ func (s *Service) ReconcileAction(ctx context.Context, id, status, result string
 		if n != 1 {
 			return ErrConflict
 		}
-		_, _, e = insertEvent(ctx, tx, "action:"+id+":reconciled", Payload{Kind: "approval", ActionID: id, Text: "Operator reconciled action."}, time.Now().UnixMilli())
+		e = queueActionContinuation(ctx, tx, id, "reconciled", "Operator reconciled action.")
 		return e
 	})
 	if e == nil {
 		s.notify()
 	}
 	return e
+}
+
+// Copy the original browser destination inside the action transition transaction.
+// This also works for chains of approvals, whose source may itself be a continuation.
+func queueActionContinuation(ctx context.Context, tx *sql.Tx, id, reason, text string) error {
+	var chat sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT i.payload->>'web_chat' FROM actions a JOIN inbox i ON i.id=cast(substr(a.dedup_key,4) AS integer) WHERE a.id=? AND a.dedup_key GLOB 'ev:[0-9]*:*'`, id).Scan(&chat)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	_, _, err = insertEvent(ctx, tx, "action:"+id+":"+reason, Payload{Kind: "approval", ActionID: id, Text: text, WebChat: chat.String}, time.Now().UnixMilli())
+	return err
 }

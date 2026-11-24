@@ -1,7 +1,6 @@
 import { z } from "zod"
 
 export async function request<T>(
-  token: string,
   path: string,
   schema: z.ZodType<T>,
   options: RequestInit = {}
@@ -12,7 +11,7 @@ export async function request<T>(
       ...options,
       redirect: "error",
       headers: {
-        ...(token && { Authorization: "Bearer " + token }),
+        "X-Agentd-Workbench": "1",
         ...(options.body && { "Content-Type": "application/json" }),
       },
     })
@@ -22,7 +21,7 @@ export async function request<T>(
   }
   if (!response.ok) {
     const errors: Record<number, string> = {
-      401: "访问令牌无效，请重新解锁。",
+      401: "当前服务不支持工作台请求，请确认服务版本。",
       403: "当前访问地址或操作未获授权。",
       404: "找不到这条记录。",
       409: "状态已经变化，请查看最新记录。",

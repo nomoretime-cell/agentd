@@ -255,6 +255,9 @@ func scopeFrom(ctx context.Context) runScope {
 // scopeFor resolves a run's scope from its first event, for records written
 // when the run ended before execute settled it.
 func (s *Service) scopeFor(ctx context.Context, ev Event) runScope {
+	if ev.Payload.WebChat != "" {
+		return webChatScope(ev.Payload.WebChat)
+	}
 	target, err := s.replyTarget(ctx, ev)
 	if err != nil {
 		return unknownScope

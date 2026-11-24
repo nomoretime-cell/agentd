@@ -40,7 +40,7 @@ archive/                            第一阶段之前的草稿，stage-1 由它
 | [design/02-stage-2-memory.md](design/02-stage-2-memory.md) | 第二阶段记忆模块：四类数据、三个机制、关键动作与模型分级、作用域 | 第 1–4 步已实现 |
 | [design/90-convention-storage-layout.md](design/90-convention-storage-layout.md) | 运行状态目录 `.agentd/`、虚拟路径、作用域隔离、路径开发约定 | `.agentd/` 已启用，角色分目录未实施 |
 | [design/91-convention-roadmap.md](design/91-convention-roadmap.md) | 开发路线：现状、阶段 A–D 的顺序与依赖、完成标准、待决定事项 | 阶段 A、B 已完成，待运行验证 |
-| [design/92-convention-owner-workbench.md](design/92-convention-owner-workbench.md) | 所有者工作台：后端操作入口、回复溯源、老板对话、跨机器知识导入、记忆与技能的开发顺序和验收 | W1 已实现，W2–W6 待实现 |
+| [design/92-convention-owner-workbench.md](design/92-convention-owner-workbench.md) | 所有者工作台：后端操作入口、回复溯源、对话、跨机器知识导入、记忆与技能的开发顺序和验收 | W1 已实现，W2–W6 待实现 |
 | [current/architecture.md](current/architecture.md) | 当前软件架构：模块与文件、4 张表、事件/审批/记忆数据流、运行状态位置 | 随代码更新 |
 | [current/operations.md](current/operations.md) | 启动、HTTP 接口、工具与权限、审批与故障恢复、运维 | 随代码更新 |
 | [current/dingtalk-setup.md](current/dingtalk-setup.md) | 钉钉执行路径、接入步骤、复现测试与当前边界 | 随代码更新 |

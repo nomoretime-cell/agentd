@@ -1,7 +1,7 @@
 # agentd
 
 
-**所有者工作台**：`make release` 构建内嵌页面的 `bin/agentd-web`，可在浏览器解锁、查看待办并审批动作。[预览与使用说明](web/README.md)
+**所有者工作台**：`make release` 构建内嵌页面的 `bin/agentd-web`，打开即可对话、查看待办并审批动作。[预览与使用说明](web/README.md)
 
 一个使用 Go 实现的单机 Always-on Agent，保留 Event Inbox、Timers、Memory、Permissions、Outbox 五个组件。核心采用一个业务包、SQLite 四张表和七个基础工具。
 
@@ -16,7 +16,7 @@ make build
 - 服务：`http://127.0.0.1:8090`，健康检查 `/healthz`。
 - 模型：`http://localhost:8080/v1/chat/completions`，模型名称见 `config.yaml`。
 - 运行状态：全部位于状态根目录 `.agentd/`（`-root` 指定，默认 `.agentd`），下文的 `data/`、`workspace/` 都指其中的目录。见[运行状态目录与路径约定](docs/design/90-convention-storage-layout.md)。
-- API 密钥：首次启动生成 `.agentd/data/api-token`，除健康检查外均需 Bearer Token。
+- API 密钥：首次启动生成 `.agentd/data/api-token`，管理客户端使用 Bearer Token，工作台页面从可信网络直接使用。
 - 默认投递：保存到 `data/deliveries/`；普通通知遵循配置中的夜间静默时段。
 - **从旧布局升级**：旧版本把 `data/`、`workspace/` 放在仓库根目录。检测到旧布局时，默认启动会停止并提示：执行 `mkdir .agentd && mv data workspace .agentd/` 完成迁移，或加 `-root .` 继续使用旧布局。程序不会自动移动数据。
 - Go 工具链、依赖、构建缓存和测试数据均保存在项目 `.tools/`、`.cache/` 中。

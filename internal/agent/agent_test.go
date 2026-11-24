@@ -118,7 +118,7 @@ func TestSchemaAndSingleInstance(t *testing.T) {
 		}
 		rows.Close()
 	}
-	if n != 36 {
+	if n != 37 {
 		t.Fatalf("schema has %d columns", n)
 	}
 	if other, e := Open(s.root, testConfig(), finalModel()); e == nil {

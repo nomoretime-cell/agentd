@@ -82,18 +82,12 @@ function More({
     )
   )
 }
-export function ConversationList({
-  token,
-  filter,
-}: {
-  token: string
-  filter: string
-}) {
+export function ConversationList({ filter }: { filter: string }) {
   const q = useInfiniteQuery({
     queryKey: ["conversations", filter],
     initialPageParam: filter,
     queryFn: ({ pageParam, signal }) =>
-      request(token, "conversations?" + pageParam, conversations, { signal }),
+      request("conversations?" + pageParam, conversations, { signal }),
     getNextPageParam: (last) =>
       last.next
         ? new URLSearchParams([
@@ -181,12 +175,12 @@ export function ConversationList({
     </>
   )
 }
-export function DeliveryList({ token }: { token: string }) {
+export function DeliveryList() {
   const q = useInfiniteQuery({
     queryKey: ["deliveries"],
     initialPageParam: "",
     queryFn: ({ pageParam, signal }) =>
-      request(token, "deliveries?cursor=" + pageParam, notices, { signal }),
+      request("deliveries?cursor=" + pageParam, notices, { signal }),
     getNextPageParam: (last) => last.next || undefined,
   })
   return (
@@ -240,18 +234,16 @@ export function DeliveryList({ token }: { token: string }) {
   )
 }
 export function MessageDetail({
-  token,
   id,
   params,
 }: {
-  token: string
   id: string
   params: URLSearchParams
 }) {
   const q = useQuery({
     queryKey: ["message-detail", id],
     queryFn: ({ signal }) =>
-      request(token, "replies/" + encodeURIComponent(id), trace, { signal }),
+      request("replies/" + encodeURIComponent(id), trace, { signal }),
   })
   const m = q.data
   const close = new URLSearchParams(params)

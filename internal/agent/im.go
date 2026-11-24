@@ -281,6 +281,9 @@ func (s *Service) addIMAnswer(out *Outcome, eventID int64, answer string) {
 
 // runChannel records the originating conversation channel, independently of the current configuration.
 func runChannel(ev Event, target string) string {
+	if ev.Payload.WebChat != "" {
+		return "web"
+	}
 	if target == "" {
 		target = ev.Payload.imTarget(ev.ID)
 	}

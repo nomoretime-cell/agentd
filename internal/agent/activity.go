@@ -128,7 +128,7 @@ func (s *Service) commitReplies(ctx context.Context, tx *sql.Tx, first Event, ou
 				replies = append(replies, formalReply{n.Key, out.Attempt, out.Scope.Conversation, s.redact(n.Content), n.Key})
 			}
 		}
-	} else if first.Payload.Kind == "message" && out.Approval == nil && len(out.Messages) > 0 {
+	} else if (first.Payload.Kind == "message" || first.Payload.WebChat != "" && first.Payload.Kind == "approval") && out.Approval == nil && len(out.Messages) > 0 {
 		last := out.Messages[len(out.Messages)-1]
 		if last.Role == "assistant" && strings.TrimSpace(last.Content) != "" {
 			replies = append(replies, formalReply{fmt.Sprintf("local:%d", first.ID), out.Attempt, out.Scope.Conversation, s.redact(last.Content), ""})
