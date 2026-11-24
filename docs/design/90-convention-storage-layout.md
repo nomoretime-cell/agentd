@@ -27,7 +27,7 @@
     │   │   │   # candidate / held 内的 base.sha256 记录生成候选时的记忆快照摘要
     │   │   └── promoting.json  consolidation.jsonl   # 提升进行中的标记；每次整理一行指标
     │   ├── gate/                        # 闸门：decisions.jsonl 决定记录；versions/ 被替换的 skill 与 IDENTITY.md
-    │   ├── knowledge/                   # 导入：raw/ 原文件、manifest.json 清单、imports.jsonl 导入记录、tmp/ 转换工作区
+    │   ├── knowledge/                   # 导入：raw/ 原文件、manifest.json 清单、imports.jsonl 导入记录、tmp/ 转换工作区，incoming/ 服务器待导入目录，uploads/ 上传批次回执与处理中原件
     │   ├── principals.jsonl             # 服务对象标识与平台 ID 的对应，供人查阅
     │   └── roles/<role>/sessions/<principal>/YYYY-MM-DD.jsonl   # 原始运行记录
     └── workspace/                       # 模型可见内容的物理位置

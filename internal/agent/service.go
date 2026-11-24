@@ -69,7 +69,7 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 			return nil, errors.New("OpenCode requires a model endpoint ending in /chat/completions")
 		}
 	}
-	for _, name := range []string{"data", "data/deliveries", "data/outputs", "data/sessions", "data/memory", "data/gate", "data/knowledge/raw", "data/knowledge/tmp", "workspace", "workspace/knowledge/md", "workspace/skills", "workspace/scratch"} {
+	for _, name := range []string{"data", "data/deliveries", "data/outputs", "data/sessions", "data/memory", "data/gate", "data/knowledge/raw", "data/knowledge/tmp", knowledgeUploads, knowledgeIncoming, "workspace", "workspace/knowledge/md", "workspace/skills", "workspace/scratch"} {
 		path := filepath.Join(root, name)
 		if err = os.MkdirAll(path, 0700); err != nil {
 			return nil, err
@@ -176,6 +176,9 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 	if err != nil {
 		return nil, err
 	}
+	if err = s.recoverUploads(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 func (s *Service) Start(parent context.Context) {
@@ -194,9 +197,11 @@ func (s *Service) Start(parent context.Context) {
 	}
 }
 func (s *Service) Close() error {
+	s.knowledge.mu.Lock()
 	if s.endLife != nil {
 		s.endLife()
 	}
+	s.knowledge.mu.Unlock()
 	s.mu.Lock()
 	if s.cancel != nil {
 		s.cancel()

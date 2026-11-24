@@ -53,6 +53,10 @@ JSON 请求必须包含 Content-Type: application/json，并携带认证。未�
 | POST /v1/events | `{key,text}`：普通人工消息 |
 | POST /v1/timers | `{id,cron_expr,fire_at,prompt,active}`，fire_at 为 Unix 毫秒 |
 | POST /v1/control | `{command:"pause" / "stop" / "resume"}` |
+| POST /v1/knowledge/uploads?key={32 位十六进制编号} | multipart 上传，第一项 selection 为按序的文件说明数组，随后每项 file 为原件。完整批次持久化后返回 202。相同编号与相同文件重放返回已有回执 |
+| GET /v1/knowledge/uploads、GET /v1/knowledge/uploads/{id} | 可用格式和最近 20 批摘要，或按编号核对逐项转换及入库结果 |
+| GET /v1/knowledge/search?q=词句、GET /v1/knowledge/{id} | 检索当前入库正文、按文档编号查看正文 |
+| POST /v1/knowledge/incoming | 工作台高级导入，path 相对于服务器状态根目录的 data/knowledge/incoming/ |
 | GET /v1/knowledge | 已导入的文档清单、是否正在导入、上一次导入每个文件的结果 |
 | POST /v1/knowledge/import | `{path}`：后台导入一个文件或目录（相对路径按 agentd 的工作目录）；已有导入在运行时返回 409 |
 | POST /v1/knowledge/{doc_id}/remove | 归档一个文档并移出索引；导入运行时返回 409 |

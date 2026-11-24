@@ -38,6 +38,12 @@ const OwnerChat = lazy(() =>
   import("./features/chat/OwnerChat").then((m) => ({ default: m.OwnerChat }))
 )
 
+const Knowledge = lazy(() =>
+  import("./features/knowledge/Knowledge").then((m) => ({
+    default: m.Knowledge,
+  }))
+)
+
 const RunHistory = lazy(() =>
   import("./features/runs/RunHistory").then((m) => ({ default: m.RunHistory }))
 )
@@ -57,7 +63,14 @@ export function Overview() {
   const runtimeView = hash === "#runtime"
   const runsView = hash === "#runs" || hash.startsWith("#runs?")
   const chatView = hash === "#chat" || hash.startsWith("#chat?")
-  const pageTitle = chatView ? "对话" : runsView ? "会话与运行" : "工作概览"
+  const knowledgeView = hash === "#knowledge"
+  const pageTitle = knowledgeView
+    ? "知识库"
+    : chatView
+      ? "对话"
+      : runsView
+        ? "会话与运行"
+        : "工作概览"
   const routeParams = new URLSearchParams(
     hash.slice(runsView || chatView ? 6 : 1)
   )
@@ -121,7 +134,9 @@ export function Overview() {
           <span className="nav-label">工作台</span>
           <a
             className={
-              runtimeView || runsView || chatView ? undefined : "nav-main"
+              runtimeView || runsView || chatView || knowledgeView
+                ? undefined
+                : "nav-main"
             }
             href="#overview"
             title="工作概览"
@@ -144,6 +159,14 @@ export function Overview() {
           >
             <MessagesSquare size={17} />
             对话
+          </a>
+          <a
+            href="#knowledge"
+            title="知识库"
+            className={knowledgeView ? "nav-main" : undefined}
+          >
+            <BookOpenCheck size={17} />
+            知识库
           </a>
           <span className="nav-label">运行管理</span>
           <a href="#trend" title="每日活动">
@@ -189,8 +212,11 @@ export function Overview() {
             <div>
               <h1>{pageTitle}</h1>
             </div>
-            {!runsView && !chatView && (
+            {!runsView && !chatView && !knowledgeView && (
               <div className="head-actions">
+                <a className="outline-btn" href="#knowledge">
+                  上传知识
+                </a>
                 {service && (
                   <span>
                     <i className={service.paused ? "dot amber" : "dot"} />
@@ -216,14 +242,19 @@ export function Overview() {
               </div>
             )}
           </div>
-          {!runsView && !chatView && (status.error || work.error) && (
-            <p role="alert">{(status.error || work.error)?.message}</p>
-          )}
+          {!runsView &&
+            !chatView &&
+            !knowledgeView &&
+            (status.error || work.error) && (
+              <p role="alert">{(status.error || work.error)?.message}</p>
+            )}
           <nav className="dashboard-views" aria-label="概览视图">
             <a
               href="#overview"
               aria-current={
-                runtimeView || runsView || chatView ? undefined : "page"
+                runtimeView || runsView || chatView || knowledgeView
+                  ? undefined
+                  : "page"
               }
             >
               概览
@@ -234,10 +265,21 @@ export function Overview() {
             <a href="#chat" aria-current={chatView ? "page" : undefined}>
               对话
             </a>
+            <a
+              href="#knowledge"
+              aria-current={knowledgeView ? "page" : undefined}
+            >
+              知识库
+            </a>
             <a href="#runtime" aria-current={runtimeView ? "page" : undefined}>
               运行信息
             </a>
           </nav>
+          {knowledgeView && (
+            <Suspense fallback={<p role="status">正在打开知识库…</p>}>
+              <Knowledge />
+            </Suspense>
+          )}
           {chatView && (
             <Suspense fallback={<p role="status">正在打开对话…</p>}>
               <OwnerChat
@@ -251,7 +293,7 @@ export function Overview() {
               <RunHistory search={hash.slice(6)} />
             </Suspense>
           )}
-          {!runtimeView && !runsView && !chatView && (
+          {!runtimeView && !runsView && !chatView && !knowledgeView && (
             <DailyActivity
               pending={
                 work.data &&
@@ -400,7 +442,7 @@ export function Overview() {
             )}
           </section>
           {runtimeView && <LedgerChart counts={service?.counts} />}
-          {!runsView && !chatView && !!updated && (
+          {!runsView && !chatView && !knowledgeView && !!updated && (
             <div className="timestamp">
               待办与运行状态更新于{" "}
               {new Date(updated).toLocaleTimeString("zh-CN")}

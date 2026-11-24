@@ -3,8 +3,6 @@ package agent
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -118,21 +116,38 @@ func (s *Service) StartImport(source string) error {
 	if e != nil {
 		return e
 	}
+	if e = s.beginImport(); e != nil {
+		return e
+	}
+	go func() {
+		results := s.importKnowledge(s.life, abs, info.IsDir())
+		s.finishImport(results)
+	}()
+	return nil
+}
+
+func (s *Service) beginImport() error {
 	s.knowledge.mu.Lock()
 	defer s.knowledge.mu.Unlock()
+	if err := s.life.Err(); err != nil {
+		return err
+	}
 	if s.knowledge.running {
 		return fmt.Errorf("%w: an import is running", ErrConflict)
 	}
 	s.knowledge.running = true
 	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		results := s.importKnowledge(s.life, abs, info.IsDir())
-		s.knowledge.mu.Lock()
-		s.knowledge.running, s.knowledge.last = false, results
-		s.knowledge.mu.Unlock()
-	}()
 	return nil
+}
+
+func (s *Service) finishImport(results []importResult) {
+	s.knowledge.mu.Lock()
+	if results != nil {
+		s.knowledge.last = results
+	}
+	s.knowledge.running = false
+	s.knowledge.mu.Unlock()
+	s.wg.Done()
 }
 
 func (s *Service) importKnowledge(ctx context.Context, root string, dir bool) []importResult {
@@ -201,20 +216,33 @@ func (s *Service) logImport(results []importResult) []importResult {
 // importFile converts one file and records it in docs; the caller saves docs.
 func (s *Service) importFile(ctx context.Context, source string, docs map[string]knowledgeDoc) importResult {
 	r := importResult{Source: source, DocID: docID(source)}
-	fail := func(e error) importResult { r.Status, r.Error = "failed", s.redact(e.Error()); return r }
-	info, e := os.Stat(source)
-	if e != nil {
-		return fail(e)
+	info, err := os.Stat(source)
+	if err != nil {
+		r.Status, r.Error = "failed", s.redact(err.Error())
+		return r
 	}
 	if !info.Mode().IsRegular() || info.Size() > maxSourceBytes {
-		return fail(fmt.Errorf("not a regular file of at most %d bytes", maxSourceBytes))
+		r.Status, r.Error = "failed", "not a regular file of at most 50 MiB"
+		return r
 	}
-	raw, e := os.ReadFile(source)
-	if e != nil {
-		return fail(e)
+	f, err := os.Open(source)
+	if err != nil {
+		r.Status, r.Error = "failed", s.redact(err.Error())
+		return r
 	}
-	sum := sha256.Sum256(raw)
-	hash := hex.EncodeToString(sum[:])
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, maxSourceBytes+1))
+	if err != nil || len(raw) > maxSourceBytes {
+		r.Status, r.Error = "failed", "cannot read source within 50 MiB"
+		return r
+	}
+	return s.importBytes(ctx, source, raw, docs)
+}
+
+func (s *Service) importBytes(ctx context.Context, source string, raw []byte, docs map[string]knowledgeDoc) importResult {
+	r := importResult{Source: source, DocID: docID(source)}
+	fail := func(e error) importResult { r.Status, r.Error = "failed", s.redact(e.Error()); return r }
+	hash := digest(raw)
 	old, existed := docs[r.DocID]
 	if existed && old.SHA256 == hash {
 		r.Status = "unchanged"
@@ -227,22 +255,22 @@ func (s *Service) importFile(ctx context.Context, source string, docs map[string
 	if len(md) > maxMarkdownBytes {
 		return fail(fmt.Errorf("converted text has %d bytes; the limit is %d, so split the document", len(md), maxMarkdownBytes))
 	}
-	doc := knowledgeDoc{ID: r.DocID, Source: source, Title: docTitle(md, source), SHA256: hash, Bytes: info.Size(), MDBytes: len(md), Converter: converter, ImportedAt: time.Now().UTC().Format(time.RFC3339)}
+	doc := knowledgeDoc{ID: r.DocID, Source: source, Title: docTitle(md, source), SHA256: hash, Bytes: int64(len(raw)), MDBytes: len(md), Converter: converter, ImportedAt: time.Now().UTC().Format(time.RFC3339)}
 	docs[doc.ID] = doc
 	index := knowledgeIndex(docs)
+	if existed {
+		docs[doc.ID] = old
+	} else {
+		delete(docs, doc.ID)
+	}
 	if n := lineCount(index); n > memoryIndexMaxLines || len(index) > memoryIndexMaxBytes {
-		if existed {
-			docs[doc.ID] = old
-		} else {
-			delete(docs, doc.ID)
-		}
 		return fail(fmt.Errorf("knowledge/INDEX.md would have %d lines and %d bytes; the limit is %d lines and %d bytes", n, len(index), memoryIndexMaxLines, memoryIndexMaxBytes))
 	}
 	s.memoryMu.Lock()
 	defer s.memoryMu.Unlock()
 	mdPath := filepath.Join(s.root, knowledgeDir, "md", doc.ID+".md")
 	if existed {
-		if e = s.archiveKnowledge(doc.ID); e != nil {
+		if e = s.archiveKnowledge(doc.ID, true); e != nil {
 			return fail(e)
 		}
 	}
@@ -253,6 +281,7 @@ func (s *Service) importFile(ctx context.Context, source string, docs map[string
 	if e = atomicWrite(mdPath, md, 0600); e != nil {
 		return fail(e)
 	}
+	docs[doc.ID] = doc
 	r.Status = "added"
 	if existed {
 		r.Status = "updated"
@@ -260,16 +289,23 @@ func (s *Service) importFile(ctx context.Context, source string, docs map[string
 	return r
 }
 
-// archiveKnowledge moves a document's current Markdown out of the index.
+// archiveKnowledge keeps a version of the current Markdown before replacement or removal.
 // Caller holds memoryMu.
-func (s *Service) archiveKnowledge(id string) error {
+func (s *Service) archiveKnowledge(id string, keepCurrent bool) error {
 	src := filepath.Join(s.root, knowledgeDir, "md", id+".md")
 	if !fileExists(src) {
 		return nil
 	}
-	dst := filepath.Join(s.root, knowledgeDir, ".archive", id+"."+time.Now().UTC().Format("20060102T150405Z")+".md")
+	dst := filepath.Join(s.root, knowledgeDir, ".archive", id+"."+time.Now().UTC().Format("20060102T150405.000000000Z")+".md")
 	if e := os.MkdirAll(filepath.Dir(dst), 0700); e != nil {
 		return e
+	}
+	if keepCurrent {
+		b, e := os.ReadFile(src)
+		if e != nil {
+			return e
+		}
+		return atomicWrite(dst, b, 0600)
 	}
 	return os.Rename(src, dst)
 }
@@ -283,7 +319,7 @@ func (s *Service) archiveMissing(root string, present []string, docs map[string]
 			continue
 		}
 		r := importResult{Source: d.Source, DocID: id, Status: "archived"}
-		if e := s.archiveKnowledge(id); e != nil {
+		if e := s.archiveKnowledge(id, false); e != nil {
 			r.Status, r.Error = "failed", e.Error()
 		} else {
 			delete(docs, id)
@@ -297,9 +333,8 @@ func (s *Service) archiveMissing(root string, present []string, docs map[string]
 // saves the manifest it loaded, so removing meanwhile would be undone.
 func (s *Service) RemoveKnowledge(id string) error {
 	s.knowledge.mu.Lock()
-	running := s.knowledge.running
-	s.knowledge.mu.Unlock()
-	if running {
+	defer s.knowledge.mu.Unlock()
+	if s.knowledge.running {
 		return fmt.Errorf("%w: an import is running", ErrConflict)
 	}
 	s.memoryMu.Lock()
@@ -311,7 +346,7 @@ func (s *Service) RemoveKnowledge(id string) error {
 	if _, ok := docs[id]; !ok {
 		return fmt.Errorf("%w: no document %q", ErrConflict, id)
 	}
-	if e = s.archiveKnowledge(id); e != nil {
+	if e = s.archiveKnowledge(id, false); e != nil {
 		return e
 	}
 	delete(docs, id)

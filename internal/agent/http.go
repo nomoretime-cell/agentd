@@ -20,6 +20,7 @@ func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	workbench := http.NewServeMux()
 	s.registerWebChats(workbench)
+	s.registerKnowledgeUploads(workbench)
 	mux.Handle("/", workbench)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
@@ -139,7 +140,7 @@ func (s *Service) Handler() http.Handler {
 		e := s.MemoryControl(r.PathValue("op"))
 		respond(w, map[string]any{"memory": s.memoryStatus()}, e)
 	})
-	mux.HandleFunc("GET /v1/knowledge", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("GET /v1/knowledge", func(w http.ResponseWriter, r *http.Request) {
 		v, e := s.Knowledge()
 		respond(w, v, e)
 	})
@@ -152,7 +153,7 @@ func (s *Service) Handler() http.Handler {
 		}
 		respond(w, map[string]string{"import": "started", "path": req.Path}, s.StartImport(req.Path))
 	})
-	mux.HandleFunc("POST /v1/knowledge/{id}/remove", func(w http.ResponseWriter, r *http.Request) {
+	workbench.HandleFunc("POST /v1/knowledge/{id}/remove", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, map[string]string{"doc_id": r.PathValue("id")}, s.RemoveKnowledge(r.PathValue("id")))
 	})
 	mux.HandleFunc("GET /v1/drafts", func(w http.ResponseWriter, r *http.Request) {
@@ -249,7 +250,9 @@ func (s *Service) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
-		r.Body = http.MaxBytesReader(w, r.Body, int64(s.cfg.Limits.MaxInputBytes+4096))
+		if r.Method != "POST" || r.URL.Path != "/v1/knowledge/uploads" {
+			r.Body = http.MaxBytesReader(w, r.Body, int64(s.cfg.Limits.MaxInputBytes+4096))
+		}
 		if r.URL.Path != "/healthz" {
 			origin := r.Header.Get("Origin")
 			if origin != "" && !trusted(origin) {

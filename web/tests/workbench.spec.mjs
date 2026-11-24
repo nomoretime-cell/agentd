@@ -1,5 +1,8 @@
 import { createServer, request as proxyRequest } from "node:http"
 import { once } from "node:events"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import { test, expect } from "@playwright/test"
 import { startInstance } from "./instance.mjs"
 
@@ -367,5 +370,56 @@ test("发送回执中断后，刷新可恢复且不会重复入队", async ({ pa
     expect((await p.json()).items).toHaveLength(1)
   } finally {
     await demo.stop()
+  }
+})
+
+test("从访问电脑上传，另一个浏览器能检索服务器原件的正文", async ({
+  page,
+  browser,
+}) => {
+  const instance = await startInstance()
+  const viewer = await browser.newContext()
+  const clientDir = await mkdtemp(join(tmpdir(), "agentd-client-"))
+  try {
+    const source = join(clientDir, "异地交接.md"),
+      invalid = join(clientDir, "无效.txt")
+    await writeFile(source, "# 跨机资料\n鹭岛交接编号321")
+    await writeFile(invalid, Buffer.from([0, 0, 0]))
+    await page.goto(instance.url)
+    await page.getByRole("link", { name: "上传知识" }).click()
+    await page.getByLabel("从这台电脑上传").setInputFiles([source, invalid])
+    await page.getByRole("button", { name: "开始上传" }).click()
+    await expect(page.getByRole("button", { name: "重试失败项" })).toBeVisible()
+    await page.getByRole("button", { name: "重试失败项" }).click()
+    await expect(
+      page.getByRole("button", { name: "移除", exact: true })
+    ).toHaveCount(1)
+    await rm(source)
+    await page.goto("about:blank")
+    const other = await viewer.newPage()
+    await other.goto(instance.url + "/#knowledge")
+    await other.getByLabel("检索正文").fill("鹭岛交接编号321")
+    await other.getByRole("button", { name: "检索", exact: true }).click()
+    await other.getByRole("button", { name: /鹭岛交接编号321/ }).click()
+    await expect(other.locator("article pre")).toHaveText(
+      "# 跨机资料\n鹭岛交接编号321"
+    )
+    await other.reload()
+    await other.getByText(/2 个文件 · 含失败项/).click()
+    await expect(other.getByText("异地交接.md · 已入库")).toBeVisible()
+    await other.getByRole("button", { name: "跨机资料", exact: true }).click()
+    other.once("dialog", (d) => d.accept())
+    await other.getByRole("button", { name: "归档文档" }).click()
+    await expect(other.getByText("还没有入库文档。")).toBeVisible()
+    await other.setViewportSize({ width: 375, height: 740 })
+    expect(
+      await other.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth
+      )
+    ).toBe(true)
+  } finally {
+    await rm(clientDir, { recursive: true, force: true })
+    await viewer.close()
+    await instance.stop()
   }
 })

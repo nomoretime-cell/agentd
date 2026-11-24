@@ -1,0 +1,66 @@
+.knowledge-page {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+.knowledge-page .panel {
+  padding: clamp(1rem, 3vw, 1.5rem);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.knowledge-page h2 {
+  margin-bottom: 0.55rem;
+}
+.knowledge-page small,
+.knowledge-limits {
+  color: var(--muted-ink);
+  font-size: 0.84rem;
+}
+.knowledge-page label {
+  display: grid;
+  gap: 0.4rem;
+  font-weight: 500;
+}
+.knowledge-page input,
+.knowledge-page select {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.45rem;
+  max-width: 100%;
+}
+.knowledge-page form,
+.knowledge-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
+.knowledge-drop {
+  display: grid;
+  gap: 0.6rem;
+  padding: 1rem;
+  border: 1px dashed var(--ring);
+  border-radius: 8px;
+  margin: 0.8rem 0;
+}
+.knowledge-page li,
+.knowledge-page details {
+  padding: 0.5rem 0;
+}
+.knowledge-page li .outline-btn {
+  margin-inline: 0.6rem;
+}
+.knowledge-page summary {
+  cursor: pointer;
+}
+.knowledge-page pre {
+  white-space: pre-wrap;
+  max-height: 24rem;
+  overflow: auto;
+  padding: 1rem;
+  background: var(--tint);
+  border-radius: 8px;
+}
