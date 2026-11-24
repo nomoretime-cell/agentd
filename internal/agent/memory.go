@@ -94,6 +94,9 @@ func (s *Service) workspaceWrite(name, content, expected string) error {
 func (s *Service) workspaceWriteIn(home, name, content, expected string) error {
 	s.memoryMu.Lock()
 	defer s.memoryMu.Unlock()
+	return s.writeWorkspaceLocked(home, name, content, expected, s.cfg.Limits.MaxOutputBytes)
+}
+func (s *Service) writeWorkspaceLocked(home, name, content, expected string, limit int) error {
 	name = path.Clean(name)
 	var dir, relative string
 	switch {
@@ -113,7 +116,7 @@ func (s *Service) workspaceWriteIn(home, name, content, expected string) error {
 	default:
 		return ErrDenied
 	}
-	if len(content) > s.cfg.Limits.MaxOutputBytes {
+	if len(content) > limit {
 		return errors.New("write exceeds output limit")
 	}
 	if name == "MEMORY.md" {

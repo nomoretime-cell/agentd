@@ -1,0 +1,89 @@
+.evolution-page {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+.evolution-page .panel {
+  padding: clamp(1rem, 3vw, 1.5rem);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.evolution-page h2,
+.evolution-page h3 {
+  margin-bottom: 0.65rem;
+}
+.evolution-page h3 {
+  margin-top: 1rem;
+}
+.evolution-page label {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.8rem 0;
+}
+.evolution-page input,
+.evolution-page select,
+.evolution-page textarea {
+  color: var(--foreground);
+  background: var(--background);
+  padding: 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  width: 100%;
+}
+.evolution-page textarea,
+.evolution-page pre {
+  font-family: monospace;
+}
+.evolution-page small,
+.evolution-page blockquote small {
+  color: var(--muted-foreground);
+}
+.evolution-page a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.evolution-page li,
+.evolution-page details {
+  padding: 0.35rem 0;
+}
+.evolution-page summary {
+  cursor: pointer;
+}
+.evolution-page pre {
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 25rem;
+  background: var(--muted);
+  padding: 0.8rem;
+  border-radius: 0.4rem;
+}
+.evolution-page blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 0.8rem;
+}
+.evolution-page blockquote small {
+  display: block;
+}
+.evo-actions,
+.evo-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.6rem 0;
+}
+.evo-row,
+.evo-draft {
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border);
+}
+.version-diff {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+  gap: 0.6rem;
+}
+.dashboard-views {
+  flex-wrap: wrap;
+  max-width: 100%;
+}

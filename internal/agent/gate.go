@@ -147,7 +147,7 @@ func (s *Service) Drafts() ([]draftInfo, error) {
 		if e != nil {
 			return nil, e
 		}
-		info.Files = files
+		info.Files = slices.DeleteFunc(files, func(file string) bool { return file == draftBase })
 		if d.Name() == identityDraft {
 			info.Kind = identityDraft
 			_, e = s.identityProposal()
@@ -226,23 +226,32 @@ func (s *Service) identityProposal() (string, error) {
 // Rejecting keeps the draft with the reason under skills-drafts/.rejected/,
 // where later consolidations read it before drafting again.
 func (s *Service) DecideDraft(name, decision, reason string) error {
+	s.memoryMu.Lock()
+	defer s.memoryMu.Unlock()
+	return s.decideDraftLocked(name, decision, reason)
+}
+func (s *Service) decideDraftLocked(name, decision, reason string) error {
+	if err := s.finishSkillPublish(); err != nil {
+		return err
+	}
 	if s.consolidating.Load() {
 		return fmt.Errorf("%w: a consolidation is running", ErrConflict)
 	}
 	if name == "" || strings.HasPrefix(name, ".") || strings.ContainsAny(name, `/\`) || !fileExists(s.draftDir(name)) {
 		return fmt.Errorf("%w: no draft %q", ErrConflict, name)
 	}
-	s.memoryMu.Lock()
-	defer s.memoryMu.Unlock()
 	stamp := time.Now().UTC().Format("20060102T150405.000000000Z")
 	entry := map[string]any{"ts": time.Now().UTC().Format(time.RFC3339), "draft": name, "decision": decision}
 	var err error
 	switch decision {
 	case "approve":
+		if err = s.checkDraftBase(name); err != nil {
+			return err
+		}
 		if name == identityDraft {
 			err = s.approveIdentity(stamp)
 		} else {
-			err = s.approveSkill(name, stamp)
+			return s.approveSkill(name, stamp, entry)
 		}
 	case "reject":
 		reason = strings.TrimSpace(reason)
@@ -271,21 +280,106 @@ func (s *Service) DecideDraft(name, decision, reason string) error {
 	return errors.Join(err, f.Close())
 }
 
-func (s *Service) approveSkill(name, stamp string) error {
+// Publication can span two directory renames. The marker binds both moves and
+// the exact audit-log offset so startup can finish an interrupted approval.
+const publishingSkill = "data/gate/publishing.json"
+
+type skillPublish struct {
+	Name         string
+	Stamp        string
+	HadWorkspace bool
+	LogOffset    int64
+	Entry        json.RawMessage
+}
+
+func (s *Service) approveSkill(name, stamp string, entry map[string]any) error {
 	if _, err := s.checkSkillDraft(name); err != nil {
 		return err
 	}
 	dst := filepath.Join(s.root, "workspace/skills", name)
-	if fileExists(dst) {
-		keep := filepath.Join(s.root, gateVersions, name, stamp)
-		if err := os.MkdirAll(filepath.Dir(keep), 0700); err != nil {
-			return err
+	p := skillPublish{Name: name, Stamp: stamp, HadWorkspace: fileExists(dst)}
+	p.Entry, _ = json.Marshal(entry)
+	if st, e := os.Stat(filepath.Join(s.root, gateLog)); e == nil {
+		p.LogOffset = st.Size()
+	} else if !errors.Is(e, fs.ErrNotExist) {
+		return e
+	}
+	if !p.HadWorkspace {
+		files, e := s.skillFiles(name)
+		if e != nil {
+			return e
 		}
-		if err := os.Rename(dst, keep); err != nil {
-			return err
+		for rel, body := range files {
+			f := filepath.Join(s.root, gateVersions, name, stamp, rel)
+			if e = os.MkdirAll(filepath.Dir(f), 0700); e != nil {
+				return e
+			}
+			if e = atomicWrite(f, []byte(body), 0600); e != nil {
+				return e
+			}
 		}
 	}
-	return errors.Join(os.Rename(s.draftDir(name), dst), syncDir(filepath.Join(s.root, "workspace/skills")))
+	raw, e := json.Marshal(p)
+	if e != nil {
+		return e
+	}
+	if e = atomicWrite(filepath.Join(s.root, publishingSkill), raw, 0600); e != nil {
+		return e
+	}
+	return s.finishSkillPublish()
+}
+func (s *Service) finishSkillPublish() error {
+	marker := filepath.Join(s.root, publishingSkill)
+	raw, e := os.ReadFile(marker)
+	if errors.Is(e, fs.ErrNotExist) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	var p skillPublish
+	if e = json.Unmarshal(raw, &p); e != nil {
+		return e
+	}
+	if !skillName.MatchString(p.Name) || !versionName(p.Stamp) || p.LogOffset < 0 {
+		return errors.New("invalid pending skill publication")
+	}
+	dst := filepath.Join(s.root, "workspace/skills", p.Name)
+	keep := filepath.Join(s.root, gateVersions, p.Name, p.Stamp)
+	if p.HadWorkspace && !fileExists(keep) {
+		if e = os.MkdirAll(filepath.Dir(keep), 0700); e != nil {
+			return e
+		}
+		if e = os.Rename(dst, keep); e != nil {
+			return e
+		}
+		if e = syncDir(filepath.Dir(keep)); e != nil {
+			return e
+		}
+	}
+	if !fileExists(dst) {
+		if e = os.Rename(s.draftDir(p.Name), dst); e != nil {
+			return e
+		}
+	}
+	if e = syncDir(filepath.Dir(dst)); e != nil {
+		return e
+	}
+	f, e := os.OpenFile(filepath.Join(s.root, gateLog), os.O_CREATE|os.O_RDWR, 0600)
+	if e != nil {
+		return e
+	}
+	_, e = f.WriteAt(append(p.Entry, '\n'), p.LogOffset)
+	if e == nil {
+		e = f.Sync()
+	}
+	if e = errors.Join(e, f.Close()); e != nil {
+		return e
+	}
+	if e = os.Remove(marker); e != nil {
+		return e
+	}
+	return syncDir(filepath.Dir(marker))
 }
 
 func (s *Service) approveIdentity(stamp string) error {

@@ -333,8 +333,8 @@ func historyLines(v string) []string {
 }
 
 type evidence struct {
-	Quote  string `yaml:"quote"`
-	Source string `yaml:"source"`
+	Quote  string `yaml:"quote" json:"quote"`
+	Source string `yaml:"source" json:"source"`
 }
 
 func parseEvidence(v string) ([]evidence, error) {
@@ -439,7 +439,12 @@ func walkStrings(v any, fn func(string)) {
 // promotes, holds or rejects it. A run that stopped at its step or context
 // limit is still checked: the skill records progress as it goes.
 func (s *Service) finishConsolidation(ev Event, out Outcome, runErr error) (Outcome, error) {
-	metric := map[string]any{"event": ev.ID, "model": s.cfg.StrongModel.Name}
+	metric := map[string]any{"event": ev.ID, "attempt": out.Attempt, "model": s.cfg.StrongModel.Name}
+	if ev.Payload.DreamProfile != "" {
+		m, _ := s.dreamModel(ev.Payload.DreamProfile)
+		metric["model"] = m.Name
+		metric["profile"] = ev.Payload.DreamProfile
+	}
 	if runErr != nil {
 		metric["run_error"] = s.bounded(runErr.Error())
 	}
@@ -448,6 +453,17 @@ func (s *Service) finishConsolidation(ev Event, out Outcome, runErr error) (Outc
 		metric["result"] = "failed"
 		s.recordConsolidation(metric)
 		return out, errors.Join(runErr, s.setAside(rejectedDir))
+	}
+	if err := s.checkBase(candidateDir); errors.Is(err, errStaleCandidate) {
+		if err = s.setAside(heldDir); err != nil {
+			return out, err
+		}
+		metric["result"] = "held"
+		metric["reason"] = "整理期间生效记忆已更新，候选需要重新生成"
+		s.recordConsolidation(metric)
+		return out, nil
+	} else if err != nil {
+		return out, err
 	}
 	cur, e := readMemory(filepath.Join(s.root, "workspace"))
 	if e != nil {
@@ -458,6 +474,11 @@ func (s *Service) finishConsolidation(ev Event, out Outcome, runErr error) (Outc
 		return out, e
 	}
 	r := s.reviewCandidate(cur, cand)
+	metric["new_notes"] = r.Added
+	metric["paths"] = append(append(append(slices.Clone(r.Added), r.Changed...), r.Retired...), r.Drafts...)
+	if cur["MEMORY.md"] != cand["MEMORY.md"] {
+		metric["paths"] = append(metric["paths"].([]string), "MEMORY.md")
+	}
 	idx := cand["MEMORY.md"]
 	metric["index_lines"], metric["index_bytes"] = lineCount(idx), len(idx)
 	metric["added"], metric["changed"], metric["retired"], metric["drafts"] = len(r.Added), len(r.Changed), len(r.Retired), len(r.Drafts)
@@ -636,9 +657,16 @@ func (s *Service) pruneVersions() error {
 // Each change keeps the memory it replaces as a version, so it can be undone.
 func (s *Service) MemoryControl(op string) error {
 	s.memoryMu.Lock()
-	defer s.memoryMu.Unlock()
+	err := s.memoryControlLocked(op)
+	s.memoryMu.Unlock()
+	if err == nil {
+		s.recordConsolidation(map[string]any{"result": op, "actor": "owner"})
+	}
+	return err
+}
+func (s *Service) memoryControlLocked(op string) error {
 	if s.consolidating.Load() {
-		return fmt.Errorf("%w: a consolidation is running", ErrConflict)
+		return ErrConflict
 	}
 	switch op {
 	case "promote":

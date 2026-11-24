@@ -440,3 +440,5 @@ always-on agent 没有天然的会话边界，需要人为切分，否则冻结�
 - [Graphiti](https://github.com/getzep/graphiti)：双时间有效期，失效而非删除
 - [LangMem](https://langchain-ai.github.io/langmem/concepts/conceptual_guide/)：语义 / 情景 / 程序记忆，热路径与后台写入
 - [Anthropic: Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval)、[sqlite-vec 混合检索](https://alexgarcia.xyz/blog/2024/sqlite-vec-hybrid-search/index.html)、[MarkItDown](https://github.com/microsoft/markitdown)、[Docling](https://docling-project.github.io/docling/)：knowledge 导入与检索
+
+W5 将现有整理、提升和技能草稿闸门接入单所有者工作台，支持按次选用服务端授权模型、查看运行时版本及按版本人工修订。手动与定时任务共用强模型权限和候选检查。见[所有者工作台 W5](92-convention-owner-workbench.md)。

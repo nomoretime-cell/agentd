@@ -108,6 +108,18 @@ export function RunEvidence({
                   {s.kind === "hit" && <small>命中字节偏移 {s.offset}</small>}
                   <pre>{s.text || "空内容"}</pre>
                   {s.truncated && <small>摘录已截断</small>}
+                  {["read", "document", "hit"].includes(s.kind) &&
+                    /^(MEMORY\.md$|IDENTITY\.md$|notes\/|skills\/)/.test(
+                      s.name
+                    ) && (
+                      <a
+                        href={
+                          "#evolution?" + new URLSearchParams({ path: s.name })
+                        }
+                      >
+                        查看当前条目与修订记录
+                      </a>
+                    )}
                 </details>
               ))}
             </div>

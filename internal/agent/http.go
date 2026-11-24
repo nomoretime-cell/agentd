@@ -21,6 +21,7 @@ func (s *Service) Handler() http.Handler {
 	workbench := http.NewServeMux()
 	s.registerWebChats(workbench)
 	s.registerKnowledgeUploads(workbench)
+	s.registerMemoryWorkbench(workbench)
 	mux.Handle("/", workbench)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
@@ -250,7 +251,9 @@ func (s *Service) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
-		if r.Method != "POST" || r.URL.Path != "/v1/knowledge/uploads" {
+		if r.Method == "POST" && r.URL.Path == "/v1/evolution/edit" {
+			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+		} else if r.Method != "POST" || r.URL.Path != "/v1/knowledge/uploads" {
 			r.Body = http.MaxBytesReader(w, r.Body, int64(s.cfg.Limits.MaxInputBytes+4096))
 		}
 		if r.URL.Path != "/healthz" {

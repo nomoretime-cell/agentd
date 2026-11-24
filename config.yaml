@@ -19,6 +19,16 @@ strong_model:
   max_steps: 40
   run_seconds: 1800
   max_context_bytes: 524288
+# Optional per-run Dreaming models. Each entry authorizes its endpoint to
+# process the same maintenance data as strong_model; scheduled runs still
+# use strong_model. Put endpoint credentials only in config.local.yaml.
+dream_models: {}
+# Example replacement for the empty mapping above:
+# dream_models:
+#  example:
+#    endpoint: "https://your-provider.example/v1/chat/completions"
+#    name: "your-enabled-model"
+#    timeout_seconds: 300
 # Imported reference material. Markdown and text import directly; other
 # formats (pdf, docx, pptx, xlsx, html, csv, epub) need a converter that takes
 # the file path as its last argument and prints Markdown, e.g. ["markitdown"].

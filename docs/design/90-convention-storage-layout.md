@@ -111,3 +111,5 @@
 2. ✅ **运行记录带作用域字段**（2026-11-23）：每条记录增加 `role`（固定为 `default`）、`principal`、`conversation`。不改目录，不改已有字段。
 3. **第二个角色出现时**：建立 `company/`、`roles/` 和虚拟路径映射，把单角色时的内容迁入 `roles/default/`。
 4. **第三阶段**：付费等级与知识集合的权限、提升闸门。
+
+工作台的记忆修订存入 `data/memory/edits/<修订号>.json`，包含操作人、来源和新旧版本哈希；正文按哈希保存在 `data/memory/edit-content/`。`data/memory/edit-pending.json` 用于恢复被中断的写入。技能批准时由 `data/gate/publishing.json` 记录目录替换和审批回执写入位置，重启后完成发布。新增或修订技能草稿的 `.owner-base` 记录起草时有效技能的版本。

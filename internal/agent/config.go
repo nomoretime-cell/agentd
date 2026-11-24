@@ -22,23 +22,24 @@ type Config struct {
 	IM struct {
 		Provider string `yaml:"provider"`
 	} `yaml:"im"`
-	WeCom              WeComConfig          `yaml:"wecom"`
-	NewsFeeds          []NewsFeed           `yaml:"news_feeds"`
-	OpenCodeBinary     string               `yaml:"opencode_binary"`
-	DingTalk           DingTalkConfig       `yaml:"dingtalk"`
-	WebOrigin          string               `yaml:"web_origin"`
-	Listen             string               `yaml:"listen"`
-	Model              ModelConfig          `yaml:"model"`
-	StrongModel        StrongModelConfig    `yaml:"strong_model"`
-	Knowledge          KnowledgeConfig      `yaml:"knowledge"`
-	Limits             Limits               `yaml:"limits"`
-	Timezone           string               `yaml:"timezone"`
-	Quiet              QuietHours           `yaml:"quiet_hours"`
-	DeliveryIntervalMS int                  `yaml:"delivery_interval_ms"`
-	DefaultTarget      string               `yaml:"default_target"`
-	Targets            map[string]Target    `yaml:"targets"`
-	Permissions        map[string]string    `yaml:"permissions"`
-	Actions            map[string]Operation `yaml:"actions"`
+	WeCom              WeComConfig            `yaml:"wecom"`
+	NewsFeeds          []NewsFeed             `yaml:"news_feeds"`
+	OpenCodeBinary     string                 `yaml:"opencode_binary"`
+	DingTalk           DingTalkConfig         `yaml:"dingtalk"`
+	WebOrigin          string                 `yaml:"web_origin"`
+	Listen             string                 `yaml:"listen"`
+	Model              ModelConfig            `yaml:"model"`
+	DreamModels        map[string]ModelConfig `yaml:"dream_models"`
+	StrongModel        StrongModelConfig      `yaml:"strong_model"`
+	Knowledge          KnowledgeConfig        `yaml:"knowledge"`
+	Limits             Limits                 `yaml:"limits"`
+	Timezone           string                 `yaml:"timezone"`
+	Quiet              QuietHours             `yaml:"quiet_hours"`
+	DeliveryIntervalMS int                    `yaml:"delivery_interval_ms"`
+	DefaultTarget      string                 `yaml:"default_target"`
+	Targets            map[string]Target      `yaml:"targets"`
+	Permissions        map[string]string      `yaml:"permissions"`
+	Actions            map[string]Operation   `yaml:"actions"`
 }
 type ModelConfig struct {
 	Endpoint       string `yaml:"endpoint"`
@@ -160,6 +161,17 @@ func (c Config) Validate() error {
 	}
 	if e := c.StrongModel.validate(); e != nil {
 		return fmt.Errorf("strong_model: %w", e)
+	}
+	for id, model := range c.DreamModels {
+		if id == "default" || !skillName.MatchString(id) {
+			return errors.New("invalid dream_models profile id")
+		}
+		profile := c.StrongModel
+		profile.Enabled = true
+		profile.ModelConfig = model
+		if e := profile.validate(); e != nil {
+			return fmt.Errorf("dream_models %s: %w", id, e)
+		}
 	}
 	if c.Knowledge.ConverterSeconds < 1 {
 		return errors.New("knowledge.converter_seconds must be positive")

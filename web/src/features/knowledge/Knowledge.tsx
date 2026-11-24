@@ -25,7 +25,11 @@ function size(n: number) {
       ? Math.ceil(n / 1024) + " KiB"
       : (n / (1 << 20)).toFixed(1) + " MiB"
 }
-export function Knowledge() {
+export function Knowledge({
+  initialDocument = "",
+}: {
+  initialDocument?: string
+}) {
   const client = useQueryClient()
   const docs = useQuery({
     queryKey: ["knowledge", "library"],
@@ -63,7 +67,7 @@ export function Knowledge() {
   })
   const [text, setText] = useState(""),
     [query, setQuery] = useState(""),
-    [selected, setSelected] = useState(""),
+    [selected, setSelected] = useState(initialDocument),
     [path, setPath] = useState("")
   const search = useQuery({
     queryKey: ["knowledge", "search", query],
@@ -406,6 +410,7 @@ export function Knowledge() {
         {detail.data && (
           <article>
             <h3>{detail.data.document.title}</h3>
+            <small>入库版本 SHA-256 · {detail.data.document.sha256}</small>
             <pre>{detail.data.body}</pre>
             <div className="knowledge-actions">
               <Button variant="outline" onClick={() => setSelected("")}>

@@ -161,7 +161,18 @@ func (s *Service) execute(ctx context.Context, batch []Event) (out Outcome, err 
 // history and no record of messages sent elsewhere.
 func (s *Service) executeCritical(ctx context.Context, ev Event) (Outcome, error) {
 	out := Outcome{Scope: maintenanceScope}
-	if s.strong == nil {
+	model := s.strong
+	if ev.Payload.DreamProfile != "" {
+		cfg, ok := s.dreamModel(ev.Payload.DreamProfile)
+		if !ok || modelVersion(cfg) != ev.Payload.DreamVersion {
+			return out, errors.New("所选整理模型配置已改变或停用")
+		}
+		if ev.Payload.DreamProfile != "default" {
+			model = newStandardModel(cfg)
+		}
+		ctx = context.WithValue(ctx, dreamNameKey{}, cfg.Name)
+	}
+	if model == nil {
 		return out, errors.New("strong_model is not enabled; critical actions never run on the default model")
 	}
 	ctx = context.WithValue(ctx, scopeKey{}, out.Scope)
@@ -170,14 +181,21 @@ func (s *Service) executeCritical(ctx context.Context, ev Event) (Outcome, error
 	messages := []Message{{Role: "system", Content: s.capturedPrompt(false, captureFrom(ctx)) + criticalGuide}, {Role: "user", Content: input}}
 	sm := s.cfg.StrongModel
 	if ev.Payload.Kind != kindConsolidation {
-		return s.runModel(ctx, s.strong, sm.MaxSteps, sm.MaxContextBytes, ev, messages, input, out)
+		return s.runModel(ctx, model, sm.MaxSteps, sm.MaxContextBytes, ev, messages, input, out)
 	}
-	s.consolidating.Store(true)
+	if !s.consolidating.CompareAndSwap(false, true) {
+		return out, ErrConflict
+	}
 	defer s.consolidating.Store(false)
 	if err := s.prepareCandidate(); err != nil {
 		return out, err
 	}
-	out, err := s.runModel(context.WithValue(ctx, candidateKey{}, true), s.strong, sm.MaxSteps, sm.MaxContextBytes, ev, messages, input, out)
+	out, err := s.runModel(context.WithValue(ctx, candidateKey{}, true), model, sm.MaxSteps, sm.MaxContextBytes, ev, messages, input, out)
+	if sc, ok := ctx.Value(callScopeKey{}).(callScope); ok {
+		out.Attempt = sc.Attempt
+	}
+	s.dreamChecking.Store(true)
+	defer s.dreamChecking.Store(false)
 	return s.finishConsolidation(ev, out, err)
 }
 
@@ -409,7 +427,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if e := fileAccess(ctx, a.Path); e != nil {
 			return "", nil, e
 		}
-		e := s.workspaceWriteIn(s.memoryHome(ctx), a.Path, a.Content, a.Expected)
+		e := s.runWorkspaceWrite(ctx, a.Path, a.Content, a.Expected)
 		return "file saved", nil, e
 	case "edit_file":
 		var a struct {
@@ -434,7 +452,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if digest(b) != a.Expected {
 			return "", nil, ErrConflict
 		}
-		return "file edited", nil, s.workspaceWriteIn(s.memoryHome(ctx), a.Path, strings.Replace(string(b), a.Old, a.New, 1), a.Expected)
+		return "file edited", nil, s.runWorkspaceWrite(ctx, a.Path, strings.Replace(string(b), a.Old, a.New, 1), a.Expected)
 	case "set_timer":
 		if target, _ := ctx.Value(imTargetKey{}).(string); target != "" {
 			return "", nil, errors.New("Scheduled IM replies are unavailable. No timer was created.")

@@ -38,6 +38,11 @@ const OwnerChat = lazy(() =>
   import("./features/chat/OwnerChat").then((m) => ({ default: m.OwnerChat }))
 )
 
+const Evolution = lazy(() =>
+  import("./features/evolution/Evolution").then((m) => ({
+    default: m.Evolution,
+  }))
+)
 const Knowledge = lazy(() =>
   import("./features/knowledge/Knowledge").then((m) => ({
     default: m.Knowledge,
@@ -63,14 +68,17 @@ export function Overview() {
   const runtimeView = hash === "#runtime"
   const runsView = hash === "#runs" || hash.startsWith("#runs?")
   const chatView = hash === "#chat" || hash.startsWith("#chat?")
-  const knowledgeView = hash === "#knowledge"
-  const pageTitle = knowledgeView
-    ? "知识库"
-    : chatView
-      ? "对话"
-      : runsView
-        ? "会话与运行"
-        : "工作概览"
+  const evoView = hash === "#evolution" || hash.startsWith("#evolution?")
+  const knowledgeView = hash === "#knowledge" || hash.startsWith("#knowledge?")
+  const pageTitle = evoView
+    ? "记忆与技能"
+    : knowledgeView
+      ? "知识库"
+      : chatView
+        ? "对话"
+        : runsView
+          ? "会话与运行"
+          : "工作概览"
   const routeParams = new URLSearchParams(
     hash.slice(runsView || chatView ? 6 : 1)
   )
@@ -134,7 +142,7 @@ export function Overview() {
           <span className="nav-label">工作台</span>
           <a
             className={
-              runtimeView || runsView || chatView || knowledgeView
+              runtimeView || runsView || chatView || knowledgeView || evoView
                 ? undefined
                 : "nav-main"
             }
@@ -167,6 +175,14 @@ export function Overview() {
           >
             <BookOpenCheck size={17} />
             知识库
+          </a>
+          <a
+            href="#evolution"
+            title="记忆与技能"
+            className={evoView ? "nav-main" : undefined}
+          >
+            <BookOpenCheck size={17} />
+            记忆与技能
           </a>
           <span className="nav-label">运行管理</span>
           <a href="#trend" title="每日活动">
@@ -212,7 +228,7 @@ export function Overview() {
             <div>
               <h1>{pageTitle}</h1>
             </div>
-            {!runsView && !chatView && !knowledgeView && (
+            {!runsView && !chatView && !evoView && !knowledgeView && (
               <div className="head-actions">
                 <a className="outline-btn" href="#knowledge">
                   上传知识
@@ -244,6 +260,7 @@ export function Overview() {
           </div>
           {!runsView &&
             !chatView &&
+            !evoView &&
             !knowledgeView &&
             (status.error || work.error) && (
               <p role="alert">{(status.error || work.error)?.message}</p>
@@ -252,7 +269,7 @@ export function Overview() {
             <a
               href="#overview"
               aria-current={
-                runtimeView || runsView || chatView || knowledgeView
+                runtimeView || runsView || chatView || knowledgeView || evoView
                   ? undefined
                   : "page"
               }
@@ -271,13 +288,27 @@ export function Overview() {
             >
               知识库
             </a>
+            <a href="#evolution" aria-current={evoView ? "page" : undefined}>
+              记忆与技能
+            </a>
             <a href="#runtime" aria-current={runtimeView ? "page" : undefined}>
               运行信息
             </a>
           </nav>
+          {evoView && (
+            <Suspense fallback={<p role="status">正在读取记忆与技能…</p>}>
+              <Evolution
+                path={new URLSearchParams(hash.split("?")[1]).get("path") || ""}
+              />
+            </Suspense>
+          )}
           {knowledgeView && (
             <Suspense fallback={<p role="status">正在打开知识库…</p>}>
-              <Knowledge />
+              <Knowledge
+                initialDocument={
+                  new URLSearchParams(hash.split("?")[1]).get("doc") || ""
+                }
+              />
             </Suspense>
           )}
           {chatView && (
@@ -293,112 +324,119 @@ export function Overview() {
               <RunHistory search={hash.slice(6)} />
             </Suspense>
           )}
-          {!runtimeView && !runsView && !chatView && !knowledgeView && (
-            <DailyActivity
-              pending={
-                work.data &&
-                Object.values(work.data.counts).reduce((n, v) => n + v, 0)
-              }
-            >
-              <section className="panel queue" id="queue">
-                <div className="section-head">
-                  <div>
-                    <h2>{categories[kind]}</h2>
-                    <p className="muted">当前待处理事项</p>
-                  </div>
-                  <span className="counter">
-                    {work.data ? selectedCount : "—"} 项
-                  </span>
-                </div>
-                <div className="queue-choices">
-                  {kinds.map((k) => {
-                    const Icon = icons[k]
-                    return (
-                      <button
-                        key={k}
-                        aria-pressed={kind === k}
-                        onClick={() => select(k)}
-                      >
-                        <Icon size={14} />
-                        {categories[k]}{" "}
-                        {work.data ? formatNumber(work.data.counts[k]) : "—"}
-                      </button>
-                    )
-                  })}
-                </div>
-                {work.isPending && (
-                  <p className="empty" role="status">
-                    正在读取待办…
-                  </p>
-                )}
-                {work.data && !work.data.items.length && (
-                  <div className="empty">
-                    <span className="empty-icon">
-                      <CheckCheck size={23} />
+          {!runtimeView &&
+            !runsView &&
+            !chatView &&
+            !evoView &&
+            !knowledgeView && (
+              <DailyActivity
+                pending={
+                  work.data &&
+                  Object.values(work.data.counts).reduce((n, v) => n + v, 0)
+                }
+              >
+                <section className="panel queue" id="queue">
+                  <div className="section-head">
+                    <div>
+                      <h2>{categories[kind]}</h2>
+                      <p className="muted">当前待处理事项</p>
+                    </div>
+                    <span className="counter">
+                      {work.data ? selectedCount : "—"} 项
                     </span>
-                    <strong>
-                      {selectedCount ? "本页已处理完毕" : "当前没有此类待办"}
-                    </strong>
                   </div>
-                )}
-                <ul className="queue-list">
-                  {work.data?.items.map((item) => (
-                    <li key={item.id}>
+                  <div className="queue-choices">
+                    {kinds.map((k) => {
+                      const Icon = icons[k]
+                      return (
+                        <button
+                          key={k}
+                          aria-pressed={kind === k}
+                          onClick={() => select(k)}
+                        >
+                          <Icon size={14} />
+                          {categories[k]}{" "}
+                          {work.data ? formatNumber(work.data.counts[k]) : "—"}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {work.isPending && (
+                    <p className="empty" role="status">
+                      正在读取待办…
+                    </p>
+                  )}
+                  {work.data && !work.data.items.length && (
+                    <div className="empty">
+                      <span className="empty-icon">
+                        <CheckCheck size={23} />
+                      </span>
+                      <strong>
+                        {selectedCount ? "本页已处理完毕" : "当前没有此类待办"}
+                      </strong>
+                    </div>
+                  )}
+                  <ul className="queue-list">
+                    {work.data?.items.map((item) => (
+                      <li key={item.id}>
+                        <button
+                          onClick={(e) => inspect(item, e.currentTarget)}
+                          className="item"
+                        >
+                          <div className="item-icon">
+                            <Boxes size={17} />
+                          </div>
+                          <div className="item-body">
+                            <strong>
+                              {kind === "actions" && item.detail
+                                ? item.detail
+                                : item.title}
+                            </strong>
+                            <small>
+                              {kind === "actions"
+                                ? item.title
+                                : item.detail || item.id}
+                            </small>
+                          </div>
+                          <span className="pill">
+                            {statusNames[item.status] ?? item.status}
+                          </span>
+                          <ArrowUpRight size={15} />
+                        </button>
+                        {expanded === item.id && (
+                          <div className="inline-detail">
+                            <code>{item.id}</code>
+                            <p>{item.detail || "无补充说明"}</p>
+                            {kind === "drafts" && (
+                              <a href="#evolution">审阅草稿差异</a>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {(offset > 0 || selectedCount > 20) && (
+                    <div className="pagination">
                       <button
-                        onClick={(e) => inspect(item, e.currentTarget)}
-                        className="item"
+                        aria-label="上一页"
+                        disabled={!offset}
+                        onClick={() => setOffset(Math.max(0, offset - 20))}
                       >
-                        <div className="item-icon">
-                          <Boxes size={17} />
-                        </div>
-                        <div className="item-body">
-                          <strong>
-                            {kind === "actions" && item.detail
-                              ? item.detail
-                              : item.title}
-                          </strong>
-                          <small>
-                            {kind === "actions"
-                              ? item.title
-                              : item.detail || item.id}
-                          </small>
-                        </div>
-                        <span className="pill">
-                          {statusNames[item.status] ?? item.status}
-                        </span>
-                        <ArrowUpRight size={15} />
+                        <ArrowLeft size={15} />
                       </button>
-                      {expanded === item.id && (
-                        <div className="inline-detail">
-                          <code>{item.id}</code>
-                          <p>{item.detail || "无补充说明"}</p>
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-                {(offset > 0 || selectedCount > 20) && (
-                  <div className="pagination">
-                    <button
-                      aria-label="上一页"
-                      disabled={!offset}
-                      onClick={() => setOffset(Math.max(0, offset - 20))}
-                    >
-                      <ArrowLeft size={15} />
-                    </button>
-                    <span>第 {offset / 20 + 1} 页</span>
-                    <button
-                      aria-label="下一页"
-                      disabled={offset + 20 >= selectedCount}
-                      onClick={() => setOffset(offset + 20)}
-                    >
-                      <ArrowRight size={15} />
-                    </button>
-                  </div>
-                )}
-              </section>
-            </DailyActivity>
-          )}
+                      <span>第 {offset / 20 + 1} 页</span>
+                      <button
+                        aria-label="下一页"
+                        disabled={offset + 20 >= selectedCount}
+                        onClick={() => setOffset(offset + 20)}
+                      >
+                        <ArrowRight size={15} />
+                      </button>
+                    </div>
+                  )}
+                </section>
+              </DailyActivity>
+            )}
           <section className="panel runtime" id="runtime" hidden={!runtimeView}>
             <div className="section-head">
               <div>
@@ -442,12 +480,16 @@ export function Overview() {
             )}
           </section>
           {runtimeView && <LedgerChart counts={service?.counts} />}
-          {!runsView && !chatView && !knowledgeView && !!updated && (
-            <div className="timestamp">
-              待办与运行状态更新于{" "}
-              {new Date(updated).toLocaleTimeString("zh-CN")}
-            </div>
-          )}
+          {!runsView &&
+            !chatView &&
+            !evoView &&
+            !knowledgeView &&
+            !!updated && (
+              <div className="timestamp">
+                待办与运行状态更新于{" "}
+                {new Date(updated).toLocaleTimeString("zh-CN")}
+              </div>
+            )}
         </div>
       </main>
       {actionID && (

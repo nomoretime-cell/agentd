@@ -70,12 +70,14 @@ type Payload struct {
 	// Embedded field order is part of the stored format: insertEvent compares payload bytes.
 	ownerScope
 	imRoutes
-	Kind      string          `json:"kind"`
-	Text      string          `json:"text,omitempty"`
-	ActionID  string          `json:"action_id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
-	WebChat   string          `json:"web_chat,omitempty"`
+	Kind         string          `json:"kind"`
+	Text         string          `json:"text,omitempty"`
+	ActionID     string          `json:"action_id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	Arguments    json.RawMessage `json:"arguments,omitempty"`
+	WebChat      string          `json:"web_chat,omitempty"`
+	DreamProfile string          `json:"dream_profile,omitempty"`
+	DreamVersion string          `json:"dream_version,omitempty"`
 }
 type Timer struct {
 	ID     string `json:"id"`

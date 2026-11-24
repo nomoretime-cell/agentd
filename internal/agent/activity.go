@@ -101,6 +101,9 @@ func (s *Service) completeMeasured(ctx context.Context, m Model, messages []Mess
 	name := s.cfg.Model.Name
 	if isCritical(ctx) {
 		name = s.cfg.StrongModel.Name
+		if selected, ok := ctx.Value(dreamNameKey{}).(string); ok {
+			name = selected
+		}
 	}
 	c, err := s.startCall(ctx, "native", name)
 	if err != nil {

@@ -1,4 +1,5 @@
 // Start the release binary with only synthetic data and loopback dependencies.
+import { createHash } from "node:crypto"
 import { createServer } from "node:http"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
@@ -12,7 +13,7 @@ async function listen(server) {
   await once(server, "listening")
   return "http://127.0.0.1:" + server.address().port
 }
-export async function startInstance(webOrigin) {
+export async function startInstance(webOrigin, dreaming = false) {
   const cache = join(repo, ".cache")
   await mkdir(cache, { recursive: true })
   const root = await mkdtemp(join(cache, "web-preview-"))
@@ -26,7 +27,7 @@ export async function startInstance(webOrigin) {
     } else if (req.url === "/chat/completions") {
       const chunks = []
       for await (const chunk of req) chunks.push(chunk)
-      const { messages } = JSON.parse(Buffer.concat(chunks).toString())
+      const { messages, model } = JSON.parse(Buffer.concat(chunks).toString())
       let message = { role: "assistant", content: "已记录处理结果。" }
       if (messages[0]?.content.includes("owner's web conversation")) {
         const users = messages.filter((m) => m.role === "user")
@@ -59,6 +60,35 @@ export async function startInstance(webOrigin) {
             "本会话上一条消息是：" + (users.at(-2)?.content ?? "尚无历史消息")
         else message.content = "收到，" + current
       }
+      if (dreaming && model === "openai") {
+        if (messages.at(-1)?.role === "tool") await delay(4500)
+        else {
+          const current = await readFile(
+            join(root, "workspace/MEMORY.md"),
+            "utf8"
+          )
+          message = {
+            role: "assistant",
+            content: "",
+            tool_calls: [
+              {
+                id: "memory-test",
+                type: "function",
+                function: {
+                  name: "write_file",
+                  arguments: JSON.stringify({
+                    path: "MEMORY.md",
+                    content: current + "\n已核实的交接习惯",
+                    expected_hash: createHash("sha256")
+                      .update(current)
+                      .digest("hex"),
+                  }),
+                },
+              },
+            ],
+          }
+        }
+      }
       res.end(
         JSON.stringify({
           usage: { prompt_tokens: 24, completion_tokens: 8, total_tokens: 32 },
@@ -81,6 +111,18 @@ export async function startInstance(webOrigin) {
       listen: new URL(url).host,
       web_origin: webOrigin,
       model: { endpoint: stubURL + "/chat/completions", name: "本地演示模型" },
+      ...(dreaming && {
+        dream_models: Object.fromEntries(
+          ["openai", "gemini"].map((id) => [
+            id,
+            {
+              endpoint: stubURL + "/chat/completions",
+              name: id,
+              timeout_seconds: 10,
+            },
+          ])
+        ),
+      }),
       actions: {
         create_ticket: {
           url: stubURL + "/action",

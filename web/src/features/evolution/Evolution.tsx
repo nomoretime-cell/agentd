@@ -1,0 +1,399 @@
+import { useRef, useState } from "react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { z } from "zod"
+import { request } from "@/api"
+import { Button } from "@/components/ui/button"
+import {
+  board,
+  entryLink,
+  labels,
+  requestKey,
+  when,
+  type Board,
+  type Delta,
+} from "./data"
+import { MemoryDocument } from "./MemoryDocument"
+import { VersionDiff } from "./VersionDiff"
+import "./evolution.css"
+function Changes({ changes }: { changes: Delta[] }) {
+  return changes.map((c) => (
+    <details key={c.path}>
+      <summary>{c.path}</summary>
+      <VersionDiff before={c.before} after={c.after} />
+    </details>
+  ))
+}
+function Review({ data }: { data: Board }) {
+  const client = useQueryClient(),
+    [reason, setReason] = useState<Record<string, string>>({})
+  const action = useMutation({
+    mutationFn: (body: {
+      name: string
+      decision: string
+      token: string
+      reason: string
+    }) =>
+      request("evolution/review", z.object({ decision: z.string() }), {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (_, req) => {
+      if (
+        req.name &&
+        location.hash === entryLink("skills-drafts/" + req.name + "/SKILL.md")
+      )
+        location.hash =
+          req.decision === "approve"
+            ? entryLink("skills/" + req.name + "/SKILL.md")
+            : "#evolution"
+    },
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ["evolution"] })
+    },
+  })
+  function decide(name: string, decision: string, token: string) {
+    if (window.confirm("确认" + (labels[decision] ?? decision) + "？"))
+      action.mutate({ name, decision, token, reason: reason[name] || "" })
+  }
+  const c = data.candidate
+  return (
+    <section className="panel">
+      <h2>候选与审核</h2>
+      {c.stage ? (
+        <>
+          <p>
+            {data.checking ? "检查候选" : labels[c.stage]}
+            {c.stale ? " · 和当前基线不一致" : ""}
+          </p>
+          <Changes changes={c.changes} />
+        </>
+      ) : (
+        <p className="muted">当前没有整理候选。</p>
+      )}
+      <div className="evo-actions">
+        {c.stage === "held" && (
+          <>
+            <Button
+              disabled={data.working || c.stale || action.isPending}
+              onClick={() => decide("", "promote", c.token)}
+            >
+              提升候选
+            </Button>
+            <Button
+              variant="outline"
+              disabled={data.working || action.isPending}
+              onClick={() => decide("", "discard", c.token)}
+            >
+              丢弃候选
+            </Button>
+          </>
+        )}
+        {data.versions > 0 && (
+          <Button
+            variant="outline"
+            disabled={data.working || action.isPending}
+            onClick={() => decide("", "rollback", c.token)}
+          >
+            回滚至上一版记忆
+          </Button>
+        )}
+      </div>
+      {data.drafts.map((d) => (
+        <div className="evo-draft" key={d.name}>
+          <h3>待审草稿 · {d.name}</h3>
+          <Changes changes={d.changes} />
+          {d.problem && <p role="alert">{d.problem}</p>}
+          <label>
+            驳回理由
+            <input
+              value={reason[d.name] || ""}
+              onChange={(e) =>
+                setReason({ ...reason, [d.name]: e.target.value })
+              }
+            />
+          </label>
+          <div className="evo-actions">
+            <Button
+              disabled={!!d.problem || action.isPending || data.working}
+              onClick={() => decide(d.name, "approve", d.token)}
+            >
+              批准发布
+            </Button>
+            <Button
+              variant="outline"
+              disabled={
+                !reason[d.name]?.trim() || action.isPending || data.working
+              }
+              onClick={() => decide(d.name, "reject", d.token)}
+            >
+              驳回草稿
+            </Button>
+          </div>
+        </div>
+      ))}
+      {action.error && <p role="alert">{action.error.message}</p>}
+    </section>
+  )
+}
+function Dreaming({ data }: { data: Board }) {
+  const client = useQueryClient(),
+    [choice, setChoice] = useState(""),
+    key = useRef(""),
+    [event, setEvent] = useState(0)
+  const selected = data.models.find(
+    (m) => m.id === (choice || data.models[0]?.id)
+  )
+  const send = useMutation({
+    mutationFn: async () => {
+      if (!selected) throw Error("请选择可用模型")
+      const pending = "agentd-dream-" + selected.version
+      key.current ||= sessionStorage.getItem(pending) || requestKey()
+      sessionStorage.setItem(pending, key.current)
+      return request("evolution/dream", z.object({ event: z.number() }), {
+        method: "POST",
+        body: JSON.stringify({
+          profile: selected.id,
+          version: selected.version,
+          key: key.current,
+        }),
+      })
+    },
+    onSuccess: (r) => {
+      if (selected)
+        sessionStorage.removeItem("agentd-dream-" + selected.version)
+      setEvent(r.event)
+      key.current = ""
+      void client.invalidateQueries({ queryKey: ["evolution"] })
+    },
+  })
+  return (
+    <section className="panel">
+      <h2>Dreaming 记忆整理</h2>
+      {selected ? (
+        <>
+          <label>
+            整理模型
+            <select
+              value={selected.id}
+              onChange={(e) => {
+                setChoice(e.target.value)
+                key.current = ""
+              }}
+            >
+              {data.models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.id} · {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="muted">
+            本次由 {selected.host}{" "}
+            处理。可读取当前记忆、规则、知识资料，以及符合外发范围的所有者私聊和本地运行记录。
+          </p>
+        </>
+      ) : (
+        <p className="muted">
+          服务器尚未配置可用于整理的模型。可在服务端启用 strong_model 或配置
+          dream_models。
+        </p>
+      )}
+      <Button
+        disabled={
+          !selected ||
+          send.isPending ||
+          data.working ||
+          data.runs.some(
+            (r) => r.state === "pending" || r.state === "running"
+          ) ||
+          (data.candidate.stage === "held" && !data.candidate.stale)
+        }
+        onClick={() => send.mutate()}
+      >
+        立即整理
+      </Button>
+      {event !== 0 && <p role="status">已提交整理任务 #{event}</p>}
+      {send.error && <p role="alert">{send.error.message}</p>}
+      {data.runs.map((r) => (
+        <div className="evo-row" key={r.event}>
+          <strong>
+            #{r.event} · {r.trigger} · {r.profile}
+          </strong>
+          <span>
+            {labels[r.state] ?? r.state} · {when(r.ts)}
+          </span>
+          {r.run && (
+            <a href={"#runs?run=" + encodeURIComponent(r.run)}>查看运行依据</a>
+          )}
+          {r.error && <small>{r.error}</small>}
+        </div>
+      ))}
+    </section>
+  )
+}
+export function Evolution({ path }: { path: string }) {
+  const q = useQuery({
+    queryKey: ["evolution", "board"],
+    queryFn: ({ signal }) => request("evolution", board, { signal }),
+    refetchInterval: 3000,
+  })
+  const [days, setDays] = useState(7),
+    [tab, setTab] = useState("全部")
+  const [group, setGroup] = useState("全部")
+  const data = q.data
+  if (!data)
+    return <p role="status">{q.error?.message || "正在读取记忆与技能…"}</p>
+  const history = [
+    ...data.metrics.map((m, i) => ({
+      id: "m" + i,
+      ts: m.ts,
+      group: ["failed", "rejected", "held"].includes(m.result ?? "")
+        ? "需核对"
+        : "记忆整理",
+      title: labels[m.result ?? ""] || m.result || "整理",
+      detail: [
+        m.model,
+        ...(m.paths ?? []),
+        m.reason,
+        m.hold,
+        m.run_error,
+        ...(m.failures ?? []),
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      href: m.event
+        ? m.attempt
+          ? "#runs?run=" + m.event + "~" + m.attempt
+          : "#runs?event=" + m.event
+        : "",
+    })),
+    ...data.decisions.map((d, i) => ({
+      id: "d" + i,
+      ts: d.ts,
+      group: "技能与规则",
+      title: labels[d.decision] || d.decision,
+      detail: d.draft + (d.reason ? " · " + d.reason : ""),
+      href:
+        d.decision === "approve"
+          ? entryLink(
+              d.draft === "identity"
+                ? "IDENTITY.md"
+                : "skills/" + d.draft + "/SKILL.md"
+            )
+          : "",
+    })),
+    ...data.edits.map((r) => ({
+      id: r.id,
+      ts: r.ts,
+      group: "文件修订",
+      title: r.actor === "owner" ? "人工修订" : "运行写入",
+      detail: r.path + " · " + r.version.slice(0, 12),
+      href:
+        r.event && r.attempt
+          ? "#runs?run=" + r.event + "~" + r.attempt
+          : entryLink(
+              r.path.startsWith("skills-drafts/") &&
+                !data.entries.some((e) => e.path === r.path)
+                ? r.path.replace("skills-drafts/", "skills/")
+                : r.path
+            ),
+    })),
+  ]
+    .filter((r) => Date.parse(r.ts) >= q.dataUpdatedAt - days * 86400000)
+    .sort((a, b) => b.ts.localeCompare(a.ts))
+  return (
+    <div className="evolution-page">
+      {q.error && <p role="alert">{q.error.message}</p>}
+      <section className="panel">
+        <h2>生效条目与草稿</h2>
+        <label>
+          条目类型
+          <select value={tab} onChange={(e) => setTab(e.target.value)}>
+            {["全部", ...new Set(data.entries.map((e) => e.source))].map(
+              (x) => (
+                <option key={x}>{x}</option>
+              )
+            )}
+          </select>
+        </label>
+        <ul>
+          {data.entries
+            .filter((e) => tab === "全部" || e.source === tab)
+            .map((e) => (
+              <li key={e.path}>
+                <a
+                  href={entryLink(e.path)}
+                  aria-current={path === e.path ? "page" : undefined}
+                >
+                  {e.path}
+                </a>{" "}
+                <small>{e.source}</small>
+              </li>
+            ))}
+        </ul>
+      </section>
+      {path && <MemoryDocument key={path} path={path} edits={data.edits} />}
+      <Dreaming data={data} />
+      <Review data={data} />
+      <section className="panel">
+        <h2>变化记录</h2>
+        <label>
+          时间范围
+          <select
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+          >
+            <option value={7}>近 7 天</option>
+            <option value={30}>近 30 天</option>
+          </select>
+        </label>
+        <div className="evo-actions">
+          {["全部", "记忆整理", "技能与规则", "文件修订", "需核对"].map((g) => (
+            <Button
+              key={g}
+              variant={g === group ? "default" : "outline"}
+              aria-pressed={g === group}
+              onClick={() => setGroup(g)}
+            >
+              {g} ·{" "}
+              {history.filter((r) => g === "全部" || r.group === g).length}
+            </Button>
+          ))}
+        </div>
+        {data.metrics
+          .filter(
+            (m) =>
+              ["promoted", "promote"].includes(m.result ?? "") &&
+              Date.parse(m.ts) >= q.dataUpdatedAt - days * 86400000 &&
+              !!m.new_notes?.length
+          )
+          .map((m, i) => (
+            <p key={i}>
+              整理新增笔记 ·{" "}
+              {m.new_notes?.map((p) => (
+                <a key={p} href={entryLink(p)}>
+                  {p}{" "}
+                </a>
+              ))}
+            </p>
+          ))}
+        {!history.some((r) => group === "全部" || r.group === group) && (
+          <p className="muted">所选范围内没有已记录的变化。</p>
+        )}
+        {history
+          .filter((r) => group === "全部" || r.group === group)
+          .map((r) => (
+            <div className="evo-row" key={r.id}>
+              <strong>{r.title}</strong>
+              <small>{when(r.ts)}</small>
+              <span>{r.detail}</span>
+              {r.href && <a href={r.href}>查看详情</a>}
+            </div>
+          ))}
+        <small>
+          显示最近 100 次文件修订及各 80 条整理和审核回执。旧记录可能缺少来源。
+        </small>
+      </section>
+    </div>
+  )
+}

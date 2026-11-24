@@ -423,3 +423,83 @@ test("从访问电脑上传，另一个浏览器能检索服务器原件的正�
     await instance.stop()
   }
 })
+
+test("记忆可追溯地修订，过期编辑保留，技能审批后生效，整理按所选模型执行", async ({
+  page,
+  browser,
+}) => {
+  const instance = await startInstance(undefined, true)
+  const context = await browser.newContext()
+  try {
+    await page.goto(instance.url + "/#evolution?path=MEMORY.md")
+    const second = await context.newPage()
+    await second.goto(page.url())
+    for (const tab of [page, second])
+      await tab.getByRole("button", { name: "编辑内容" }).click()
+    await second.getByLabel("修订正文").fill("第二份未提交编辑")
+    await page.getByLabel("修订正文").fill("工作台人工修订")
+    await page.getByRole("button", { name: "保存记忆修订" }).click()
+    await expect(page.locator(".memory-body")).toHaveText("工作台人工修订")
+    await expect(second.getByText(/服务器已有新版本/)).toBeVisible({
+      timeout: 12000,
+    })
+    await expect(second.getByLabel("修订正文")).toHaveValue("第二份未提交编辑")
+    await page.getByLabel("历史版本").selectOption({ index: 1 })
+    await page.getByRole("button", { name: "以此版本起草修订" }).click()
+    await page.getByRole("button", { name: "保存记忆修订" }).click()
+    await expect(page.locator(".memory-body")).not.toHaveText("工作台人工修订")
+    await page
+      .getByRole("link", {
+        name: "skills/memory-consolidation/SKILL.md",
+        exact: true,
+      })
+      .click()
+    await page.getByRole("button", { name: "起草技能修订" }).click()
+    const body = page.getByLabel("修订正文")
+    await body.fill((await body.inputValue()) + "\n经人工复核的修订")
+    await page.getByRole("button", { name: "保存待审草稿" }).click()
+    await expect(
+      page.getByRole("heading", { name: "待审草稿 · memory-consolidation" })
+    ).toBeVisible()
+    page.once("dialog", (d) => d.accept())
+    await page.getByRole("button", { name: "批准发布" }).click()
+    await page
+      .getByRole("link", {
+        name: "skills/memory-consolidation/SKILL.md",
+        exact: true,
+      })
+      .click()
+    await expect(page.locator(".memory-body")).toContainText("经人工复核的修订")
+    await page.getByRole("link", { name: "MEMORY.md", exact: true }).click()
+    await page.getByLabel("整理模型").selectOption("openai")
+    await page.getByRole("button", { name: "立即整理" }).click()
+    await page
+      .locator(".evolution-page details summary")
+      .filter({ hasText: "MEMORY.md" })
+      .click({ timeout: 12000 })
+    await expect(
+      page.locator(".version-diff").getByText("已核实的交接习惯")
+    ).toBeVisible()
+    await expect(page.locator(".memory-body")).not.toContainText(
+      "已核实的交接习惯"
+    )
+    await expect(page.locator(".memory-body")).toContainText(
+      "已核实的交接习惯",
+      { timeout: 15000 }
+    )
+    await page.getByLabel("整理模型").selectOption("gemini")
+    await page.getByRole("button", { name: "立即整理" }).click()
+    await expect(page.getByText("无变化", { exact: true })).toBeVisible({
+      timeout: 12000,
+    })
+    await page.reload()
+    await page
+      .getByRole("link", { name: "查看运行依据", exact: true })
+      .first()
+      .click()
+    await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible()
+  } finally {
+    await context.close()
+    await instance.stop()
+  }
+})

@@ -57,6 +57,8 @@ JSON 请求必须包含 Content-Type: application/json，并携带认证。未�
 | GET /v1/knowledge/uploads、GET /v1/knowledge/uploads/{id} | 可用格式和最近 20 批摘要，或按编号核对逐项转换及入库结果 |
 | GET /v1/knowledge/search?q=词句、GET /v1/knowledge/{id} | 检索当前入库正文、按文档编号查看正文 |
 | POST /v1/knowledge/incoming | 工作台高级导入，path 相对于服务器状态根目录的 data/knowledge/incoming/ |
+| GET /v1/evolution、GET /v1/evolution/document、GET /v1/evolution/uses | 当前记忆、技能、整理任务与审核情况；后两项以 path 选择条目。document 可用 at 读取早期版本，uses 返回运行时留存的依据 |
+| POST /v1/evolution/dream、/v1/evolution/edit、/v1/evolution/review | 按模型和请求编号发起整理、按版本保存人工修订、按审阅时的基线决定候选或草稿 |
 | GET /v1/knowledge | 已导入的文档清单、是否正在导入、上一次导入每个文件的结果 |
 | POST /v1/knowledge/import | `{path}`：后台导入一个文件或目录（相对路径按 agentd 的工作目录）；已有导入在运行时返回 409 |
 | POST /v1/knowledge/{doc_id}/remove | 归档一个文档并移出索引；导入运行时返回 409 |

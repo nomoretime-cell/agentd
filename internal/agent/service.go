@@ -40,6 +40,7 @@ type Service struct {
 	wg            sync.WaitGroup
 	memoryMu      sync.Mutex
 	consolidating atomic.Bool
+	dreamChecking atomic.Bool
 	knowledge     knowledgeState
 	convert       func(context.Context, string, []byte) ([]byte, error) // converts a knowledge file to Markdown
 	life          context.Context                                       // background work such as imports; ends at Close
@@ -174,6 +175,12 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 		return nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err = s.finishSkillPublish(); err != nil {
+		return nil, err
+	}
+	if err = s.recoverMemoryEdit(); err != nil {
 		return nil, err
 	}
 	if err = s.recoverUploads(); err != nil {
@@ -325,6 +332,9 @@ func (s *Service) redactText(v string, mask func(value, label string) string) st
 	replace(s.token)
 	replace(s.cfg.Model.APIKey)
 	replace(s.cfg.StrongModel.APIKey)
+	for _, m := range s.cfg.DreamModels {
+		replace(m.APIKey)
+	}
 	for _, a := range s.cfg.Actions {
 		replace(a.BearerToken)
 	}
