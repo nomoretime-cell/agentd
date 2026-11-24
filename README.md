@@ -1,5 +1,8 @@
 # agentd
 
+
+**所有者工作台**：`make release` 构建内嵌页面的 `bin/agentd-web`，可在浏览器解锁、查看待办并审批动作。[预览与使用说明](web/README.md)
+
 一个使用 Go 实现的单机 Always-on Agent，保留 Event Inbox、Timers、Memory、Permissions、Outbox 五个组件。核心采用一个业务包、SQLite 四张表和七个基础工具。
 
 ## 启动

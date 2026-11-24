@@ -26,6 +26,7 @@ type Config struct {
 	NewsFeeds          []NewsFeed           `yaml:"news_feeds"`
 	OpenCodeBinary     string               `yaml:"opencode_binary"`
 	DingTalk           DingTalkConfig       `yaml:"dingtalk"`
+	WebOrigin          string               `yaml:"web_origin"`
 	Listen             string               `yaml:"listen"`
 	Model              ModelConfig          `yaml:"model"`
 	StrongModel        StrongModelConfig    `yaml:"strong_model"`
@@ -137,6 +138,16 @@ func (c Config) Validate() error {
 	ip := net.ParseIP(host)
 	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 		return errors.New("listen must use a loopback address; use an authenticated reverse proxy for remote access")
+	}
+	if c.WebOrigin != "" {
+		origin, err := url.Parse(c.WebOrigin)
+		if err != nil || origin.Hostname() == "" || origin.User != nil || origin.Scheme+"://"+origin.Host != c.WebOrigin {
+			return errors.New("web_origin must be an exact origin without a path")
+		}
+		loopback := origin.Hostname() == "localhost" || net.ParseIP(origin.Hostname()).IsLoopback()
+		if origin.Scheme != "https" && !(origin.Scheme == "http" && loopback) {
+			return errors.New("web_origin requires HTTPS or loopback HTTP")
+		}
 	}
 	if _, e := time.LoadLocation(c.Timezone); e != nil {
 		return e

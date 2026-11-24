@@ -61,7 +61,7 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 
 ## Web 前端开发约定
 
-以下约定适用于计划中的本机所有者工作台。前端在 `web/` 内用 shadcn/ui 官方 Vite 模板起步，采用 React、严格模式 TypeScript 和 Tailwind CSS v4。首版选用 Radix 控件底座，与本地参考项目一致。初始化时在 `web/package.json` 的 `packageManager` 字段记录 pnpm 版本，只提交 `web/pnpm-lock.yaml` 这一份前端依赖锁文件，CI 按锁文件安装。[官方 Vite 模板](https://ui.shadcn.com/docs/installation/vite)
+以下约定适用于本机所有者工作台。前端在 `web/` 内用 shadcn/ui 官方 Vite 模板起步，采用 React、严格模式 TypeScript 和 Tailwind CSS v4。首版选用 Radix 控件底座，与本地参考项目一致。初始化时在 `web/package.json` 的 `packageManager` 字段记录 pnpm 版本，只提交 `web/pnpm-lock.yaml` 这一份前端依赖锁文件，CI 按锁文件安装。[官方 Vite 模板](https://ui.shadcn.com/docs/installation/vite)
 
 ### 代码归属与依赖
 
@@ -75,7 +75,7 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 - **每份状态只由一处维护。** 服务端数据用 TanStack Query 读取和缓存，查询键包含影响结果的参数。需分享或刷新后恢复的筛选放在 URL，表单草稿和弹窗开关留在组件内，派生值在渲染时计算。跨页面共享的纯客户端状态出现后再考虑 Zustand。Effect 用于订阅等外部同步，并负责清理。[React 的 Effect 指南](https://react.dev/learn/you-might-not-need-an-effect) · [TanStack Query 缓存默认行为](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults)
 - **以服务端回执呈现结果。** 例如审批页展示动作 ID 和已冻结的参数，用户提交期间禁用重复提交，收到回执后刷新相关查询。写请求超时或遇到冲突时先重读状态，有外部副作用的请求关闭自动重试。动作结果查 Actions，投递结果查 Outbox；界面上的“已批准”“已执行”“平台已受理”分别以对应记录为据。[操作接口](docs/current/operations.md)
 - **首版由所有者输入现有 API token 解锁。** 页面只在内存中保留 token，请求本服务的 `/v1/*` 时通过 `Authorization: Bearer <token>` 携带。刷新后重新解锁，再从 Go 读取状态。凭证不得进入 URL、`VITE_*` 变量、构建产物、日志或浏览器存储（含 `sessionStorage`）。模型输出和事件正文按文本渲染，使用 Markdown 时禁用原始 HTML 并校验链接协议。[Vite 环境变量](https://vite.dev/guide/env-and-mode)
-- **由 Go 校验请求来源。** 当前受保护接口拒绝所有非空 `Origin`。接入工作台时，所有业务 API 仍须验证 Bearer。请求带有 `Origin` 时，精确匹配受信页面的协议、主机和端口；无 `Origin` 时沿用 Bearer 鉴权，兼容 CLI 和浏览器同源读取。开发代理保留浏览器的 `Origin`，仅在开发时额外信任显式配置的本机 Vite 来源。[HTTP 入口](internal/agent/http.go)
+- **由 Go 校验请求来源。** 所有业务 API 验证 Bearer。请求带有 `Origin` 时，精确匹配受信页面的协议、主机和端口；无 `Origin` 时沿用 Bearer 鉴权，兼容 CLI 和浏览器同源读取。开发代理保留浏览器的 `Origin`，仅在开发时额外信任显式配置的本机 Vite 来源。[HTTP 入口](internal/agent/http.go)
 
 ### 静态托管与构建
 

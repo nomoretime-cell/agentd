@@ -8,3 +8,9 @@ coverage.out
 # State from before .agentd/ (started with -root .)
 data/
 workspace/
+
+# Web dependencies and generated release assets
+web/node_modules/
+web/dist/
+web/test-results/
+cmd/agentd/ui/

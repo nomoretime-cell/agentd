@@ -163,6 +163,16 @@ func (s *Service) Handler() http.Handler {
 		}
 		respond(w, map[string]string{"draft": r.PathValue("name"), "decision": r.PathValue("decision")}, s.DecideDraft(r.PathValue("name"), r.PathValue("decision"), req.Reason))
 	})
+	mux.HandleFunc("GET /v1/workbench", func(w http.ResponseWriter, r *http.Request) {
+		page, err := s.workItems(r.Context(), r.URL.Query().Get("kind"), r.URL.Query().Get("offset"))
+		respond(w, page, err)
+	})
+	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		a, err := s.action(r.Context(), r.PathValue("id"))
+		a.Args, a.Hint, a.Result = s.redact(a.Args), s.redact(a.Hint), s.redact(a.Result)
+		a.Name, a.Key = s.redact(a.Name), s.redact(a.Key)
+		respond(w, a, err)
+	})
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		paused := s.paused
@@ -201,7 +211,7 @@ func (s *Service) Handler() http.Handler {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "valid bearer token required"})
 				return
 			}
-			if origin := r.Header.Get("Origin"); origin != "" {
+			if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+s.cfg.Listen && origin != s.cfg.WebOrigin {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "browser cross-origin access disabled"})
 				return
 			}

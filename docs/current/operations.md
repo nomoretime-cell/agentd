@@ -16,7 +16,7 @@ make build
 
 Go 工具链保存在 `.tools/go/`，模块缓存、构建缓存、临时文件都在 `.cache/`。`scripts/go` 设置这些路径，不修改系统 Go 或用户全局 Go 环境。已安装本地工具链和下载模块后，构建可离线进行。工具链版本在 bootstrap 中固定，下载后核验官方 SHA-256；依赖版本由 go.mod/go.sum 固定。
 
-默认监听 `127.0.0.1:8090`；本地模型地址为 `http://localhost:8080/v1/chat/completions`，模型名称在 config.yaml 中配置。初次启动自动生成 `data/api-token`，权限为 0600；除 healthz 外所有接口都要求 Bearer Token，不输出 Token 到日志。配置私密凭证时使用被 Git 忽略的 `config.local.yaml`，并以 `-config config.local.yaml` 启动；该文件是完整配置，不是叠加文件。
+默认监听 `127.0.0.1:8090`；本地模型地址为 `http://localhost:8080/v1/chat/completions`，模型名称在 config.yaml 中配置。初次启动自动生成 `data/api-token`，权限为 0600；业务 API 都要求 Bearer Token，不输出 Token 到日志。配置私密凭证时使用被 Git 忽略的 `config.local.yaml`，并以 `-config config.local.yaml` 启动；该文件是完整配置，不是叠加文件。
 
 ```sh
 TOKEN=$(cat .agentd/data/api-token)
@@ -31,6 +31,8 @@ curl -s http://127.0.0.1:8090/v1/outbox -H "Authorization: Bearer $TOKEN"
 
 普通通知默认遵循北京时间 23:00–08:00 静默期，审批提示不受静默期影响。需要立刻体验本地通知时，将配置中的 quiet_hours.start / end 都设为空字符串并重启。不要删除数据库来“重试”通知。
 
+带工作台的发布版公开提供页面和静态资源，业务 API 复用同一监听地址。浏览器来源与监听地址或显式配置的 `web_origin` 精确匹配，CLI 可省略 Origin。详见[工作台说明](../../web/README.md)。
+
 **HTTP 接口**
 
 JSON 请求必须包含 Content-Type: application/json，并携带认证。未知字段会被拒绝；请求大小受配置限制。渠道适配器应在收到成功响应后才确认业务事件；同 key 同内容可安全重投，同 key 不同内容返回 409。
@@ -38,6 +40,8 @@ JSON 请求必须包含 Content-Type: application/json，并携带认证。未�
 | 方法与路径 | 输入或用途 |
 | --- | --- |
 | GET /healthz | 数据库健康检查，无认证，不暴露配置 |
+| GET /v1/workbench | `kind=actions/inbox/outbox/drafts`，`offset` 默认 0；返回全部类别的待办数和所选类别的一页（最多 20 项） |
+| GET /v1/actions/{id} | 单个动作的脱敏冻结参数、状态与结果，用于审批后核对 |
 | GET /v1/status | 暂停、执行状态、各表条数 |
 | GET /v1/inbox | 最近 200 条事件 |
 | GET /v1/timers | 最近 200 个定时器 |
