@@ -121,6 +121,8 @@ curl --fail-with-body -sS http://127.0.0.1:8090/v1/timers \
 
 ## 企业微信团队模式
 
+工作台「运行管理 → IM 渠道」支持添加企业微信和钉钉、轮换密钥、切换、停用和删除。使用 `-config config.local.yaml` 启动后，工作台将改动原子保存到这份私有文件。应用和所有者 ID 脱敏显示，留空保留原值。重启后核对「当前运行」和连接状态。停用全部渠道可保存为 `im.provider: none`。
+
 在 `config.local.yaml` 设置 `im.provider: wecom` 并重启，即选择企业微信智能机器人长连接。设置为 `dingtalk` 可切回；省略时沿用钉钉及其 `enabled` 配置。一次只启动一个渠道连接，两端共用本机 SQLite、Inbox、OpenCode、本地模型、Outbox 和新闻定时器。旧渠道的待投递消息保留原目标。
 
 1. 在企业微信创建 **智能机器人 → API 模式 → 长连接**，从后台取得 Bot ID、Secret，并将机器人加入试点内部群。agentd 主动连接企微，不需要公网回调入口。[企微官方长连接协议](https://developer.work.weixin.qq.com/document/path/101463)

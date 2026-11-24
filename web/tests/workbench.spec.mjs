@@ -24,6 +24,27 @@ test("所有者审批、回执与刷新后直接读回", async ({ page, request 
     })
     expect(denied.status()).toBe(403)
     await page.goto(url)
+    const nav = page.getByRole("navigation", { name: "工作台导航" })
+    await expect(
+      nav.getByRole("link", { name: /每日活动|待处理事项/ })
+    ).toHaveCount(0)
+    await expect(
+      page.getByRole("link", { name: "运行状态", exact: true })
+    ).toHaveCount(1)
+    await page.getByRole("button", { name: "收起侧栏" }).click()
+    const runtime = nav.getByRole("link", { name: "运行状态" })
+    await runtime.click()
+    await expect(page).toHaveURL(/#runtime$/)
+    await expect(runtime).toHaveAttribute("aria-current", "page")
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("运行状态")
+    await expect(page.locator("main > header")).toContainText("运行状态")
+    await expect(page.getByText("当前模型", { exact: true })).toBeVisible()
+    await page.reload()
+    await expect(page.getByRole("heading", { name: "账本概览" })).toBeVisible()
+    await nav.getByRole("link", { name: "工作概览" }).click()
+    await expect(page.getByLabel("统计范围")).toBeVisible()
+    await page.getByRole("link", { name: /当前待处理/ }).click()
+    await expect(page).toHaveURL(/#queue$/)
     const first = page.getByRole("button", { name: /create_ticket/ }).first()
     await first.click()
     const dialog = page.getByRole("dialog")
@@ -39,6 +60,13 @@ test("所有者审批、回执与刷新后直接读回", async ({ page, request 
     await page.keyboard.press("Escape")
     await expect(dialog).toHaveCount(0)
     await page.setViewportSize({ width: 375, height: 760 })
+    await expect(nav.getByRole("link")).toHaveCount(7)
+    const runs = nav.getByRole("link", { name: "会话与运行" })
+    await runs.click()
+    await expect(runs).toHaveAttribute("aria-current", "page")
+    await page.getByRole("link", { name: "通知投递", exact: true }).click()
+    await expect(runs).toHaveAttribute("aria-current", "page")
+    await nav.getByRole("link", { name: "工作概览" }).click()
     await page.getByRole("button", { name: /异常投递/ }).click()
     await expect(page.getByText("当前没有此类待办")).toBeVisible()
     expect(
@@ -286,10 +314,7 @@ test("对话跨会话、刷新与审批续跑", async ({ page, request }) => {
       ).status()
     ).toBe(403)
     await page.goto(url)
-    await page
-      .getByRole("navigation", { name: "工作台导航" })
-      .getByRole("link", { name: "对话", exact: true })
-      .click()
+    await page.getByRole("link", { name: "对话", exact: true }).click()
     await expect(page).toHaveURL(url + "/#chat")
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("对话")
     async function send(text) {
@@ -404,7 +429,18 @@ test("从访问电脑上传，另一个浏览器能检索服务器原件的正�
     await expect(other.locator("article pre")).toHaveText(
       "# 跨机资料\n鹭岛交接编号321"
     )
+    const documentURL = other.url()
+    expect(documentURL).toMatch(/doc=[a-f0-9]{16}/)
     await other.reload()
+    await expect(other.getByLabel("检索正文")).toHaveValue("鹭岛交接编号321")
+    await expect(other.locator("article pre")).toContainText("鹭岛交接编号321")
+    await other.getByRole("button", { name: "收起正文" }).click()
+    await expect(other.locator("article pre")).toHaveCount(0)
+    await other.goBack()
+    await expect(other).toHaveURL(documentURL)
+    await expect(other.locator("article pre")).toContainText("鹭岛交接编号321")
+    await other.goForward()
+    await expect(other.locator("article pre")).toHaveCount(0)
     await other.getByText(/2 个文件 · 含失败项/).click()
     await expect(other.getByText("异地交接.md · 已入库")).toBeVisible()
     await other.getByRole("button", { name: "跨机资料", exact: true }).click()
@@ -424,6 +460,30 @@ test("从访问电脑上传，另一个浏览器能检索服务器原件的正�
   }
 })
 
+// Hold the reply so the browser observes the in-flight state deterministically.
+async function whileSubmitting(page, endpoint, button, check) {
+  let release
+  const gate = new Promise((done) => {
+    release = done
+  })
+  await page.route(
+    endpoint,
+    async (route) => {
+      await gate
+      await route.continue()
+    },
+    { times: 1 }
+  )
+  const sent = page.waitForRequest(endpoint)
+  try {
+    await button.click()
+    await sent
+    await check()
+  } finally {
+    release()
+  }
+}
+
 test("记忆可追溯地修订，过期编辑保留，技能审批后生效，整理按所选模型执行", async ({
   page,
   browser,
@@ -438,7 +498,12 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
       await tab.getByRole("button", { name: "编辑内容" }).click()
     await second.getByLabel("修订正文").fill("第二份未提交编辑")
     await page.getByLabel("修订正文").fill("工作台人工修订")
-    await page.getByRole("button", { name: "保存记忆修订" }).click()
+    await whileSubmitting(
+      page,
+      "**/v1/evolution/edit",
+      page.getByRole("button", { name: "保存记忆修订" }),
+      () => expect(page.getByLabel("修订正文")).toBeDisabled()
+    )
     await expect(page.locator(".memory-body")).toHaveText("工作台人工修订")
     await expect(second.getByText(/服务器已有新版本/)).toBeVisible({
       timeout: 12000,
@@ -472,7 +537,18 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
     await expect(page.locator(".memory-body")).toContainText("经人工复核的修订")
     await page.getByRole("link", { name: "MEMORY.md", exact: true }).click()
     await page.getByLabel("整理模型").selectOption("openai")
-    await page.getByRole("button", { name: "立即整理" }).click()
+    await whileSubmitting(
+      page,
+      "**/v1/evolution/dream",
+      page.getByRole("button", { name: "立即整理" }),
+      () => expect(page.getByLabel("整理模型")).toBeDisabled()
+    )
+    await expect(page.getByText(/已提交整理任务/)).toBeVisible()
+    expect(
+      await page.evaluate(() =>
+        Object.keys(sessionStorage).filter((k) => k.startsWith("agentd-dream-"))
+      )
+    ).toEqual([])
     await page
       .locator(".evolution-page details summary")
       .filter({ hasText: "MEMORY.md" })
@@ -500,6 +576,157 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
     await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible()
   } finally {
     await context.close()
+    await instance.stop()
+  }
+})
+
+test("IM 管理可添加、轮换、选择、撤回选择及删除配置", async ({
+  page,
+  request,
+}) => {
+  const instance = await startInstance()
+  try {
+    await page.goto(instance.url)
+    await page
+      .getByRole("navigation", { name: "工作台导航" })
+      .getByRole("link", { name: "IM 渠道" })
+      .click()
+    const wx = page.getByRole("region", { name: "企业微信" })
+    await wx.getByRole("button", { name: "添加配置" }).click()
+    await wx.getByLabel("Bot ID").fill("test-robot-1234")
+    await wx.getByLabel("应用密钥").fill("test-only-secret")
+    await wx.getByLabel("所有者 ID").fill("test-owner-1234")
+    await wx.getByRole("button", { name: "保存配置" }).click()
+    await expect(wx.getByText("已设置", { exact: true })).toBeVisible()
+    await wx.getByRole("button", { name: "编辑配置" }).click()
+    await expect(wx.getByLabel("应用密钥")).toHaveValue("")
+    await wx.getByLabel("应用密钥").fill("test-only-rotated")
+    await wx.getByRole("button", { name: "保存配置" }).click()
+    await wx.getByRole("button", { name: "下次启动使用" }).click()
+    await wx.getByRole("button", { name: "确认更改" }).click()
+    await page.reload()
+    await expect(page.getByText("待重启生效", { exact: true })).toBeVisible()
+    await expect(wx.getByRole("button", { name: "删除配置" })).toBeDisabled()
+    const response = await request.get(instance.url + "/v1/im", {
+      headers: webHeaders,
+    })
+    const body = await response.text()
+    expect(body).not.toMatch(/test-only|test-robot|test-owner/)
+    expect(JSON.parse(body).running).toBe("none")
+    expect(
+      (
+        await request.post(instance.url + "/v1/im", {
+          headers: { ...webHeaders, Origin: "https://other.invalid" },
+          data: {},
+        })
+      ).status()
+    ).toBe(403)
+    await wx.getByRole("button", { name: "停用渠道" }).click()
+    await wx.getByRole("button", { name: "确认更改" }).click()
+    await wx.getByRole("button", { name: "删除配置" }).click()
+    await wx.getByRole("button", { name: "确认删除" }).click()
+    await expect(wx.getByRole("button", { name: "添加配置" })).toBeVisible()
+    await page.setViewportSize({ width: 320, height: 700 })
+    await expect(page.getByRole("heading", { name: "钉钉" })).toBeVisible()
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth
+      )
+    ).toBe(true)
+  } finally {
+    await instance.stop()
+  }
+})
+
+test("上传收到无效回执后可按原批次核对并重试", async ({ page }) => {
+  const instance = await startInstance()
+  try {
+    const keys = []
+    await page.route("**/v1/knowledge/uploads?key=*", async (route) => {
+      keys.push(new URL(route.request().url()).searchParams.get("key"))
+      if (keys.length === 1)
+        return route.fulfill({
+          contentType: "text/html",
+          body: "<html></html>",
+        })
+      if (keys.length === 2)
+        return route.fulfill({
+          json: {
+            id: "other",
+            created: "now",
+            files: [{ name: "批次核对.md", status: "added" }],
+          },
+        })
+      return route.continue()
+    })
+    await page.goto(instance.url + "/#knowledge")
+    await page.getByLabel("从这台电脑上传").setInputFiles({
+      name: "批次核对.md",
+      mimeType: "text/markdown",
+      buffer: Buffer.from("# 批次核对"),
+    })
+    await page.getByRole("button", { name: "开始上传" }).click()
+    const verify = page.getByRole("button", { name: "重新核对回执" })
+    const retry = page.getByRole("button", { name: "按原批次重试" })
+    await expect(page.getByText("服务器未返回有效的批次回执。")).toBeVisible()
+    await verify.click()
+    await retry.click()
+    await expect.poll(() => keys.length).toBe(2)
+    await expect(page.getByText("服务器未返回有效的批次回执。")).toBeVisible()
+    await retry.click()
+    await expect(
+      page.getByRole("button", { name: "批次核对", exact: true })
+    ).toBeVisible()
+    expect(keys).toHaveLength(3)
+    expect(new Set(keys).size).toBe(1)
+  } finally {
+    await instance.stop()
+  }
+})
+
+test("服务器使用 Local 时按服务器偏移显示统计和运行时间", async ({ page }) => {
+  const instance = await startInstance(undefined, false, "America/New_York")
+  try {
+    await page.goto(instance.url)
+    await expect(page.getByText(/采集始于/)).toContainText(/UTC-0[45]:00/)
+    await page.getByRole("link", { name: "会话与运行" }).click()
+    await expect(page.getByText(/UTC-0[45]:00/).first()).toBeVisible()
+  } finally {
+    await instance.stop()
+  }
+})
+
+test("旧页面缺少按需加载的脚本时保留导航，重新加载可恢复", async ({ page }) => {
+  const instance = await startInstance()
+  try {
+    const background = []
+    page.on("request", (r) => {
+      if (/^\/v1\/(status|workbench)$/.test(new URL(r.url()).pathname))
+        background.push(r.url())
+    })
+    await page.goto(instance.url + "/#knowledge")
+    await expect(page.getByLabel("检索正文")).toBeVisible()
+    await page.route("**/assets/IMChannels-*.js", (route) =>
+      route.fulfill({ status: 404, body: "missing" })
+    )
+    await page.getByRole("link", { name: "IM 渠道" }).click()
+    await expect(page.getByRole("alert")).toContainText("页面加载失败")
+    await expect(
+      page.getByRole("navigation", { name: "工作台导航" })
+    ).toBeVisible()
+    await page.getByRole("link", { name: "知识库", exact: true }).click()
+    await expect(page.getByLabel("检索正文")).toBeVisible()
+    await page.getByRole("link", { name: "IM 渠道" }).click()
+    await page.unroute("**/assets/IMChannels-*.js")
+    await page.getByRole("button", { name: "重新加载工作台" }).click()
+    await expect(
+      page.getByRole("heading", { name: "页面加载失败" })
+    ).toHaveCount(0)
+    await expect(
+      page.getByRole("button", { name: /添加配置|新增配置/ }).first()
+    ).toBeVisible()
+    expect(background).toEqual([])
+  } finally {
     await instance.stop()
   }
 })

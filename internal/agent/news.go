@@ -396,6 +396,9 @@ func (s *Service) translateHeadlines(ctx context.Context, items []newsItem) erro
 // eventScope is the owner scope that may run now. Legacy DingTalk timer and
 // test events have no news_target in their payload.
 func (s *Service) eventScope() string {
+	if s.cfg.provider() == "none" {
+		return "none"
+	}
 	if s.cfg.provider() == "wecom" {
 		return s.ownerTarget()
 	}

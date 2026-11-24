@@ -95,7 +95,8 @@ export function MemoryDocument({
         <p role="status">{doc.error?.message || "正在读取条目…"}</p>
       </section>
     )
-  const changed = draft !== null && d.version !== draft.version
+  const changed =
+    draft !== null && (d.version !== draft.version || d.base !== draft.base)
   const edit = (body: string) =>
     setDraft({ body, original: d.body, version: d.version, base: d.base })
   return (
@@ -159,7 +160,11 @@ export function MemoryDocument({
         <>
           <VersionDiff before={old.data} after={d.body} />
           {d.writable && (
-            <Button variant="outline" onClick={() => edit(old.data)}>
+            <Button
+              disabled={save.isPending}
+              variant="outline"
+              onClick={() => edit(old.data)}
+            >
               以此版本起草修订
             </Button>
           )}
@@ -175,6 +180,7 @@ export function MemoryDocument({
           <label>
             修订正文
             <textarea
+              disabled={save.isPending}
               rows={12}
               value={draft.body}
               onChange={(e) => setDraft({ ...draft, body: e.target.value })}
@@ -206,6 +212,7 @@ export function MemoryDocument({
             <Button
               type="button"
               variant="outline"
+              disabled={save.isPending}
               onClick={() => setDraft(null)}
             >
               取消编辑

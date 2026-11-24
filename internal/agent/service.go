@@ -38,6 +38,7 @@ type Service struct {
 	wake          chan struct{}
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
+	imConfigMu    sync.Mutex
 	memoryMu      sync.Mutex
 	consolidating atomic.Bool
 	dreamChecking atomic.Bool

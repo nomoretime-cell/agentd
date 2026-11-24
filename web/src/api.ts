@@ -1,9 +1,11 @@
+import { useQuery } from "@tanstack/react-query"
 import { z } from "zod"
 
 export async function request<T>(
   path: string,
   schema: z.ZodType<T>,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  readError?: (body: unknown) => string | undefined
 ): Promise<T> {
   let response: Response
   try {
@@ -26,8 +28,12 @@ export async function request<T>(
       404: "找不到这条记录。",
       409: "状态已经变化，请查看最新记录。",
     }
+    const detail =
+      readError && readError(await response.json().catch(() => null))
     throw new Error(
-      errors[response.status] ?? `服务请求失败（HTTP ${response.status}）`
+      detail ??
+        errors[response.status] ??
+        `服务请求失败（HTTP ${response.status}）`
     )
   }
   const parsed = schema.safeParse(await response.json())
@@ -40,12 +46,12 @@ const channel = z.object({
   connected: z.boolean(),
   discovery_only: z.boolean(),
 })
-export const statusSchema = z.object({
+const statusSchema = z.object({
   active: z.boolean(),
   paused: z.boolean(),
   executor: z.string(),
   model: z.string(),
-  im_provider: z.enum(["wecom", "dingtalk"]),
+  im_provider: z.enum(["wecom", "dingtalk", "none"]),
   wecom: channel,
   dingtalk: channel,
   counts: z.object({
@@ -56,3 +62,11 @@ export const statusSchema = z.object({
   }),
 })
 export type ServiceStatus = z.infer<typeof statusSchema>
+
+export function useServiceStatus() {
+  return useQuery({
+    queryKey: ["status"],
+    queryFn: ({ signal }) => request("status", statusSchema, { signal }),
+    refetchInterval: 5000,
+  })
+}

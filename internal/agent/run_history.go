@@ -480,3 +480,12 @@ func (s *Service) indexedPage(ctx context.Context, q url.Values, from, to time.T
 	}
 	return items, "", rows.Err()
 }
+
+// Old transcripts can have missing or unparseable dates; preserve those verbatim.
+func serverTimestamp(value string, loc *time.Location) string {
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return value
+	}
+	return t.In(loc).Format(time.RFC3339Nano)
+}

@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { Overview } from "./Overview"
+import { RouterProvider } from "@tanstack/react-router"
+import { router } from "./router"
 
 const client = new QueryClient({
   defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -7,7 +8,7 @@ const client = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={client}>
-      <Overview />
+      <RouterProvider router={router} />
     </QueryClientProvider>
   )
 }

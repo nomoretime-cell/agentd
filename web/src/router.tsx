@@ -1,0 +1,179 @@
+import { lazy } from "react"
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from "@tanstack/react-router"
+import { z } from "zod"
+import { Workbench } from "./Workbench"
+import { Dashboard } from "./features/overview/Dashboard"
+import { useServiceStatus } from "./api"
+
+const Chat = lazy(() =>
+  import("./features/chat/OwnerChat").then((m) => ({ default: m.OwnerChat }))
+)
+const Knowledge = lazy(() =>
+  import("./features/knowledge/Knowledge").then((m) => ({
+    default: m.Knowledge,
+  }))
+)
+const Evolution = lazy(() =>
+  import("./features/evolution/Evolution").then((m) => ({
+    default: m.Evolution,
+  }))
+)
+const History = lazy(() =>
+  import("./features/runs/RunHistory").then((m) => ({ default: m.RunHistory }))
+)
+const IM = lazy(() => import("./features/im/IMChannels"))
+
+const root = createRootRoute({ component: Workbench })
+const base = { getParentRoute: () => root }
+const action = z.string().optional()
+const overview = createRoute({
+  ...base,
+  path: "/",
+  validateSearch: z.object({ action }),
+  component: () => <Dashboard runtime={false} />,
+})
+const runtime = createRoute({
+  ...base,
+  path: "runtime",
+  component: () => <Dashboard runtime />,
+})
+const im = createRoute({ ...base, path: "im", component: IM })
+const chat = createRoute({
+  ...base,
+  path: "chat",
+  validateSearch: z.object({
+    id: z
+      .string()
+      .regex(/^web-[a-f0-9]{48}$/)
+      .optional()
+      .catch(undefined),
+    action,
+  }),
+  component: ChatPage,
+})
+function ChatPage() {
+  const { id } = chat.useSearch()
+  return (
+    <Chat id={id ?? ""} paused={useServiceStatus().data?.paused ?? false} />
+  )
+}
+const knowledge = createRoute({
+  ...base,
+  path: "knowledge",
+  validateSearch: z.object({
+    doc: z
+      .string()
+      .regex(/^[0-9a-f]{16}$/)
+      .optional()
+      .catch(undefined),
+    q: z.string().optional(),
+  }),
+  component: KnowledgePage,
+})
+function KnowledgePage() {
+  const { doc, q } = knowledge.useSearch()
+  const navigate = knowledge.useNavigate()
+  return (
+    <Knowledge
+      selected={doc ?? ""}
+      query={q ?? ""}
+      onSelect={(doc) =>
+        void navigate({
+          search: (prev) => ({ ...prev, doc: doc || undefined }),
+        })
+      }
+      onSearch={(q) => void navigate({ search: { q: q || undefined } })}
+    />
+  )
+}
+const evolution = createRoute({
+  ...base,
+  path: "evolution",
+  validateSearch: z.object({ path: z.string().optional() }),
+  component: () => <Evolution path={evolution.useSearch().path ?? ""} />,
+})
+const runs = createRoute({
+  ...base,
+  path: "runs",
+  validateSearch: z
+    .object({
+      view: z
+        .enum(["runs", "conversations", "deliveries"])
+        .optional()
+        .catch(undefined),
+    })
+    .catchall(z.string()),
+  component: RunsPage,
+})
+function searchParams(values: Record<string, unknown>) {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(values))
+    if (typeof value === "string") params.set(key, value)
+  return params
+}
+function RunsPage() {
+  return <History search={searchParams(runs.useSearch())} />
+}
+
+export const router = createRouter({
+  routeTree: root.addChildren([
+    overview,
+    runtime,
+    im,
+    chat,
+    knowledge,
+    evolution,
+    runs,
+  ]),
+  parseSearch: (search) => Object.fromEntries(new URLSearchParams(search)),
+  stringifySearch: (search) => {
+    const params = searchParams(search)
+    return params.size ? "?" + params : ""
+  },
+  // Keep existing bookmarks and native anchor links on the single Go entry point.
+  rewrite: {
+    input: ({ url }) => {
+      const hash = url.hash.slice(1)
+      const [page] = hash.split("?", 1)
+      const anchor = ["overview", "queue", "trend"].includes(page)
+      const actionLink = page.startsWith("action=")
+      url.pathname = anchor || actionLink ? "/" : "/" + page
+      url.search = actionLink ? hash : hash.slice(page.length + 1)
+      url.hash = anchor ? page : ""
+      return url
+    },
+    output: ({ url }) => {
+      const page = url.pathname.slice(1)
+      const hash = page
+        ? page + url.search
+        : url.search.slice(1) || url.hash.slice(1)
+      url.pathname = "/"
+      url.search = ""
+      url.hash = hash
+      return url
+    },
+  },
+  defaultErrorComponent: () => (
+    <section className="panel" role="alert">
+      <h2>页面加载失败</h2>
+      <p>请重新加载工作台以获取最新页面。</p>
+      <button className="outline-btn" onClick={() => location.reload()}>
+        重新加载工作台
+      </button>
+    </section>
+  ),
+  defaultNotFoundComponent: () => (
+    <p>
+      页面不存在。<a href="#overview">返回工作概览</a>
+    </p>
+  ),
+})
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router
+  }
+}

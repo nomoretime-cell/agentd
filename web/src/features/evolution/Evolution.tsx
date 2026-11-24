@@ -1,17 +1,10 @@
 import { useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { z } from "zod"
+import { requestKey, pendingKey } from "@/lib/request-key"
 import { request } from "@/api"
 import { Button } from "@/components/ui/button"
-import {
-  board,
-  entryLink,
-  labels,
-  requestKey,
-  when,
-  type Board,
-  type Delta,
-} from "./data"
+import { board, entryLink, labels, when, type Board, type Delta } from "./data"
 import { MemoryDocument } from "./MemoryDocument"
 import { VersionDiff } from "./VersionDiff"
 import "./evolution.css"
@@ -138,34 +131,53 @@ function Review({ data }: { data: Board }) {
 function Dreaming({ data }: { data: Board }) {
   const client = useQueryClient(),
     [choice, setChoice] = useState(""),
-    key = useRef(""),
+    keys = useRef(new Map<string, string>()),
     [event, setEvent] = useState(0)
   const selected = data.models.find(
     (m) => m.id === (choice || data.models[0]?.id)
   )
   const send = useMutation({
-    mutationFn: async () => {
-      if (!selected) throw Error("请选择可用模型")
-      const pending = "agentd-dream-" + selected.version
-      key.current ||= sessionStorage.getItem(pending) || requestKey()
-      sessionStorage.setItem(pending, key.current)
-      return request("evolution/dream", z.object({ event: z.number() }), {
+    mutationFn: ({
+      profile,
+      version,
+      key,
+    }: {
+      profile: string
+      version: string
+      key: string
+      storageKey: string
+    }) =>
+      request("evolution/dream", z.object({ event: z.number() }), {
         method: "POST",
-        body: JSON.stringify({
-          profile: selected.id,
-          version: selected.version,
-          key: key.current,
-        }),
-      })
-    },
-    onSuccess: (r) => {
-      if (selected)
-        sessionStorage.removeItem("agentd-dream-" + selected.version)
+        body: JSON.stringify({ profile, version, key }),
+      }),
+    onSuccess: (r, submitted) => {
+      if (pendingKey(submitted.storageKey) === submitted.key)
+        pendingKey(submitted.storageKey, "")
+      const legacy = "agentd-dream-" + submitted.version
+      if (pendingKey(legacy) === submitted.key) pendingKey(legacy, "")
+      keys.current.delete(submitted.storageKey)
       setEvent(r.event)
-      key.current = ""
       void client.invalidateQueries({ queryKey: ["evolution"] })
     },
   })
+  function submit() {
+    if (!selected || send.isPending) return
+    const storageKey = "agentd-dream-" + selected.id + "-" + selected.version
+    const key =
+      keys.current.get(storageKey) ||
+      pendingKey(storageKey) ||
+      pendingKey("agentd-dream-" + selected.version) ||
+      requestKey()
+    keys.current.set(storageKey, key)
+    pendingKey(storageKey, key)
+    send.mutate({
+      profile: selected.id,
+      version: selected.version,
+      key,
+      storageKey,
+    })
+  }
   return (
     <section className="panel">
       <h2>Dreaming 记忆整理</h2>
@@ -175,10 +187,8 @@ function Dreaming({ data }: { data: Board }) {
             整理模型
             <select
               value={selected.id}
-              onChange={(e) => {
-                setChoice(e.target.value)
-                key.current = ""
-              }}
+              disabled={send.isPending}
+              onChange={(e) => setChoice(e.target.value)}
             >
               {data.models.map((m) => (
                 <option key={m.id} value={m.id}>
@@ -208,7 +218,7 @@ function Dreaming({ data }: { data: Board }) {
           ) ||
           (data.candidate.stage === "held" && !data.candidate.stale)
         }
-        onClick={() => send.mutate()}
+        onClick={submit}
       >
         立即整理
       </Button>

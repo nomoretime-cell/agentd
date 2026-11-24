@@ -80,17 +80,17 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 func (s *Service) claim(ctx context.Context) (batch []Event, err error) {
 	// Caller holds s.mu. Dead heads deliberately block until an authenticated operator resolves them.
 	err = transaction(ctx, s.db, func(tx *sql.Tx) error {
-		parked := s.cfg.parkedEventKind()
+		parked, other := s.cfg.parkedProviders()
 		// An outstanding approval belongs to the channel that created its action.
 		// Keep old-channel work queued until that provider is selected again.
 		rows, e := tx.QueryContext(ctx, `SELECT id,dedup_key,payload,available_at,status,retries FROM inbox AS i
-WHERE status IN ('pending','running','dead') AND json_extract(payload,'$.kind') != ?
+WHERE status IN ('pending','running','dead') AND json_extract(payload,'$.kind') NOT IN (?,?)
 AND (json_extract(payload,'$.kind') NOT IN (SELECT value FROM json_each(?)) OR COALESCE(json_extract(payload,?),'')=?)
 AND (json_extract(payload,'$.kind') != 'approval' OR NOT EXISTS (
  SELECT 1 FROM actions a JOIN inbox origin ON origin.id=CAST(substr(a.dedup_key,4) AS INTEGER)
  WHERE a.id=json_extract(i.payload,'$.action_id') AND a.dedup_key GLOB 'ev:[0-9]*:*'
- AND json_extract(origin.payload,'$.kind')=?))
-ORDER BY id LIMIT ?`, parked, scopedKinds, scopeField, s.eventScope(), parked, s.cfg.Limits.MaxBatch)
+ AND json_extract(origin.payload,'$.kind') IN (?,?)))
+ORDER BY id LIMIT ?`, parked, other, scopedKinds, scopeField, s.eventScope(), parked, other, s.cfg.Limits.MaxBatch)
 		if e != nil {
 			return e
 		}

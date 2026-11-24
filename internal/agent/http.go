@@ -19,6 +19,7 @@ import (
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	workbench := http.NewServeMux()
+	s.registerIMManagement(workbench)
 	s.registerWebChats(workbench)
 	s.registerKnowledgeUploads(workbench)
 	s.registerMemoryWorkbench(workbench)
@@ -194,12 +195,17 @@ func (s *Service) Handler() http.Handler {
 		m, e := s.messageDetail(r.Context(), r.PathValue("id"))
 		respond(w, m, e)
 	})
+	loc, _ := time.LoadLocation(s.cfg.Timezone) // validated at startup
 	workbench.HandleFunc("GET /v1/runs", func(w http.ResponseWriter, r *http.Request) {
 		page, err := s.runHistory(r.Context(), r.URL.Query())
+		for i := range page.Items {
+			page.Items[i].Time = serverTimestamp(page.Items[i].Time, loc)
+		}
 		respond(w, page, err)
 	})
 	workbench.HandleFunc("GET /v1/runs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		record, err := s.historicalRun(r.Context(), r.PathValue("id"))
+		record.Time = serverTimestamp(record.Time, loc)
 		respond(w, record, err)
 	})
 	workbench.HandleFunc("GET /v1/workbench", func(w http.ResponseWriter, r *http.Request) {

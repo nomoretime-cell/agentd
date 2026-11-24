@@ -125,8 +125,3 @@ export const labels: Record<string, string> = {
   interrupted: "已中断",
 }
 export const when = (ts: string) => new Date(ts).toLocaleString("zh-CN")
-export function requestKey() {
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (x) =>
-    x.toString(16).padStart(2, "0")
-  ).join("")
-}

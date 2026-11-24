@@ -37,6 +37,9 @@ type imChannel interface {
 }
 
 func newIMChannel(s *Service) imChannel {
+	if s.cfg.provider() == "none" {
+		return disabledIM{}
+	}
 	if s.cfg.provider() == "wecom" {
 		return &weComChannel{s: s, url: "wss://openws.work.weixin.qq.com"}
 	}
@@ -79,13 +82,23 @@ func imOwnerTarget(target string) bool {
 	return strings.HasPrefix(target, "dingtalk-owner:") || strings.HasPrefix(target, "wecom-owner:")
 }
 
-// IM events of the provider that is not selected stay queued until it is
-// selected again. Their kind is the provider name.
-func (c Config) parkedEventKind() string { return c.inactiveProvider() }
+type disabledIM struct{}
 
-// Targets of the provider that is not selected stay queued until it is selected again.
-func (c Config) parkedTargetGlobs() (reply, owner string) {
-	return c.inactiveProvider() + ":*", c.inactiveProvider() + "-owner:*"
+func (disabledIM) run(context.Context)                          {}
+func (disabledIM) connected() bool                              { return false }
+func (disabledIM) owner() (string, bool)                        { return "", false }
+func (disabledIM) deliver(context.Context, Notification) string { return "offline" }
+
+// Disabled providers keep their work in the ordinary queues for a later restart.
+func (c Config) parkedProviders() (string, string) {
+	switch c.selectedIM() {
+	case "wecom":
+		return "dingtalk", "dingtalk"
+	case "none":
+		return "wecom", "dingtalk"
+	default:
+		return "wecom", "wecom"
+	}
 }
 
 func (s *Service) ownerTarget() string { t, _ := s.im.owner(); return t }
@@ -101,12 +114,6 @@ func (c Config) provider() string {
 		return "dingtalk"
 	}
 	return c.IM.Provider
-}
-func (c Config) inactiveProvider() string {
-	if c.provider() == "wecom" {
-		return "dingtalk"
-	}
-	return "wecom"
 }
 func (p Payload) imTarget(id int64) string {
 	if p.WeCom != nil {

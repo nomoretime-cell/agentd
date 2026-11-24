@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { z } from "zod"
+import { requestKey } from "@/lib/request-key"
 import { request } from "@/api"
 import { Button } from "@/components/ui/button"
 import {
-  batch,
+  receiptFor,
   doc,
-  key,
   library,
   statuses,
   transmit,
@@ -26,9 +26,15 @@ function size(n: number) {
       : (n / (1 << 20)).toFixed(1) + " MiB"
 }
 export function Knowledge({
-  initialDocument = "",
+  selected,
+  query,
+  onSelect,
+  onSearch,
 }: {
-  initialDocument?: string
+  selected: string
+  query: string
+  onSelect: (id: string) => void
+  onSearch: (q: string) => void
 }) {
   const client = useQueryClient()
   const docs = useQuery({
@@ -50,25 +56,21 @@ export function Knowledge({
   const [rows, setRows] = useState<Selection[]>([]),
     [percent, setPercent] = useState<number | null>(null),
     [message, setMessage] = useState(""),
-    [active, setActive] = useState(""),
-    [submitted, setSubmitted] = useState(false)
-  const flight = useRef<AbortController | null>(null),
-    attempt = useRef("")
+    [active, setActive] = useState("")
+  const flight = useRef<AbortController | null>(null)
   useEffect(() => () => flight.current?.abort(), [])
   const current = useQuery({
     queryKey: ["knowledge", "receipt", active],
     queryFn: ({ signal }) =>
-      request("knowledge/uploads/" + active, batch, { signal }),
+      request("knowledge/uploads/" + active, receiptFor(active), { signal }),
     enabled: !!active,
     refetchInterval: (q) =>
+      q.state.status === "error" ||
       q.state.data?.files.every((f) => f.status !== "processing")
         ? false
         : 1000,
   })
-  const [text, setText] = useState(""),
-    [query, setQuery] = useState(""),
-    [selected, setSelected] = useState(initialDocument),
-    [path, setPath] = useState("")
+  const [path, setPath] = useState("")
   const search = useQuery({
     queryKey: ["knowledge", "search", query],
     enabled: !!query,
@@ -95,22 +97,22 @@ export function Knowledge({
         body: JSON.stringify(body),
       }),
     onSuccess: () => {
-      setSelected("")
+      onSelect("")
       void refresh()
     },
   })
   const list = docs.data?.documents ?? []
+  const submitted = !!current.data
   const busy =
     percent !== null ||
     (!!active &&
-      (!current.data ||
-        current.data.files.some((f) => f.status === "processing")))
+      !current.isError &&
+      (current.isPending ||
+        current.data?.files.some((f) => f.status === "processing")))
   function edit(next: Selection[]) {
     setRows(next)
     setMessage("")
     setActive("")
-    setSubmitted(false)
-    attempt.current = ""
   }
   function add(files: File[]) {
     if (!files.length || busy) return
@@ -146,28 +148,20 @@ export function Knowledge({
       rows.reduce((n, r) => n + r.file.size, 0) > cfg.max_total)
   async function send() {
     if (flight.current || !rows.length) return
-    const id = attempt.current || key()
-    attempt.current = id
+    const id = active || requestKey()
     const controller = new AbortController()
     flight.current = controller
     setPercent(0)
     setMessage("")
     try {
-      await transmit(id, rows, controller.signal, setPercent)
-      setActive(id)
-      setSubmitted(true)
+      const receipt = await transmit(id, rows, controller.signal, setPercent)
+      client.setQueryData(["knowledge", "receipt", id], receipt)
     } catch (e) {
-      try {
-        const found = await request("knowledge/uploads/" + id, batch)
-        client.setQueryData(["knowledge", "receipt", id], found)
-        setActive(id)
-        setSubmitted(true)
-      } catch {
-        setMessage(e instanceof Error ? e.message : "上传失败，可重新提交。")
-      }
+      setMessage(e instanceof Error ? e.message : "上传未成功，请核对回执。")
     } finally {
       flight.current = null
       setPercent(null)
+      setActive(id)
       void refresh()
     }
   }
@@ -301,20 +295,30 @@ export function Knowledge({
             本批传输 {percent}% <progress value={percent} max={100} />
           </p>
         )}
-        {message && <p role="alert">{message}</p>}
+        {message && !submitted && <p role="alert">{message}</p>}
         <div className="knowledge-actions">
-          {!submitted && (
+          {active && current.isError && (
+            <Button
+              variant="outline"
+              disabled={current.isFetching || percent !== null}
+              onClick={() => void current.refetch()}
+            >
+              重新核对回执
+            </Button>
+          )}
+          {(!submitted || current.isError) && (
             <Button
               disabled={
                 !cfg ||
                 !rows.length ||
                 !!over ||
                 busy ||
+                current.isFetching ||
                 rows.some((r) => problem(r.file))
               }
               onClick={() => void send()}
             >
-              开始上传
+              {active ? "按原批次重试" : "开始上传"}
             </Button>
           )}
           {percent !== null && (
@@ -347,18 +351,22 @@ export function Knowledge({
       <section className="panel">
         <h2>已入库文档</h2>
         <form
+          key={query}
           onSubmit={(e) => {
             e.preventDefault()
-            setQuery(text.trim())
-            if (query && text.trim() === query) void search.refetch()
+            const text = String(
+              new FormData(e.currentTarget).get("q") ?? ""
+            ).trim()
+            if (text === query && query) void search.refetch()
+            else onSearch(text)
           }}
         >
           <label>
             检索正文
             <input
               type="search"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
+              name="q"
+              defaultValue={query}
               placeholder="输入文档中的词句"
             />
           </label>
@@ -376,7 +384,7 @@ export function Knowledge({
                 <button
                   className="history-link"
                   onClick={() =>
-                    setSelected(h.path.split("/").at(-1)!.replace(/\.md$/, ""))
+                    onSelect(h.path.split("/").at(-1)!.replace(/\.md$/, ""))
                   }
                 >
                   {h.snippet}
@@ -396,7 +404,7 @@ export function Knowledge({
               <li key={d.doc_id}>
                 <button
                   className="history-link"
-                  onClick={() => setSelected(d.doc_id)}
+                  onClick={() => onSelect(d.doc_id)}
                 >
                   {d.title}
                 </button>{" "}
@@ -413,7 +421,7 @@ export function Knowledge({
             <small>入库版本 SHA-256 · {detail.data.document.sha256}</small>
             <pre>{detail.data.body}</pre>
             <div className="knowledge-actions">
-              <Button variant="outline" onClick={() => setSelected("")}>
+              <Button variant="outline" onClick={() => onSelect("")}>
                 收起正文
               </Button>
               <Button

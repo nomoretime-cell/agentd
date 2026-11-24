@@ -84,8 +84,8 @@ func (s *Service) deliverOne(ctx context.Context) error {
 		return nil
 	}
 	var n Notification
-	parkedReply, parkedOwner := s.cfg.parkedTargetGlobs()
-	e := s.db.QueryRowContext(ctx, "SELECT id,dedup_key,target,content,deliver_at,status,retries FROM outbox WHERE status='pending' AND deliver_at<=? AND target NOT GLOB ? AND target NOT GLOB ? ORDER BY id LIMIT 1", now.UnixMilli(), parkedReply, parkedOwner).Scan(&n.ID, &n.Key, &n.Target, &n.Content, &n.DeliverAt, &n.Status, &n.Retries)
+	parked, other := s.cfg.parkedProviders()
+	e := s.db.QueryRowContext(ctx, "SELECT id,dedup_key,target,content,deliver_at,status,retries FROM outbox WHERE status='pending' AND deliver_at<=? AND target NOT GLOB ? AND target NOT GLOB ? AND target NOT GLOB ? AND target NOT GLOB ? ORDER BY id LIMIT 1", now.UnixMilli(), parked+":*", parked+"-owner:*", other+":*", other+"-owner:*").Scan(&n.ID, &n.Key, &n.Target, &n.Content, &n.DeliverAt, &n.Status, &n.Retries)
 	if errors.Is(e, sql.ErrNoRows) {
 		s.mu.Unlock()
 		return nil

@@ -32,7 +32,7 @@ const fileResult = z.object({
 export const batch = z.object({
   id: z.string(),
   created: z.string(),
-  files: z.array(fileResult),
+  files: z.array(fileResult).min(1),
 })
 export const uploads = z.object({
   batches: z.array(batch),
@@ -58,10 +58,8 @@ export const statuses: Record<string, string> = {
   failed: "失败",
   archived: "已归档",
 }
-export function key() {
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
-    b.toString(16).padStart(2, "0")
-  ).join("")
+export function receiptFor(id: string) {
+  return batch.refine((receipt) => receipt.id === id, "批次编号不匹配")
 }
 export function transmit(
   id: string,
@@ -82,7 +80,7 @@ export function transmit(
     )
   )
   for (const { file } of rows) data.append("file", file, "blob")
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<z.infer<typeof batch>>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     const abort = () => xhr.abort()
     xhr.upload.onprogress = (e) => {
@@ -90,21 +88,20 @@ export function transmit(
     }
     xhr.open("POST", "/v1/knowledge/uploads?key=" + id)
     xhr.setRequestHeader("X-Agentd-Workbench", "1")
+    xhr.responseType = "json"
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve()
+        const parsed = receiptFor(id).safeParse(xhr.response)
+        if (parsed.success) resolve(parsed.data)
+        else reject(new Error("服务器未返回有效的批次回执。"))
         return
       }
-      let message = "上传未成功，请核对批次记录。"
-      try {
-        const parsed = z
-          .object({ error: z.string() })
-          .safeParse(JSON.parse(xhr.responseText))
-        if (parsed.success) message = parsed.data.error
-      } catch {
-        /* Non-JSON proxy response. */
-      }
-      reject(new Error(message))
+      const error = z.object({ error: z.string() }).safeParse(xhr.response)
+      reject(
+        new Error(
+          error.success ? error.data.error : "上传未成功，请核对批次记录。"
+        )
+      )
     }
     xhr.onerror = () => reject(new Error("传输中断，请核对服务器回执后重试。"))
     xhr.onabort = () => reject(new Error("已取消传输。"))

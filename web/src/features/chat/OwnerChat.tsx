@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query"
 import { ArrowUp, MessageSquare, MessagesSquare, Plus } from "lucide-react"
 import { z } from "zod"
+import { requestKey, pendingKey } from "@/lib/request-key"
 import { request } from "@/api"
 
 const chat = z.object({ id: z.string(), title: z.string() })
@@ -48,25 +49,6 @@ const actionNames: Record<string, string> = {
 function link(id: string) {
   return "#chat?" + new URLSearchParams({ id })
 }
-function newKey() {
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (v) =>
-    v.toString(16).padStart(2, "0")
-  ).join("")
-}
-
-// Only the opaque, unacknowledged request ID survives a refresh in this tab.
-function pendingKey(chat: string, value?: string) {
-  try {
-    const storageKey = "agentd:chat-send:" + chat
-    if (value === undefined) return sessionStorage.getItem(storageKey) || ""
-    if (value) sessionStorage.setItem(storageKey, value)
-    else sessionStorage.removeItem(storageKey)
-  } catch {
-    /* The in-memory key still covers retries during this visit. */
-  }
-  return ""
-}
-
 export function OwnerChat({ id, paused }: { id: string; paused: boolean }) {
   const list = useInfiniteQuery({
     queryKey: ["web-chats"],
@@ -176,14 +158,15 @@ function Thread({
     refetchInterval: 2000,
   })
   const [draft, setDraft] = useState("")
-  const [unconfirmed, setUnconfirmed] = useState(() => pendingKey(id))
+  const storageKey = "agentd:chat-send:" + id
+  const [unconfirmed, setUnconfirmed] = useState(() => pendingKey(storageKey))
   const scroll = useRef<HTMLDivElement>(null)
   const follow = useRef(true)
   const older = useRef<{ height: number; top: number } | null>(null)
   const rows = (feed.data?.pages.flatMap((p) => p.items) ?? []).reverse()
   const submitting = useRef(false)
   function acknowledge(key: string) {
-    if (pendingKey(id) === key) pendingKey(id, "")
+    if (pendingKey(storageKey) === key) pendingKey(storageKey, "")
     setUnconfirmed("")
     setDraft("")
     follow.current = true
@@ -237,8 +220,8 @@ function Thread({
     )
       return
     submitting.current = true
-    const key = unconfirmed || newKey()
-    pendingKey(id, key)
+    const key = unconfirmed || requestKey()
+    pendingKey(storageKey, key)
     setUnconfirmed(key)
     send.mutate({ text: draft.trim(), key })
   }

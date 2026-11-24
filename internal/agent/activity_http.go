@@ -79,6 +79,7 @@ func (s *Service) dailyActivity(ctx context.Context, days int, now time.Time) (a
 		return result, errors.New("select 7 or 30 days")
 	}
 	loc, _ := time.LoadLocation(s.cfg.Timezone)
+	result.Since = result.Since.In(loc)
 	today, _ := time.ParseInLocation(time.DateOnly, now.In(loc).Format(time.DateOnly), loc)
 	start := today.AddDate(0, 0, 1-days)
 	byDate := map[string]int{}
@@ -139,18 +140,19 @@ func (s *Service) dailyActivity(ctx context.Context, days int, now time.Time) (a
 }
 
 type activityItem struct {
-	Run     string `json:"run"`
-	At      int64  `json:"at"`
-	ID      string `json:"id"`
-	Total   *int64 `json:"total"`
-	Event   int64  `json:"event"`
-	Attempt string `json:"attempt"`
-	Label   string `json:"label"`
-	Body    string `json:"body"`
-	Status  string `json:"status"`
-	Key     string `json:"key"`
-	Input   *int64 `json:"input"`
-	Output  *int64 `json:"output"`
+	LocalAt time.Time `json:"local_at"`
+	Run     string    `json:"run"`
+	At      int64     `json:"at"`
+	ID      string    `json:"id"`
+	Total   *int64    `json:"total"`
+	Event   int64     `json:"event"`
+	Attempt string    `json:"attempt"`
+	Label   string    `json:"label"`
+	Body    string    `json:"body"`
+	Status  string    `json:"status"`
+	Key     string    `json:"key"`
+	Input   *int64    `json:"input"`
+	Output  *int64    `json:"output"`
 }
 type activityPage struct {
 	Items []activityItem `json:"items"`
@@ -192,6 +194,7 @@ func (s *Service) activityDetails(ctx context.Context, kind string, q url.Values
 		if indexed {
 			it.Run = durableRunID(it.Event, it.Attempt)
 		}
+		it.LocalAt = time.UnixMilli(it.At).In(loc)
 		it.Body, it.Label = s.redact(it.Body), s.redact(it.Label)
 		page.Items = append(page.Items, it)
 	}

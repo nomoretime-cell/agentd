@@ -1,3 +1,4 @@
+import { serverTime } from "@/lib/server-time"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { Dialog } from "radix-ui"
 import { Search, X } from "lucide-react"
@@ -95,15 +96,7 @@ function conversationLabel(value: string) {
     "历史未记录"
   )
 }
-function timestamp(value: string, tz: string) {
-  if (!value) return "历史未记录"
-  const date = new Date(value)
-  return Number.isNaN(date.valueOf())
-    ? value
-    : date.toLocaleString("zh-CN", { timeZone: tz, hour12: false })
-}
-
-export function RunHistory({ search }: { search: string }) {
+export function RunHistory({ search }: { search: URLSearchParams }) {
   const params = new URLSearchParams(search)
   const id = params.get("run")
   const viewingAction = params.has("action")
@@ -338,7 +331,7 @@ export function RunHistory({ search }: { search: string }) {
                       <span className="history-copy">
                         <strong>{row.excerpt || "查看运行记录"}</strong>
                         <small>
-                          {timestamp(row.ts, first?.timezone || "UTC")} ·{" "}
+                          {serverTime(row.ts)} ·{" "}
                           {conversationLabel(row.conversation)}
                         </small>
                       </span>
@@ -364,35 +357,16 @@ export function RunHistory({ search }: { search: string }) {
         </>
       )}
       {message && !viewingAction && (
-        <MessageDetail
-          key={message}
-
-          id={message}
-          params={new URLSearchParams(search)}
-        />
+        <MessageDetail key={message} id={message} params={search} />
       )}
       {id && !message && !viewingAction && (
-        <RunDetail
-          key={id}
-
-          id={id}
-          timezone={first?.timezone}
-          filters={params}
-        />
+        <RunDetail key={id} id={id} filters={params} />
       )}
     </section>
   )
 }
 
-function RunDetail({
-  id,
-  timezone,
-  filters,
-}: {
-  id: string
-  timezone?: string
-  filters: URLSearchParams
-}) {
+function RunDetail({ id, filters }: { id: string; filters: URLSearchParams }) {
   const detail = useQuery<z.infer<typeof runSchema>>({
     queryKey: ["run", id],
     refetchInterval: (q) => (q.state.data?.status === "running" ? 2000 : false),
@@ -460,10 +434,7 @@ function RunDetail({
               <section>
                 <h3>{states[r.status] || r.status || "状态未记录"}</h3>
                 <p>
-                  {timezone
-                    ? timestamp(r.ts, timezone) + " · " + timezone
-                    : r.ts}{" "}
-                  · {conversationLabel(r.conversation)}
+                  {serverTime(r.ts)} · {conversationLabel(r.conversation)}
                 </p>
                 <code>{id}</code>
                 <p>

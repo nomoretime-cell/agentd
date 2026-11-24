@@ -13,7 +13,7 @@ async function listen(server) {
   await once(server, "listening")
   return "http://127.0.0.1:" + server.address().port
 }
-export async function startInstance(webOrigin, dreaming = false) {
+export async function startInstance(webOrigin, dreaming = false, localZone) {
   const cache = join(repo, ".cache")
   await mkdir(cache, { recursive: true })
   const root = await mkdtemp(join(cache, "web-preview-"))
@@ -110,6 +110,7 @@ export async function startInstance(webOrigin, dreaming = false) {
     JSON.stringify({
       listen: new URL(url).host,
       web_origin: webOrigin,
+      ...(localZone && { timezone: "Local" }),
       model: { endpoint: stubURL + "/chat/completions", name: "本地演示模型" },
       ...(dreaming && {
         dream_models: Object.fromEntries(
@@ -136,7 +137,10 @@ export async function startInstance(webOrigin, dreaming = false) {
   const child = spawn(
     join(repo, "bin/agentd-web"),
     ["-root", root, "-config", cfg],
-    { stdio: "ignore" }
+    {
+      stdio: "ignore",
+      env: localZone ? { ...process.env, TZ: localZone } : process.env,
+    }
   )
   const ended = once(child, "exit")
   // Handle a launch error even before the readiness loop queries the child.

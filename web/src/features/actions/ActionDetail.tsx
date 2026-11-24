@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { Dialog } from "radix-ui"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { X } from "lucide-react"
@@ -30,6 +31,7 @@ export function ActionDetail({
   close: () => void
   statusNames: Record<string, string>
 }) {
+  const [opener] = useState(() => document.activeElement)
   const client = useQueryClient()
   const path = "actions/" + encodeURIComponent(id)
   const query = useQuery({
@@ -61,7 +63,24 @@ export function ActionDetail({
     >
       <Dialog.Portal>
         <Dialog.Overlay className="scrim" />
-        <Dialog.Content className="sheet" aria-describedby={undefined}>
+        <Dialog.Content
+          className="sheet"
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            const target =
+              opener instanceof HTMLElement &&
+              opener !== document.body &&
+              opener.isConnected
+                ? opener
+                : document.querySelector<HTMLElement>(
+                    '.queue-choices [aria-pressed="true"]'
+                  )
+            if (target) {
+              event.preventDefault()
+              target.focus({ preventScroll: true })
+            }
+          }}
+        >
           <div className="section-head">
             <Dialog.Title>动作详情</Dialog.Title>
             <Dialog.Close aria-label="关闭详情" className="icon-button">

@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { Dialog } from "radix-ui"
 import { Activity, Inbox, MessageSquare, Newspaper, X } from "lucide-react"
 import { z } from "zod"
+import { serverTime } from "@/lib/server-time"
 import { request } from "@/api"
 
 const daySchema = z.object({
@@ -26,6 +27,7 @@ const details = z.object({
   items: z.array(
     z.object({
       at: z.number(),
+      local_at: z.string().optional(),
       id: z.string(),
       total: z.number().nullable(),
       input: z.number().nullable(),
@@ -228,11 +230,7 @@ export function DailyActivity({
                   ·{" "}
                 </>
               )}
-              采集始于{" "}
-              {new Date(data.since).toLocaleString("zh-CN", {
-                timeZone: data.timezone,
-              })}
-              。
+              采集始于 {serverTime(data.since)}。
               {metric === "news" &&
                 data.undated_news > 0 &&
                 "另有 " + data.undated_news + " 条历史推送缺少确认日期。"}
@@ -345,9 +343,7 @@ function ActivityDetails({
                       : it.label}
               </h3>
               <small>
-                {new Date(it.at).toLocaleTimeString("zh-CN", {
-                  timeZone: timezone,
-                })}{" "}
+                {serverTime(it.local_at ?? new Date(it.at).toISOString(), true)}{" "}
                 ·{" "}
                 {metric === "news"
                   ? it.status === "owner"

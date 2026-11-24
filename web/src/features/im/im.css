@@ -1,0 +1,79 @@
+.im-page {
+  display: grid;
+  gap: 1rem;
+  max-width: 64rem;
+}
+.im-page .panel {
+  padding: clamp(1rem, 3vw, 1.5rem);
+  min-width: 0;
+}
+.im-state,
+.im-controls,
+.im-card header,
+.im-card dl {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem 1.1rem;
+}
+.im-state {
+  gap: 1.2rem 3.5rem;
+}
+.im-state > div,
+.im-card dl > div {
+  display: grid;
+  gap: 0.3rem;
+}
+.im-state small,
+.im-card dt {
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+}
+.im-state strong {
+  font-size: 1.2rem;
+}
+.im-card dl {
+  margin: 1rem 0;
+  gap: 1.1rem 3rem;
+}
+.im-card .im-controls,
+.im-card form {
+  margin-top: 1rem;
+}
+.im-card form {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+.im-card fieldset {
+  min-width: 0;
+}
+.im-card legend {
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+.im-card label {
+  display: block;
+  font-size: 0.88rem;
+  margin: 0.55rem 0;
+}
+.im-card input:not([type="checkbox"]),
+.im-card textarea {
+  display: block;
+  width: min(100%, 32rem);
+  margin-top: 0.25rem;
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.65rem;
+  border-radius: 0.4rem;
+  background: var(--background);
+  color: var(--foreground);
+}
+.im-card input[type="checkbox"] {
+  margin-right: 0.45rem;
+}
+.im-card button:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+.im-card [role="alert"] {
+  color: var(--destructive);
+}

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHistoryPaginationAndReceipts(t *testing.T) {
@@ -120,6 +121,22 @@ func TestHistoryScanBoundAndRecordBoundary(t *testing.T) {
 	for _, bad := range []string{"../api-token.0", day + ".1", day + ".-1"} {
 		if _, err := s.historicalRun(t.Context(), bad); err == nil {
 			t.Fatal("accepted invalid position")
+		}
+	}
+}
+
+func TestRunTimeAcrossClockRollback(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for input, want := range map[string]string{
+		"2026-11-01T05:30:00Z": "2026-11-01T01:30:00-04:00",
+		"2026-11-01T06:30:00Z": "2026-11-01T01:30:00-05:00",
+		"2026-11-01":           "2026-11-01", // Older transcripts may omit the time.
+	} {
+		if got := serverTimestamp(input, loc); got != want {
+			t.Errorf("serverTimestamp(%q) = %q, want %q", input, got, want)
 		}
 	}
 }

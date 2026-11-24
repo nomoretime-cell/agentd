@@ -3,9 +3,11 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,8 +21,10 @@ type NewsFeed struct {
 }
 
 type Config struct {
-	IM struct {
-		Provider string `yaml:"provider"`
+	sourcePath string
+	IM         struct {
+		Provider         string            `yaml:"provider"`
+		PreviousIdentity map[string]string `yaml:"previous_identity,omitempty"`
 	} `yaml:"im"`
 	WeCom              WeComConfig            `yaml:"wecom"`
 	NewsFeeds          []NewsFeed             `yaml:"news_feeds"`
@@ -99,15 +103,24 @@ func DefaultConfig() Config {
 	}, Listen: "127.0.0.1:8090", Model: ModelConfig{Endpoint: "http://localhost:8080/v1/chat/completions", MaxTokens: 2048, TimeoutSeconds: 120}, StrongModel: StrongModelConfig{ModelConfig: ModelConfig{TimeoutSeconds: 300}, MaxSteps: 40, RunSeconds: 1800, MaxContextBytes: 512 << 10}, Knowledge: KnowledgeConfig{ConverterSeconds: 120}, Limits: Limits{RunSeconds: 240, ToolSeconds: 15, MaxSteps: 12, MaxInputBytes: 16384, MaxOutputBytes: 16384, MaxBatch: 20, MaxHistoryMessages: 24, MaxRunsPerHour: 120, RetryBaseMS: 1000, DebounceMS: 1000, PollMS: 250, ApprovalSeconds: 3600}, Timezone: "UTC", DefaultTarget: "local", Targets: map[string]Target{"local": {Kind: "local"}}, Permissions: map[string]string{"read_file": "allow", "search": "allow", "write_file": "allow", "edit_file": "allow", "set_timer": "allow", "send_message": "allow", "bash": "deny"}, Actions: map[string]Operation{}}
 }
 func LoadConfig(path string) (Config, error) {
-	c := DefaultConfig()
 	f, e := os.Open(path)
+	if e != nil {
+		return DefaultConfig(), e
+	}
+	defer f.Close()
+	c, e := decodeConfig(f)
 	if e != nil {
 		return c, e
 	}
-	defer f.Close()
-	d := yaml.NewDecoder(f)
+	c.sourcePath, e = filepath.Abs(path)
+	return c, e
+}
+
+func decodeConfig(r io.Reader) (Config, error) {
+	c := DefaultConfig()
+	d := yaml.NewDecoder(r)
 	d.KnownFields(true)
-	if e = d.Decode(&c); e != nil {
+	if e := d.Decode(&c); e != nil {
 		return c, e
 	}
 	return c, c.Validate()
@@ -121,6 +134,7 @@ func (c Config) Validate() error {
 		names[feed.Name] = true
 	}
 	switch c.provider() {
+	case "none": // Both channels are parked.
 	case "dingtalk":
 		if err := c.DingTalk.validate(); err != nil {
 			return err
@@ -130,7 +144,7 @@ func (c Config) Validate() error {
 			return err
 		}
 	default:
-		return errors.New("im.provider must be dingtalk or wecom")
+		return errors.New("im.provider must be dingtalk, wecom or none")
 	}
 	host, _, err := net.SplitHostPort(c.Listen)
 	if err != nil {
