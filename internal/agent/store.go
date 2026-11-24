@@ -38,6 +38,26 @@ CREATE INDEX IF NOT EXISTS idx_outbox_due ON outbox(status,deliver_at);
 PRAGMA user_version=1;
 `
 
+// Nullable columns preserve the distinction between historical gaps and observed zeroes.
+const schemaV2 = `
+ALTER TABLE inbox ADD COLUMN reply_at INTEGER;
+ALTER TABLE inbox ADD COLUMN replies TEXT;
+ALTER TABLE inbox ADD COLUMN last_call_at INTEGER;
+ALTER TABLE inbox ADD COLUMN model_calls TEXT;
+ALTER TABLE outbox ADD COLUMN sent_at INTEGER;
+ALTER TABLE outbox ADD COLUMN confirmed_by TEXT;
+CREATE INDEX idx_inbox_reply_at ON inbox(reply_at) WHERE reply_at IS NOT NULL;
+CREATE INDEX idx_inbox_last_call ON inbox(last_call_at) WHERE last_call_at IS NOT NULL;
+CREATE INDEX idx_outbox_sent_at ON outbox(sent_at) WHERE sent_at IS NOT NULL;
+CREATE TRIGGER record_delivery_confirmation AFTER UPDATE OF status ON outbox
+WHEN NEW.status='sent' AND OLD.status!='sent' AND NEW.sent_at IS NULL
+BEGIN
+  UPDATE outbox SET sent_at=CAST(unixepoch('subsec')*1000 AS INTEGER),
+    confirmed_by=CASE OLD.status WHEN 'sending' THEN 'adapter' ELSE 'owner' END WHERE id=NEW.id;
+END;
+PRAGMA user_version=2;
+`
+
 type Event struct {
 	ID          int64   `json:"id"`
 	Key         string  `json:"key"`
@@ -103,11 +123,37 @@ func openDB(root string) (*sql.DB, *sql.DB, error) {
 	if e = w.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil {
 		return fail(e)
 	}
-	if version > 1 {
+	if version > 3 {
 		return fail(errors.New("database schema is newer than this binary"))
 	}
-	if _, e = w.ExecContext(ctx, schema); e != nil {
-		return fail(e)
+	if version < 2 {
+		e = transaction(ctx, w, func(tx *sql.Tx) error {
+			if version == 0 {
+				if _, err := tx.ExecContext(ctx, schema); err != nil {
+					return err
+				}
+			}
+			_, err := tx.ExecContext(ctx, schemaV2)
+			return err
+		})
+		if e != nil {
+			return fail(e)
+		}
+	}
+	if version < 3 {
+		e = transaction(ctx, w, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `ALTER TABLE inbox ADD COLUMN run_index TEXT;
+ALTER TABLE inbox ADD COLUMN run_data TEXT;
+CREATE INDEX idx_inbox_indexed_runs ON inbox(run_index->>'_last') WHERE run_index IS NOT NULL;
+ALTER TABLE outbox ADD COLUMN origin_event INTEGER;
+ALTER TABLE outbox ADD COLUMN origin_attempt TEXT;
+CREATE INDEX idx_outbox_origin ON outbox(origin_event);
+PRAGMA user_version=3;`)
+			return err
+		})
+		if e != nil {
+			return fail(e)
+		}
 	}
 	q = url.Values{"mode": {"ro"}, "_pragma": {"busy_timeout(5000)", "foreign_keys(1)", "query_only(1)"}, "_txlock": {"deferred"}}
 	u.RawQuery = q.Encode()

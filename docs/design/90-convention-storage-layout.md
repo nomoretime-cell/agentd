@@ -18,7 +18,8 @@
 ├── .tools/  .cache/                     # 工具链与构建缓存（已有）
 └── .agentd/                             # 状态根目录（-root），整个目录被 git 忽略，整体备份
     ├── data/                            # 宿主私有：模型不能直接访问
-    │   ├── state.db                     # 4 张业务表
+    │   ├── state.db                     # 4 张业务表；运行快照、回复、调用和投递回执归属 Inbox / Outbox
+    │   ├── workbench-since               # 工作台指标开始采集的 UTC 时间，随数据库备份
     │   ├── agentd.lock  paused.lock  api-token
     │   ├── deliveries/  outputs/  opencode/
     │   ├── memory/                      # 整理的候选、待确认、被拒版本与历史版本，模型不可见

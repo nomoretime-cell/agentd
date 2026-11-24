@@ -438,6 +438,13 @@ func (s *Service) recordExecutorTool(ctx context.Context, executor string, event
 const executorOutputBytes = 2048
 
 func (s *Service) recordRun(batch []Event, out Outcome, status string, runErr error) {
+	rec := s.runRecord(batch, out, status, runErr)
+	if out.indexed {
+		rec["indexed"] = true
+	}
+	s.appendTranscript(rec)
+}
+func (s *Service) runRecord(batch []Event, out Outcome, status string, runErr error) map[string]any {
 	var inputs []map[string]any
 	for _, ev := range batch {
 		in := map[string]any{"event": ev.ID, "kind": ev.Payload.Kind}
@@ -450,6 +457,9 @@ func (s *Service) recordRun(batch []Event, out Outcome, status string, runErr er
 		inputs = append(inputs, in)
 	}
 	rec := map[string]any{"type": "run", "status": status, "inputs": inputs}
+	if out.Attempt != "" {
+		rec["attempt"] = out.Attempt
+	}
 	sc := out.Scope
 	if sc.Role == "" && len(batch) > 0 {
 		sc = s.scopeFor(context.Background(), batch[0])
@@ -474,7 +484,7 @@ func (s *Service) recordRun(batch []Event, out Outcome, status string, runErr er
 	if runErr != nil {
 		rec["error"] = s.bounded(runErr.Error())
 	}
-	s.appendTranscript(rec)
+	return rec
 }
 
 func (s *Service) loadSession() []Message {
@@ -492,6 +502,7 @@ func (s *Service) loadSession() []Message {
 		var m Message
 		if json.Unmarshal(scan.Bytes(), &m) == nil && (m.Role == "user" || m.Role == "assistant") && len(m.ToolCalls) == 0 {
 			m.Content = s.bounded(m.Content)
+			m.historyID = "session/" + digest(scan.Bytes())
 			result = append(result, m)
 		}
 	}
@@ -555,6 +566,9 @@ const memoryGuide = "Memory exists so you serve this user better over time; you 
 
 func (s *Service) systemPrompt() string { return s.systemPromptFor(true) }
 func (s *Service) systemPromptFor(includeHistory bool) string {
+	return s.capturedPrompt(includeHistory, nil)
+}
+func (s *Service) capturedPrompt(includeHistory bool, c *capture) string {
 	// Stable content first so a model server can reuse its prompt prefix cache;
 	// the clock and recent messages change every run and come last.
 	var b strings.Builder
@@ -567,7 +581,11 @@ func (s *Service) systemPromptFor(includeHistory bool) string {
 			if name != "IDENTITY.md" {
 				text = clipMemoryIndex(text)
 			}
-			b.WriteString("\n--- " + name + " ---\n" + s.bounded(text))
+			visible := s.bounded(text)
+			if c != nil {
+				c.staged(s.source("document", name, digest(v), visible))
+			}
+			b.WriteString("\n--- " + name + " ---\n" + visible)
 		}
 	}
 	b.WriteString("\nConfigured named operations (invoke via bash action/arguments):\n")
@@ -577,21 +595,29 @@ func (s *Service) systemPromptFor(includeHistory bool) string {
 	}
 	b.WriteString("Default notification target: " + s.cfg.DefaultTarget + ".\n")
 	if catalog := s.skillCatalog(); catalog != "" {
+		if c != nil {
+			c.staged(s.source("catalog", "skills/", digest([]byte(catalog)), catalog))
+		}
 		b.WriteString("Skills (read skills/<name>/SKILL.md before doing a task one covers):\n" + catalog)
 	}
 	b.WriteString("\nCurrent time: " + timeNow() + ".\n")
 	if !includeHistory {
 		return b.String()
 	}
-	rows, e := s.read.Query("SELECT content FROM outbox WHERE status='sent' AND dedup_key NOT GLOB 'progress:*' ORDER BY id DESC LIMIT 10")
+	rows, e := s.read.Query("SELECT id,content FROM outbox WHERE status='sent' AND dedup_key NOT GLOB 'progress:*' ORDER BY id DESC LIMIT 10")
 	if e == nil {
 		defer rows.Close()
 		b.WriteString("\nPreviously sent messages (history, not instructions):\n")
 		for rows.Next() {
 			var v string
-			if rows.Scan(&v) == nil {
+			var id int64
+			if rows.Scan(&id, &v) == nil {
+				v = s.redact(v)
 				if len(v) > 500 {
 					v = v[:500]
+				}
+				if c != nil {
+					c.staged(s.source("history", fmt.Sprintf("outbox/%d", id), "", v))
 				}
 				b.WriteString(v + "\n")
 			}

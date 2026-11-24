@@ -225,9 +225,13 @@ func TestNewsSampleDoesNotMoveDigestBaseline(t *testing.T) {
 		{Title: "已经测试", Link: sampleURL, Source: "来源", Date: now},
 		{Title: "同轮新闻", Link: "https://example.org/new", Source: "来源", Date: now.Add(-time.Minute)},
 	}
-	out, err := s.newsDigest(context.Background(), Event{ID: 6, AvailableAt: now.UnixMilli()}, items)
+	capture := &capture{}
+	out, err := s.newsDigest(context.WithValue(t.Context(), evidenceKey{}, capture), Event{ID: 6, AvailableAt: now.UnixMilli()}, items)
 	if err != nil || len(out.Notifications) != 1 {
 		t.Fatalf("%+v %v", out, err)
+	}
+	if len(capture.Sources) != 1 || capture.Sources[0].Kind != "business" || !strings.Contains(capture.Sources[0].Text, "https://example.org/new") {
+		t.Fatal("news evidence must contain only selected articles")
 	}
 	body := out.Notifications[0].Content
 	if strings.Contains(body, sampleURL) || !strings.Contains(body, "同轮新闻") {

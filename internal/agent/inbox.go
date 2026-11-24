@@ -127,7 +127,7 @@ ORDER BY id LIMIT ?`, parked, scopedKinds, scopeField, s.eventScope(), parked, s
 			}
 			if s.progressFor(ev.Payload) && s.cfg.Permissions["send_message"] == "allow" {
 				n := Notification{Key: fmt.Sprintf("progress:%d", ev.ID), Target: ev.Payload.imTarget(ev.ID), Content: randomIMProgress()}
-				if e := s.enqueueTx(ctx, tx, n); e != nil {
+				if e := s.enqueueTx(context.WithValue(ctx, callScopeKey{}, callScope{Event: ev.ID}), tx, n); e != nil {
 					return e
 				}
 			}
@@ -173,41 +173,59 @@ func (s *Service) workerLoop(ctx context.Context) {
 		s.mu.Unlock()
 		s.logErr("claim", err)
 		if len(batch) > 0 {
-			outcome, runErr := s.execute(runCtx, batch)
+			attempt := callScope{Event: batch[0].ID, Attempt: randomID(), Purpose: batch[0].Payload.Kind}
+			c := &capture{}
+			runCtx = context.WithValue(context.WithValue(runCtx, callScopeKey{}, attempt), evidenceKey{}, c)
+			initial := Outcome{Attempt: attempt.Attempt, Scope: s.scopeFor(runCtx, batch[0])}
+			opening := s.prepareRun(batch, initial, "running", nil, nil)
+			startErr := transaction(runCtx, s.db, func(tx *sql.Tx) error { return opening.save(runCtx, tx) })
+			var outcome Outcome
+			runErr := startErr
+			if startErr == nil {
+				outcome, runErr = s.execute(runCtx, batch)
+			}
+			outcome.Attempt = attempt.Attempt
 			cancel()
+			record := s.prepareRun(batch, outcome, "done", runErr, c)
 			s.mu.Lock()
 			aborted := s.activeAborted || ctx.Err() != nil
 			var skipped *skippedError
 			isSkipped := errors.As(runErr, &skipped)
 			commitCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
-			if aborted {
-				err = s.returnBatch(commitCtx, batch, false)
+			if startErr != nil {
+				record.status = "failed"
+				err = s.returnBatch(commitCtx, batch, false, nil)
+			} else if aborted {
+				record.status = "aborted"
+				err = s.returnBatch(commitCtx, batch, false, &record)
 			} else if isSkipped {
 				// Effects of a failed critical run are dropped; the event is done.
-				err = s.commitBatch(commitCtx, batch, Outcome{Scope: outcome.Scope})
+				record.status = "skipped"
+				err = s.commitBatch(commitCtx, batch, Outcome{Scope: outcome.Scope, Attempt: outcome.Attempt}, record)
 			} else if runErr != nil {
-				err = s.returnBatch(commitCtx, batch, true)
+				record.status = "failed"
+				err = s.returnBatch(commitCtx, batch, true, &record)
 			} else {
-				err = s.commitBatch(commitCtx, batch, outcome)
+				err = s.commitBatch(commitCtx, batch, outcome, record)
 			}
 			stop()
 			s.activeCancel = nil
 			s.mu.Unlock()
-			status := "done"
-			switch {
-			case aborted:
-				status = "aborted"
-			case isSkipped && err == nil:
-				status = "skipped"
-			case runErr != nil && !isSkipped:
-				status = "failed"
-			case err != nil:
-				status = "commit_failed"
+			if err != nil {
+				record.status = "commit_failed"
 			}
-			s.recordRun(batch, outcome, status, runErr)
+			if err != nil && startErr == nil {
+				// Only mark the opening entry. The failed transaction published no answer or effects.
+				opening.status = "commit_failed"
+				markCtx, finish := context.WithTimeout(context.Background(), 2*time.Second)
+				s.logErr("mark failed run commit", transaction(markCtx, s.db, func(tx *sql.Tx) error { return opening.save(markCtx, tx) }))
+				finish()
+			}
+			outcome.indexed = startErr == nil
+			s.recordRun(batch, outcome, record.status, runErr)
 			s.logErr("execute", runErr)
 			s.logErr("commit", err)
-			if err != nil {
+			if err != nil || (startErr != nil && !aborted) {
 				// Do not run a second model turn against uncertain local commit state.
 				s.logErr("pause after commit failure", s.SetPaused(true))
 			} else if !aborted && runErr == nil && outcome.Scope == localScope && outcome.ReplyTarget == "" && len(outcome.Messages) > 0 {
@@ -223,8 +241,15 @@ func (s *Service) workerLoop(ctx context.Context) {
 		}
 	}
 }
-func (s *Service) returnBatch(ctx context.Context, batch []Event, failure bool) error {
+func (s *Service) returnBatch(ctx context.Context, batch []Event, failure bool, record *runWrite) error {
 	return transaction(ctx, s.db, func(tx *sql.Tx) error {
+		var attempt string
+		if record != nil {
+			if err := record.save(ctx, tx); err != nil {
+				return err
+			}
+			attempt = record.key
+		}
 		for _, ev := range batch {
 			n := ev.Retries
 			status := "pending"
@@ -237,7 +262,7 @@ func (s *Service) returnBatch(ctx context.Context, batch []Event, failure bool) 
 				}
 			}
 			if status == "dead" && s.permitsIM(ev.Payload) {
-				if e := s.enqueueTx(ctx, tx, Notification{Key: fmt.Sprintf("failure:%d", ev.ID), Target: ev.Payload.imTarget(ev.ID), Content: "任务执行失败（已达到重试上限），请联系本机管理员查看 Inbox 死信并处理。"}); e != nil {
+				if e := s.enqueueTx(context.WithValue(ctx, callScopeKey{}, callScope{Event: ev.ID, Attempt: attempt}), tx, Notification{Key: fmt.Sprintf("failure:%d", ev.ID), Target: ev.Payload.imTarget(ev.ID), Content: "任务执行失败（已达到重试上限），请联系本机管理员查看 Inbox 死信并处理。"}); e != nil {
 					return e
 				}
 			}
@@ -248,8 +273,14 @@ func (s *Service) returnBatch(ctx context.Context, batch []Event, failure bool) 
 		return nil
 	})
 }
-func (s *Service) commitBatch(ctx context.Context, batch []Event, out Outcome) error {
+func (s *Service) commitBatch(ctx context.Context, batch []Event, out Outcome, records ...runWrite) error {
 	return transaction(ctx, s.db, func(tx *sql.Tx) error {
+		for _, r := range records {
+			if err := r.save(ctx, tx); err != nil {
+				return err
+			}
+		}
+		ctx = context.WithValue(ctx, callScopeKey{}, callScope{Event: batch[0].ID, Attempt: out.Attempt})
 		for _, n := range out.Notifications {
 			if e := s.enqueueTx(ctx, tx, n); e != nil {
 				return e
@@ -279,6 +310,9 @@ func (s *Service) commitBatch(ctx context.Context, batch []Event, out Outcome) e
 					return e
 				}
 			}
+		}
+		if err := s.commitReplies(ctx, tx, batch[0], out); err != nil {
+			return err
 		}
 		for _, ev := range batch {
 			res, e := tx.ExecContext(ctx, "UPDATE inbox SET status='done' WHERE id=? AND status='running'", ev.ID)

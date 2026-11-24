@@ -22,6 +22,8 @@ type ToolCall struct {
 	Function FunctionCall `json:"function"`
 }
 type Message struct {
+	historyID  string
+	usage      tokenUsage
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
@@ -98,6 +100,7 @@ func (m *HTTPModel) Complete(ctx context.Context, messages []Message, tools []To
 		return Message{}, fmt.Errorf("model HTTP %d: %s", res.StatusCode, strings.ToValidUTF8(string(b[:min(len(b), 300)]), ""))
 	}
 	var result struct {
+		Usage   json.RawMessage `json:"usage"`
 		Choices []struct {
 			Message Message `json:"message"`
 			Finish  string  `json:"finish_reason"`
@@ -106,16 +109,26 @@ func (m *HTTPModel) Complete(ctx context.Context, messages []Message, tools []To
 	if e = json.Unmarshal(b, &result); e != nil {
 		return Message{}, e
 	}
+	var usage struct {
+		Input  *int64 `json:"prompt_tokens"`
+		Output *int64 `json:"completion_tokens"`
+		Total  *int64 `json:"total_tokens"`
+	}
+	var observed Message
+	if json.Unmarshal(result.Usage, &usage) == nil {
+		observed.usage = normalizedUsage(usage.Input, usage.Output, usage.Total)
+	}
 	if len(result.Choices) != 1 {
-		return Message{}, errors.New("model returned no single choice")
+		return observed, errors.New("model returned no single choice")
 	}
 	if result.Choices[0].Finish == "length" {
-		return Message{}, errors.New("model output limit reached")
+		return observed, errors.New("model output limit reached")
 	}
 	msg := result.Choices[0].Message
 	msg.Role = "assistant"
+	msg.usage = observed.usage
 	if len(msg.ToolCalls) == 0 && strings.TrimSpace(msg.Content) == "" {
-		return Message{}, errors.New("empty model response")
+		return observed, errors.New("empty model response")
 	}
 	for i := range msg.ToolCalls {
 		if msg.ToolCalls[i].ID == "" {

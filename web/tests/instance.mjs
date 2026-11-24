@@ -26,6 +26,7 @@ export async function startInstance(webOrigin) {
     } else if (req.url === "/chat/completions") {
       res.end(
         JSON.stringify({
+          usage: { prompt_tokens: 24, completion_tokens: 8, total_tokens: 32 },
           choices: [
             { message: { role: "assistant", content: "已记录处理结果。" } },
           ],
@@ -108,6 +109,15 @@ export async function startInstance(webOrigin) {
       })
       if (!response.ok) throw new Error("无法建立本地审批示例")
     }
+    const message = await fetch(url + "/v1/events", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        key: "history-preview",
+        text: "请记录本次交接结果。",
+      }),
+    })
+    if (!message.ok) throw new Error("无法建立本地运行示例")
     return { url, tokenPath, token, executions: () => executions, stop }
   } catch (error) {
     await stop()

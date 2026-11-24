@@ -25,7 +25,16 @@ export async function startDemo({ port = 0, publicOrigin } = {}) {
       const asset = req.method === "GET" && /^\/assets\/[\w.-]+$/.test(path)
       const read =
         req.method === "GET" &&
-        (/^\/v1\/(status|workbench)$/.test(path) ||
+        (/^\/v1\/(status|workbench|runs|activity|conversations|deliveries)$/.test(
+          path
+        ) ||
+          /^\/v1\/activity\/(replies|tokens|news)$/.test(path) ||
+          /^\/v1\/runs\/(?:\d{4}-\d{2}-\d{2}\.\d+|\d+~[a-f0-9]{48})$/.test(
+            path
+          ) ||
+          /^\/v1\/replies\/(?:delivery|local|reply|message)(?::|%3A)[a-z0-9:%]+$/i.test(
+            path
+          ) ||
           /^\/v1\/actions\/[a-f0-9]+$/.test(path))
       const decide =
         req.method === "POST" &&

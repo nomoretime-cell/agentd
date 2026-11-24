@@ -32,7 +32,7 @@ func (s *Service) chatHistory(ctx context.Context, r *IMRoute, before int64) ([]
  ), messages AS (
  SELECT id,0 AS ordinal,'user' AS role,content FROM prior UNION ALL
  SELECT i.id,o.id,'assistant',o.content FROM prior i JOIN outbox o ON o.target=?||':'||i.id AND o.status='sent' AND o.dedup_key NOT GLOB 'progress:*'
- ) SELECT role,content FROM messages ORDER BY id DESC,ordinal DESC LIMIT ?`, before, path+"conversation_id", r.ConversationID, path+"sender", r.Sender, path+"bot_id", r.BotID, path+"conversation_type", r.ConversationType, s.cfg.Limits.MaxHistoryMessages, channel, s.cfg.Limits.MaxHistoryMessages)
+ ) SELECT role,content,CASE role WHEN 'user' THEN 'inbox/'||id ELSE 'outbox/'||ordinal END FROM messages ORDER BY id DESC,ordinal DESC LIMIT ?`, before, path+"conversation_id", r.ConversationID, path+"sender", r.Sender, path+"bot_id", r.BotID, path+"conversation_type", r.ConversationType, s.cfg.Limits.MaxHistoryMessages, channel, s.cfg.Limits.MaxHistoryMessages)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func (s *Service) chatHistory(ctx context.Context, r *IMRoute, before int64) ([]
 	var turns []Message
 	for rows.Next() {
 		var message Message
-		if err = rows.Scan(&message.Role, &message.Content); err != nil {
+		if err = rows.Scan(&message.Role, &message.Content, &message.historyID); err != nil {
 			return nil, err
 		}
 		turns = append(turns, message)
@@ -121,6 +121,29 @@ func (t *ocTurn) mcp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, ocMap{"jsonrpc": "2.0", "id": req.ID, "result": result})
 }
 
+type ocTokens struct {
+	Input, Output, Total, Reasoning *int64
+	Cache                           struct{ Read, Write *int64 }
+}
+
+func (t ocTokens) usage() tokenUsage {
+	u := tokenUsage{validTokenCount(t.Input), validTokenCount(t.Output), validTokenCount(t.Total)}
+	if u.Total != nil {
+		return u
+	}
+	// OpenCode reports cache and reasoning separately from its input/output.
+	// Without a reported total, all five components are needed.
+	var sum int64
+	for _, n := range []*int64{u.Input, u.Output, t.Reasoning, t.Cache.Read, t.Cache.Write} {
+		if validTokenCount(n) == nil {
+			return u
+		}
+		sum += *n
+	}
+	u.Total = &sum
+	return u
+}
+
 func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute, messages []Message, out Outcome) (Outcome, error) {
 	key := "local"
 	if route != nil && route.BotID == "" {
@@ -178,11 +201,14 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 	prompt := messages[len(messages)-1].Content
 	// Import only pre-migration history on first contact. OpenCode persists the subsequent turns.
 	marker := filepath.Join(dir, "initialized")
+	var imported []Message
 	if !fileExists(marker) && len(messages) > 2 {
-		b, _ := json.Marshal(messages[1 : len(messages)-1])
+		imported = messages[1 : len(messages)-1]
+		b, _ := json.Marshal(imported)
 		prompt = "Prior conversation (data): " + string(b) + "\n" + prompt
 	}
-	cmd.Stdin = strings.NewReader(messages[0].Content + "\n\n" + prompt)
+	provided := messages[0].Content + "\n\n" + prompt
+	cmd.Stdin = strings.NewReader(provided)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return out, err
@@ -190,17 +216,32 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 	if err = cmd.Start(); err != nil {
 		return out, err
 	}
+	s.submitted(ctx, "opencode:"+sid, append([]Message{{Role: "stdin", Content: provided}}, imported...))
 	s.log.Info("opencode run", "event_id", ev.ID, "session", sid)
 	scan := bufio.NewScanner(stdout)
 	scan.Buffer(make([]byte, 4096), 4<<20)
 	var answer, reason string
+	// Keep a missing receipt visible when the process exits before step_finish.
+	current, captureErr := s.startCall(ctx, "opencode", s.cfg.Model.Name)
+	if captureErr != nil {
+		cancel()
+		_ = cmd.Wait()
+		return out, captureErr
+	}
+	seen := map[string]bool{}
+	started := false
 	var failed bool
 	for scan.Scan() {
+		if captureErr != nil {
+			cancel()
+			break
+		}
 		var frame struct {
 			Type, SessionID string
 			Part            struct {
-				Text, Tool, Reason string
-				State              struct {
+				ID, Text, Tool, Reason string
+				Tokens                 json.RawMessage
+				State                  struct {
 					Status, Title, Output, Error string
 					Input                        json.RawMessage
 				}
@@ -215,8 +256,21 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 		if frame.SessionID != sid {
 			continue
 		}
+		if (frame.Type == "step_start" || frame.Type == "step_finish") && frame.Part.ID != "" {
+			if seen[frame.Part.ID] {
+				continue
+			}
+			seen[frame.Part.ID] = true
+		}
 		switch frame.Type {
 		case "step_start":
+			if started || current.ID == "" {
+				current, captureErr = s.startCall(ctx, "opencode", s.cfg.Model.Name)
+				if captureErr != nil {
+					cancel()
+				}
+			}
+			started = true
 			answer = ""
 			reason = ""
 		case "text":
@@ -226,11 +280,30 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 			s.log.Info("opencode tool", "event_id", ev.ID, "tool", frame.Part.Tool, "status", st.Status)
 			// Host tools reach the transcript through the MCP bridge; record only OpenCode's own.
 			if !strings.HasPrefix(frame.Part.Tool, "agentd_") && (st.Status == "completed" || st.Status == "error") {
+				if c := captureFrom(ctx); c != nil {
+					details, _ := json.Marshal(st)
+					c.add(frame.Part.ID, s.source("executor", frame.Part.Tool, "", string(details)))
+				}
 				s.recordExecutorTool(ctx, "opencode", ev.ID, frame.Part.Tool, st.Status, st.Title, st.Input, st.Output, st.Error)
 			}
 		case "step_finish":
+			if current.ID == "" && frame.Part.ID == "" && !started && reason != "" {
+				continue
+			}
+			started = false
+			if current.ID == "" && captureErr == nil {
+				current, captureErr = s.startCall(ctx, "opencode", s.cfg.Model.Name)
+			}
+			var tokens ocTokens
+			if json.Unmarshal(frame.Part.Tokens, &tokens) == nil {
+				s.finishCall(current, tokens.usage())
+			}
+			current = modelCall{}
 			reason = frame.Part.Reason
 		}
+	}
+	if captureErr != nil {
+		cancel()
 	}
 	if scan.Err() != nil {
 		cancel()
@@ -240,6 +313,9 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 	turn.mu.Lock()
 	defer turn.mu.Unlock()
 	out = turn.out
+	if captureErr != nil {
+		return out, captureErr
+	}
 	if ctx.Err() != nil {
 		return out, ctx.Err()
 	}

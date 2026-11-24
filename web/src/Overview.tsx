@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ArrowDownToLine,
   ArrowLeft,
@@ -17,8 +17,11 @@ import {
   RefreshCw,
   ChartColumn,
   PanelLeft,
+  History,
 } from "lucide-react"
+import { DailyActivity } from "./features/overview/DailyActivity"
 import { LedgerChart } from "./features/overview/LedgerChart"
+
 import { ThemeMenu } from "./ThemeMenu"
 import { Brand } from "./Brand"
 import { request, statusSchema } from "./api"
@@ -31,6 +34,10 @@ import {
   type Kind,
 } from "./features/overview/items"
 
+const RunHistory = lazy(() =>
+  import("./features/runs/RunHistory").then((m) => ({ default: m.RunHistory }))
+)
+
 const icons = {
   actions: ClipboardCheck,
   inbox: Inbox,
@@ -38,8 +45,6 @@ const icons = {
   drafts: BookOpenCheck,
 }
 const kinds = Object.keys(categories) as Kind[]
-const readAction = () =>
-  new URLSearchParams(location.hash.slice(1)).get("action")
 const formatNumber = (n: number) => n.toLocaleString("zh-CN")
 
 export function Overview({
@@ -49,20 +54,19 @@ export function Overview({
   token: string
   lock?: () => void
 }) {
-  const [runtimeView, setRuntimeView] = useState(
-    () => location.hash === "#runtime"
-  )
+  const client = useQueryClient()
+  const [hash, setHash] = useState(() => location.hash)
+  const runtimeView = hash === "#runtime"
+  const runsView = hash === "#runs" || hash.startsWith("#runs?")
+  const routeParams = new URLSearchParams(hash.slice(runsView ? 6 : 1))
+  const actionID = routeParams.get("action")
   const [compact, setCompact] = useState(false)
   const [kind, setKind] = useState<Kind>("actions")
   const [offset, setOffset] = useState(0)
-  const [actionID, setActionID] = useState(readAction)
   const [expanded, setExpanded] = useState("")
   const trigger = useRef<HTMLButtonElement | null>(null)
   useEffect(() => {
-    const change = () => {
-      setActionID(readAction())
-      setRuntimeView(location.hash === "#runtime")
-    }
+    const change = () => setHash(location.hash)
     window.addEventListener("hashchange", change)
     return () => window.removeEventListener("hashchange", change)
   }, [])
@@ -114,17 +118,25 @@ export function Overview({
         <nav aria-label="工作台导航">
           <span className="nav-label">工作台</span>
           <a
-            className={runtimeView ? undefined : "nav-main"}
+            className={runtimeView || runsView ? undefined : "nav-main"}
             href="#overview"
             title="工作概览"
           >
             <LayoutDashboard size={17} />
             工作概览
           </a>
+          <a
+            className={runsView ? "nav-main" : undefined}
+            href="#runs"
+            title="会话与运行"
+          >
+            <History size={17} />
+            会话与运行
+          </a>
           <span className="nav-label">运行管理</span>
-          <a href="#ledger" title="账本概览">
+          <a href="#trend" title="每日活动">
             <ChartColumn size={17} />
-            账本概览
+            每日活动
           </a>
           <a href="#queue" title="待处理事项">
             <Inbox size={17} />
@@ -158,7 +170,7 @@ export function Overview({
           </button>
           <span>工作台</span>
           <ChevronRight size={14} />
-          工作概览
+          {runsView ? "会话与运行" : "工作概览"}
           <div className="date">
             {new Intl.DateTimeFormat("zh-CN", { dateStyle: "full" }).format(
               new Date()
@@ -178,57 +190,65 @@ export function Overview({
         <div className="content">
           <div className="page-head">
             <div>
-              <h1>工作概览</h1>
+              <h1>{runsView ? "会话与运行" : "工作概览"}</h1>
             </div>
-            <button
-              className="outline-btn"
-              onClick={() => {
-                void status.refetch()
-                void work.refetch()
-              }}
-            >
-              <RefreshCw
-                size={14}
-                className={status.isFetching || work.isFetching ? "spin" : ""}
-              />
-              刷新
-            </button>
+            {!runsView && (
+              <div className="head-actions">
+                {service && (
+                  <span>
+                    <i className={service.paused ? "dot amber" : "dot"} />
+                    {state}
+                  </span>
+                )}
+                <button
+                  className="outline-btn"
+                  onClick={() => {
+                    void client.invalidateQueries({ queryKey: ["activity"] })
+                    void status.refetch()
+                    void work.refetch()
+                  }}
+                >
+                  <RefreshCw
+                    size={14}
+                    className={
+                      status.isFetching || work.isFetching ? "spin" : ""
+                    }
+                  />
+                  刷新
+                </button>
+              </div>
+            )}
           </div>
-          {(status.error || work.error) && (
+          {!runsView && (status.error || work.error) && (
             <p role="alert">{(status.error || work.error)?.message}</p>
           )}
           <nav className="dashboard-views" aria-label="概览视图">
-            <a href="#overview" aria-current={runtimeView ? undefined : "page"}>
+            <a
+              href="#overview"
+              aria-current={runtimeView || runsView ? undefined : "page"}
+            >
               概览
+            </a>
+            <a href="#runs" aria-current={runsView ? "page" : undefined}>
+              会话与运行
             </a>
             <a href="#runtime" aria-current={runtimeView ? "page" : undefined}>
               运行信息
             </a>
           </nav>
-          <div hidden={runtimeView}>
-            <section className="stats" aria-label="待处理事项统计">
-              {kinds.map((k) => {
-                const Icon = icons[k]
-                return (
-                  <button
-                    key={k}
-                    className={"stat " + (kind === k ? "selected" : "")}
-                    aria-pressed={kind === k}
-                    onClick={() => select(k)}
-                  >
-                    <span className="stat-label">
-                      {categories[k]}
-                      <Icon size={17} />
-                    </span>
-                    <span className="stat-value">
-                      {work.data ? formatNumber(work.data.counts[k]) : "—"}
-                    </span>
-                  </button>
-                )
-              })}
-            </section>
-            <div className="columns">
-              <LedgerChart counts={service?.counts} />
+          {runsView && (
+            <Suspense fallback={<p role="status">正在打开运行记录…</p>}>
+              <RunHistory token={token} search={hash.slice(6)} />
+            </Suspense>
+          )}
+          {!runtimeView && !runsView && (
+            <DailyActivity
+              token={token}
+              pending={
+                work.data &&
+                Object.values(work.data.counts).reduce((n, v) => n + v, 0)
+              }
+            >
               <section className="panel queue" id="queue">
                 <div className="section-head">
                   <div>
@@ -238,6 +258,22 @@ export function Overview({
                   <span className="counter">
                     {work.data ? selectedCount : "—"} 项
                   </span>
+                </div>
+                <div className="queue-choices">
+                  {kinds.map((k) => {
+                    const Icon = icons[k]
+                    return (
+                      <button
+                        key={k}
+                        aria-pressed={kind === k}
+                        onClick={() => select(k)}
+                      >
+                        <Icon size={14} />
+                        {categories[k]}{" "}
+                        {work.data ? formatNumber(work.data.counts[k]) : "—"}
+                      </button>
+                    )
+                  })}
                 </div>
                 {work.isPending && (
                   <p className="empty" role="status">
@@ -310,8 +346,8 @@ export function Overview({
                   </div>
                 )}
               </section>
-            </div>
-          </div>
+            </DailyActivity>
+          )}
           <section className="panel runtime" id="runtime" hidden={!runtimeView}>
             <div className="section-head">
               <div>
@@ -354,9 +390,11 @@ export function Overview({
               </dl>
             )}
           </section>
-          {!!updated && (
+          {runtimeView && <LedgerChart counts={service?.counts} />}
+          {!runsView && !!updated && (
             <div className="timestamp">
-              数据更新于 {new Date(updated).toLocaleTimeString("zh-CN")}
+              待办与运行状态更新于{" "}
+              {new Date(updated).toLocaleTimeString("zh-CN")}
             </div>
           )}
         </div>
@@ -368,17 +406,24 @@ export function Overview({
           token={token}
           statusNames={statusNames}
           close={() => {
+            if (runsView) {
+              routeParams.delete("action")
+              location.replace("#runs?" + routeParams.toString())
+              return
+            }
             history.replaceState(
               null,
               "",
               location.pathname + location.search + "#queue"
             )
-            setActionID(null)
+            setHash(location.hash)
             requestAnimationFrame(() =>
               trigger.current?.isConnected
                 ? trigger.current.focus()
                 : document
-                    .querySelector<HTMLButtonElement>(".stat.selected")
+                    .querySelector<HTMLButtonElement>(
+                      '.queue-choices button[aria-pressed="true"]'
+                    )
                     ?.focus()
             )
           }}

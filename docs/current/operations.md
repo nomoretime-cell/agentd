@@ -31,7 +31,7 @@ curl -s http://127.0.0.1:8090/v1/outbox -H "Authorization: Bearer $TOKEN"
 
 普通通知默认遵循北京时间 23:00–08:00 静默期，审批提示不受静默期影响。需要立刻体验本地通知时，将配置中的 quiet_hours.start / end 都设为空字符串并重启。不要删除数据库来“重试”通知。
 
-带工作台的发布版公开提供页面和静态资源，业务 API 复用同一监听地址。浏览器来源与监听地址或显式配置的 `web_origin` 精确匹配，CLI 可省略 Origin。详见[工作台说明](../../web/README.md)。
+带工作台的发布版公开提供页面和静态资源，业务 API 复用同一监听地址。浏览器来源与监听地址或显式配置的 `web_origin` 精确匹配，CLI 可省略 Origin。所有者可从 `/v1/conversations`、`/v1/runs`、`/v1/deliveries` 浏览历史，按返回的运行 ID 或消息 ID 打开 `/v1/runs/{id}`、`/v1/replies/{id}` 核对上下文和回执。详见[工作台说明](../../web/README.md)。
 
 **HTTP 接口**
 

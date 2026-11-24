@@ -15,6 +15,8 @@ import (
 )
 
 type Outcome struct {
+	indexed       bool
+	Attempt       string
 	ReplyTarget   string
 	Notifications []Notification
 	Timers        []Timer
@@ -88,7 +90,7 @@ func (s *Service) execute(ctx context.Context, batch []Event) (out Outcome, err 
 		ctx = context.WithValue(ctx, teamTurnKey{}, true)
 		prompt = s.teamPrompt()
 	} else {
-		prompt = s.systemPromptFor(target == "")
+		prompt = s.capturedPrompt(target == "", captureFrom(ctx))
 	}
 	messages := []Message{{Role: "system", Content: prompt}}
 	if target == "" {
@@ -156,7 +158,7 @@ func (s *Service) executeCritical(ctx context.Context, ev Event) (Outcome, error
 	ctx = context.WithValue(ctx, scopeKey{}, out.Scope)
 	ctx = context.WithValue(ctx, criticalKey{}, true)
 	input := fmt.Sprintf("Event %d (%s): %s\n", ev.ID, ev.Payload.Kind, ev.Payload.Text)
-	messages := []Message{{Role: "system", Content: s.systemPromptFor(false) + criticalGuide}, {Role: "user", Content: input}}
+	messages := []Message{{Role: "system", Content: s.capturedPrompt(false, captureFrom(ctx)) + criticalGuide}, {Role: "user", Content: input}}
 	sm := s.cfg.StrongModel
 	if ev.Payload.Kind != kindConsolidation {
 		return s.runModel(ctx, s.strong, sm.MaxSteps, sm.MaxContextBytes, ev, messages, input, out)
@@ -190,7 +192,7 @@ func (s *Service) runModel(ctx context.Context, model Model, maxSteps, maxContex
 		if total > maxContext {
 			return out, errContextBudget
 		}
-		msg, e := model.Complete(ctx, messages, s.tools(ctx))
+		msg, e := s.completeMeasured(ctx, model, messages, s.tools(ctx))
 		if e != nil {
 			return out, e
 		}
@@ -317,6 +319,7 @@ func (s *Service) tool(ctx context.Context, key string, call ToolCall, hint stri
 		if err == nil && call.Function.Name != "read_file" {
 			result = s.bounded(result)
 		}
+		s.captureTool(ctx, key, call, result, err)
 		s.recordTool(ctx, key, call, result, pending, err)
 	}()
 	if s.restrictTeamTools(ctx) {

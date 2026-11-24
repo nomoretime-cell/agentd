@@ -37,7 +37,8 @@ func (s *Service) enqueueTx(ctx context.Context, tx *sql.Tx, n Notification) err
 	if n.DeliverAt == 0 {
 		n.DeliverAt = time.Now().UnixMilli()
 	}
-	_, e := tx.ExecContext(ctx, "INSERT INTO outbox(dedup_key,target,content,deliver_at) VALUES(?,?,?,?) ON CONFLICT(dedup_key) DO NOTHING", n.Key, n.Target, n.Content, n.DeliverAt)
+	origin, _ := ctx.Value(callScopeKey{}).(callScope)
+	_, e := tx.ExecContext(ctx, "INSERT INTO outbox(dedup_key,target,content,deliver_at,origin_event,origin_attempt) VALUES(?,?,?,?,nullif(?,0),nullif(?,'')) ON CONFLICT(dedup_key) DO NOTHING", n.Key, n.Target, n.Content, n.DeliverAt, origin.Event, origin.Attempt)
 	if e != nil {
 		return e
 	}

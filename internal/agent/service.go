@@ -20,6 +20,7 @@ import (
 )
 
 type Service struct {
+	metricsSince  time.Time
 	cfg           Config
 	im            imChannel
 	root          string
@@ -105,6 +106,10 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 	if err = os.Chmod(filepath.Join(root, "data/state.db"), 0600); err != nil {
 		return nil, err
 	}
+	s.metricsSince, err = workbenchCoverage(root)
+	if err != nil {
+		return nil, err
+	}
 	s.paused = fileExists(filepath.Join(root, "data/paused.lock"))
 	tokenPath := filepath.Join(root, "data/api-token")
 	b, e := os.ReadFile(tokenPath)
@@ -156,7 +161,12 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 		s.strong = newStandardModel(cfg.StrongModel.ModelConfig)
 	}
 	err = transaction(context.Background(), s.db, func(tx *sql.Tx) error {
-		for _, q := range []string{"UPDATE inbox SET retries=retries+1,status=CASE WHEN retries+1>=3 THEN 'dead' ELSE 'pending' END WHERE status='running'", "UPDATE actions SET status='unknown',result='process interrupted; reconcile before retry' WHERE status='executing'", "UPDATE outbox SET status='unknown' WHERE status='sending'"} {
+		for _, q := range []string{
+			`UPDATE inbox SET run_index=(
+				SELECT json_group_object(key,json(CASE value->>'status'
+				WHEN 'running' THEN json_set(value,'$.status','interrupted') ELSE value END))
+				FROM json_each(run_index)) WHERE status='running' AND run_index IS NOT NULL`,
+			"UPDATE inbox SET retries=retries+1,status=CASE WHEN retries+1>=3 THEN 'dead' ELSE 'pending' END WHERE status='running'", "UPDATE actions SET status='unknown',result='process interrupted; reconcile before retry' WHERE status='executing'", "UPDATE outbox SET status='unknown' WHERE status='sending'"} {
 			if _, e := tx.Exec(q); e != nil {
 				return e
 			}

@@ -19,11 +19,11 @@
 
 | 必备组件 | 对应源码文件 | 持久化载体 | 最小闭环机制 |
 | :--- | :--- | :--- | :--- |
-| **1. Event Inbox** | `internal/agent/inbox.go` | **`inbox` 表（6 列）** | 落库即 ACK、`dedup_key` 去重、**固定 1 秒窗口合批**、单 Worker 严格按序消费 |
+| **1. Event Inbox** | `internal/agent/inbox.go` | **`inbox` 表（12 列）** | 落库即 ACK、`dedup_key` 去重、**固定 1 秒窗口合批**、单 Worker 严格按序消费 |
 | **2. Timers** | `internal/agent/timers.go` | **`timers` 表（5 列）** | `cron_expr` 可空合一支持单次 Follow-up 与周期 Schedule；到期同事务转入 `inbox` |
 | **3. Memory** | `internal/agent/memory.go` | **文件目录（0 张表）** | `IDENTITY.md` + `MEMORY.md`（常驻索引）+ `notes/*.md`（按需详情与任务进度）+ `session.jsonl`（可丢弃滑动上下文缓存） |
 | **4. Permissions** | `internal/agent/permissions.go` | **`actions` 表（8 列）** + 代码守卫 | 宿主隔离密钥 + `allow/ask/deny` 拦截 + **外部写动作状态记账（含审批挂起与 `unknown` 防重）** |
-| **5. Outbox** | `internal/agent/outbox.go` | **`outbox` 表（7 列）** | 解耦推理与发送，支持静默时段顺延、限速重试、**`sending -> unknown` 防崩溃重发**，兼作已发通知历史 |
+| **5. Outbox** | `internal/agent/outbox.go` | **`outbox` 表（11 列）** | 解耦推理与发送，支持静默时段顺延、限速重试、**`sending -> unknown` 防崩溃重发**，兼作已发通知历史 |
 
 ```mermaid
 flowchart TB
@@ -149,7 +149,7 @@ agentd/
 ├── data/                       # [宿主私有，子进程不可见]
 │   ├── agentd.lock             # 单实例排他文件锁
 │   ├── paused.lock             # 存在时表示处于全局暂停态（跨重启保留）
-│   ├── state.db                # 上述 4 张表（26 列）
+│   ├── state.db                # 现行 4 张表（36 列）
 │   └── session.jsonl           # 近期对话滑动窗口缓存（非动作事实证据，超阈值摘要轮转）
 └── workspace/                  # [Memory 载体：纯文本目录，Git 可追踪]
     ├── IDENTITY.md             # [每次必加载 · Agent 只读] 用户长期指令
@@ -182,3 +182,7 @@ agentd/
 2. **暂停/停止与提交串行裁决**：宿主使用同一把进程内互斥锁协调 `/pause`、`/stop` 与 Worker / Outbox 的领取及最终状态提交（避免“刚检查完 `ctx.Err() == nil` 就在提交前被取消覆盖”的竞态）。`/pause` 先落盘 `data/paused.lock` 再取消当前 `Context`，阻止新 Run 领取与新 Outbox 发送；主动暂停或 `/stop` 中止的 `running` 事件退回 `pending` 且**不增加 `retries` 故障计数**。
 3. **子进程生命周期边界**：运行期间 `bash` 启用独立进程组（`Setpgid: true`），超时或 `/stop` 时向进程组发送终止信号并等待退出后再允许启动下一轮；若宿主进程自身遭遇 `SIGKILL` 或断电强退，残留子进程回收依赖操作系统服务管理器（如 `systemd` KillMode / 容器生命周期 / `launchd`），不在应用文档中承诺跨强杀自行寻回孤儿进程。
 4. **`session.jsonl` 定位边界**：`session.jsonl` 仅作为提升对话连贯性的可丢弃上下文缓存（读取时忽略极端断电可能产生的尾部残损行），**绝不作为外部写动作是否已执行的判断依据**——一切外部写事实以 `actions` 与 `outbox` 表为准。
+
+工作台 W2 的 schema v2 在同一事务内迁移 v1。Inbox 增加回复的提交时间、正式回复、最近调用时间和按调用 ID 保存的模型回执。Outbox 增加首次送达确认时间和确认方式。原事件载荷、去重键及四张表的职责沿用 v1，旧行新增列为空。
+
+schema v3 在单次事务中为 Inbox 增加运行索引和私有上下文快照，为 Outbox 增加来源事件和尝试标识。一次批次的回复、终态证据和通知入队同时提交。现行结构共 36 列，旧库按 v1 → v2 → v3 顺序升级。

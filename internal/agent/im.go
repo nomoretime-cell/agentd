@@ -278,3 +278,14 @@ func (s *Service) addIMAnswer(out *Outcome, eventID int64, answer string) {
 	}
 	out.Notifications = append(out.Notifications, Notification{Key: fmt.Sprintf("reply:%d", eventID), Target: out.ReplyTarget, Content: answer})
 }
+
+// runChannel records the originating conversation channel, independently of the current configuration.
+func runChannel(ev Event, target string) string {
+	if target == "" {
+		target = ev.Payload.imTarget(ev.ID)
+	}
+	if provider, _, ok := strings.Cut(target, ":"); ok && imReplyTarget(target) {
+		return provider
+	}
+	return "local"
+}

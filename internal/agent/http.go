@@ -163,6 +163,38 @@ func (s *Service) Handler() http.Handler {
 		}
 		respond(w, map[string]string{"draft": r.PathValue("name"), "decision": r.PathValue("decision")}, s.DecideDraft(r.PathValue("name"), r.PathValue("decision"), req.Reason))
 	})
+	mux.HandleFunc("GET /v1/activity", func(w http.ResponseWriter, r *http.Request) {
+		days := 7
+		if raw := r.URL.Query().Get("days"); raw != "" {
+			days, _ = strconv.Atoi(raw)
+		}
+		data, err := s.dailyActivity(r.Context(), days, time.Now())
+		respond(w, data, err)
+	})
+	mux.HandleFunc("GET /v1/activity/{kind}", func(w http.ResponseWriter, r *http.Request) {
+		data, err := s.activityDetails(r.Context(), r.PathValue("kind"), r.URL.Query())
+		respond(w, data, err)
+	})
+	mux.HandleFunc("GET /v1/conversations", func(w http.ResponseWriter, r *http.Request) {
+		p, e := s.conversations(r.Context(), r.URL.Query())
+		respond(w, p, e)
+	})
+	mux.HandleFunc("GET /v1/deliveries", func(w http.ResponseWriter, r *http.Request) {
+		p, e := s.noticeHistory(r.Context(), r.URL.Query())
+		respond(w, p, e)
+	})
+	mux.HandleFunc("GET /v1/replies/{id}", func(w http.ResponseWriter, r *http.Request) {
+		m, e := s.messageDetail(r.Context(), r.PathValue("id"))
+		respond(w, m, e)
+	})
+	mux.HandleFunc("GET /v1/runs", func(w http.ResponseWriter, r *http.Request) {
+		page, err := s.runHistory(r.Context(), r.URL.Query())
+		respond(w, page, err)
+	})
+	mux.HandleFunc("GET /v1/runs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		record, err := s.historicalRun(r.Context(), r.PathValue("id"))
+		respond(w, record, err)
+	})
 	mux.HandleFunc("GET /v1/workbench", func(w http.ResponseWriter, r *http.Request) {
 		page, err := s.workItems(r.Context(), r.URL.Query().Get("kind"), r.URL.Query().Get("offset"))
 		respond(w, page, err)
@@ -262,7 +294,14 @@ func (s *Service) list(ctx context.Context, table string) ([]map[string]any, err
 	if !allowed[table] {
 		return nil, ErrDenied
 	}
-	rows, e := s.read.QueryContext(ctx, "SELECT * FROM "+table+" ORDER BY rowid DESC LIMIT 200")
+	fields := "*"
+	if table == "inbox" {
+		fields = "id,dedup_key,payload,available_at,status,retries"
+	}
+	if table == "outbox" {
+		fields = "id,dedup_key,target,content,deliver_at,status,retries"
+	}
+	rows, e := s.read.QueryContext(ctx, "SELECT "+fields+" FROM "+table+" ORDER BY rowid DESC LIMIT 200")
 	if e != nil {
 		return nil, e
 	}

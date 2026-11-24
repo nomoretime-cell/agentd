@@ -133,3 +133,136 @@ test("隔离演示直接进入工作台，刷新可继续查看", async ({ page,
     await demo.stop()
   }
 })
+
+test("历史运行可筛选、深链接、刷新并返回原列表", async ({ page, request }) => {
+  const demo = await startDemo()
+  try {
+    const prompt = "请记录本次交接结果"
+    await expect
+      .poll(async () => {
+        const res = await request.get(
+          demo.url + "/v1/runs?q=" + encodeURIComponent(prompt)
+        )
+        return (await res.json()).items?.length ?? 0
+      })
+      .toBeGreaterThan(0)
+    await page.goto(demo.url)
+    await page
+      .getByRole("navigation", { name: "工作台导航" })
+      .getByRole("link", { name: "会话与运行" })
+      .click()
+    await page.getByLabel("关键词").fill(prompt)
+    await page.getByRole("button", { name: "查询", exact: true }).click()
+    await page
+      .getByRole("link", { name: new RegExp(prompt) })
+      .first()
+      .click()
+    const detail = page.getByRole("dialog", { name: "运行详情" })
+    await expect(
+      detail.getByText("已记录处理结果。", { exact: true })
+    ).toBeVisible()
+    await page.reload()
+    await expect(detail.getByText(prompt + "。", { exact: true })).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(detail).toHaveCount(0)
+    await expect(page.getByLabel("关键词")).toHaveValue(prompt)
+    await page.setViewportSize({ width: 375, height: 760 })
+    await page.getByLabel("关键词").fill("不存在的演示关键词")
+    await page.getByRole("button", { name: "查询", exact: true }).click()
+    await expect(page.getByText("所选范围内没有匹配记录")).toBeVisible()
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth
+      )
+    ).toBe(true)
+  } finally {
+    await demo.stop()
+  }
+})
+
+test("首页的按日用量能核对到调用及相应运行", async ({ page, request }) => {
+  const demo = await startDemo()
+  try {
+    await expect
+      .poll(async () => {
+        const r = await request.get(demo.url + "/v1/activity")
+        return (await r.json()).days?.at(-1)?.replies
+      })
+      .toBe(1)
+    await page.goto(demo.url)
+    const summary = page.getByRole("region", { name: "数字员工摘要" })
+    await expect(
+      summary.getByRole("button", { name: /今日回复/ })
+    ).toContainText("1")
+    await summary.getByRole("button", { name: /今日Token 用量/ }).click()
+    const detail = page.getByRole("dialog", { name: "Token 用量明细" })
+    await expect(detail.getByText(/输入 24 · 输出 8 · 总量 32/)).toBeVisible()
+    await detail.getByRole("link", { name: /的运行记录/ }).click()
+    await expect(
+      page.getByRole("dialog").getByText(/输入 24 · 输出 8 · 总量 32/)
+    ).toBeVisible()
+    await page.keyboard.press("Escape")
+    await page
+      .getByRole("navigation", { name: "工作台导航" })
+      .getByRole("link", { name: "工作概览" })
+      .click()
+    await page.getByLabel("统计范围").selectOption("30")
+    await expect(page.locator(".trend-bars button")).toHaveCount(30)
+    await page.setViewportSize({ width: 375, height: 760 })
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth
+      )
+    ).toBe(true)
+  } finally {
+    await demo.stop()
+  }
+})
+
+test("会话、历史版本和投递回执可双向追溯", async ({ page, request }) => {
+  const demo = await startDemo()
+  try {
+    await expect
+      .poll(
+        async () =>
+          (await (await request.get(demo.url + "/v1/activity")).json()).days.at(
+            -1
+          ).replies
+      )
+      .toBe(1)
+    await page.goto(demo.url + "/#runs?view=conversations")
+    await page.getByRole("link", { name: /本地会话/ }).click()
+    await page.getByRole("link", { name: /已记录处理结果/ }).click()
+    const run = page.getByRole("dialog", { name: "运行详情" })
+    const snapshot = run
+      .locator("details")
+      .filter({ has: page.locator("summary", { hasText: "文档 · MEMORY.md" }) })
+    await snapshot.locator("summary").click()
+    await expect(snapshot.getByText(/来源版本 SHA-256/)).toBeVisible()
+    await run.getByRole("link", { name: /查看完整回复/ }).click()
+    const msg = page.getByRole("dialog", { name: "消息详情" })
+    await expect(msg.getByText(/本地已提交/)).toBeVisible()
+    await page.reload()
+    await msg.getByRole("link", { name: "打开生成这条消息的运行" }).click()
+    await expect(run.getByRole("heading", { name: "批次输入" })).toBeVisible()
+    await page.keyboard.press("Escape")
+    await page.getByRole("link", { name: "通知投递", exact: true }).click()
+    await page
+      .getByRole("link", { name: /动作等待审批/ })
+      .first()
+      .click()
+    await expect(
+      msg.getByRole("heading", { name: "动作等待审批" })
+    ).toBeVisible()
+    await msg.getByRole("link", { name: "打开生成这条消息的运行" }).click()
+    await expect(run.getByRole("link", { name: /查看动作/ })).toBeVisible()
+    await page.setViewportSize({ width: 375, height: 760 })
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth
+      )
+    ).toBe(true)
+  } finally {
+    await demo.stop()
+  }
+})
