@@ -59,6 +59,35 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 - **让并发可结束。** 可取消的 I/O 首参为 `ctx context.Context`。启动 goroutine 的代码负责其取消与退出；持锁区和 SQLite 写事务保持短小，模型、网络和子进程调用放在事务外。
 - **保留恢复语义。** 外部写操作先持久化意图，再调用远端。完成情况不明时进入 `unknown` 并核对；只有确认未执行且可恢复的失败才自动重试。正常暂停归还 Inbox 事件，不消耗重试次数。修改幂等键、状态或数据格式时，验证已有记录、重放和重启恢复路径。
 
+## Web 前端开发约定
+
+以下约定适用于计划中的本机所有者工作台。前端在 `web/` 内用 shadcn/ui 官方 Vite 模板起步，采用 React、严格模式 TypeScript 和 Tailwind CSS v4。首版选用 Radix 控件底座，与本地参考项目一致。初始化时在 `web/package.json` 的 `packageManager` 字段记录 pnpm 版本，只提交 `web/pnpm-lock.yaml` 这一份前端依赖锁文件，CI 按锁文件安装。[官方 Vite 模板](https://ui.shadcn.com/docs/installation/vite)
+
+### 代码归属与依赖
+
+- **查阅 shadcn-admin 源码。** 从 agentd 仓库根目录使用相对路径 `../shadcn-admin/`，例如 `rg --files ../shadcn-admin/src/features`。仅在需要查阅且该路径不存在时执行 `git clone --depth 1 https://github.com/satnaing/shadcn-admin.git ../shadcn-admin`。已有副本直接读取，保留其当前分支和本地改动。参考其中的布局和控件用法，工作台鉴权沿用 agentd，示例数据限于测试或演示。
+- **按用户能完成的任务组织代码。** 例如动作审批的页面、请求、类型和测试就近放在 `web/src/features/actions/`。一个功能不导入另一功能的内部文件，跨功能交互由页面或应用入口组合。优先直接导入定义所在文件，避免只为缩短导入路径建立聚合出口。`components/ui/` 存放按需引入的基础控件，审批接口由使用控件的功能调用。目录随实现建立。[功能目录参考](https://github.com/alan2207/bulletproof-react/blob/master/docs/project-structure.md)
+- **依赖随交互复杂度引入。** 多页面需要深链接和可校验的路由参数时采用 TanStack Router，复杂表格需要组合排序、筛选或选行时采用 TanStack Table。普通导航和简单列表优先使用原生链接和语义化表格。实现前先搜仓库内相近功能，借鉴外部示例时按本仓库锁定的版本和实际接口核对生成的代码。[工作台示例](https://github.com/satnaing/shadcn-admin)
+- **让类型覆盖输入边界。** API 请求字段、响应和错误码以 Go 的 HTTP 入口与测试为准。外部 JSON 按 `unknown` 接收，在功能的请求函数中校验页面依赖的字段，保留对新增字段的兼容。复杂表单或多个入口复用同一校验时可用 Zod 并从 schema 推导类型。类型断言不能验证响应内容。[HTTP 入口](internal/agent/http.go)
+
+### 数据、状态与写操作
+
+- **每份状态只由一处维护。** 服务端数据用 TanStack Query 读取和缓存，查询键包含影响结果的参数。需分享或刷新后恢复的筛选放在 URL，表单草稿和弹窗开关留在组件内，派生值在渲染时计算。跨页面共享的纯客户端状态出现后再考虑 Zustand。Effect 用于订阅等外部同步，并负责清理。[React 的 Effect 指南](https://react.dev/learn/you-might-not-need-an-effect) · [TanStack Query 缓存默认行为](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults)
+- **以服务端回执呈现结果。** 例如审批页展示动作 ID 和已冻结的参数，用户提交期间禁用重复提交，收到回执后刷新相关查询。写请求超时或遇到冲突时先重读状态，有外部副作用的请求关闭自动重试。动作结果查 Actions，投递结果查 Outbox；界面上的“已批准”“已执行”“平台已受理”分别以对应记录为据。[操作接口](docs/current/operations.md)
+- **首版由所有者输入现有 API token 解锁。** 页面只在内存中保留 token，请求本服务的 `/v1/*` 时通过 `Authorization: Bearer <token>` 携带。刷新后重新解锁，再从 Go 读取状态。凭证不得进入 URL、`VITE_*` 变量、构建产物、日志或浏览器存储（含 `sessionStorage`）。模型输出和事件正文按文本渲染，使用 Markdown 时禁用原始 HTML 并校验链接协议。[Vite 环境变量](https://vite.dev/guide/env-and-mode)
+- **由 Go 校验请求来源。** 当前受保护接口拒绝所有非空 `Origin`。接入工作台时，所有业务 API 仍须验证 Bearer。请求带有 `Origin` 时，精确匹配受信页面的协议、主机和端口；无 `Origin` 时沿用 Bearer 鉴权，兼容 CLI 和浏览器同源读取。开发代理保留浏览器的 `Origin`，仅在开发时额外信任显式配置的本机 Vite 来源。[HTTP 入口](internal/agent/http.go)
+
+### 静态托管与构建
+
+- 发布时由单个 agentd 进程同源提供页面和 API。解锁前可加载页面外壳及其静态资源，业务数据经受保护的 API 读取。使用客户端路由时，对工作台页面路径的 GET 导航返回 `index.html`，使深链接可以直接打开和刷新。`/healthz` 和 `/v1/*` 仍由现有 HTTP 入口处理，已认证时访问未注册的 API 路径以及请求缺失的静态资源都应得到 404。
+- 发布所需的前端构建和资源打包顺序由 Makefile 表达。干净检出并准备好 Go 工具链后，`make test` 和 `make vet` 可独立运行，无需先生成 `web/dist`。用发布产物验收页面能打开、引用的脚本和样式能加载。[构建入口](Makefile)
+
+### 界面与验收
+
+- **面向所有者的文案默认使用简体中文。** 按钮、状态、表单校验和错误说明遵循同一用语，排查所需的动作 ID 和原始错误保留原值。日期按简体中文习惯显示，涉及定时计划时标明所用时区。
+- **用主题变量表达语义。** 在样式入口定义背景、前景、边框、焦点和危险操作等 CSS 变量，通过 Tailwind 的主题映射使用。优先使用原生按钮、链接和带标签的输入框；弹窗、菜单等复杂控件复用 shadcn/ui 的键盘和焦点行为。状态同时提供文字。自动刷新列表时保持当前选中项、焦点和阅读位置。[shadcn/ui 主题](https://ui.shadcn.com/docs/theming) · [WAI 弹窗交互](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)
+- **从用户入口验证。** 前端建成后提供类型检查、ESLint 和生产构建脚本。功能测试覆盖加载、空结果、请求失败及恢复。用 Playwright 在临时 Go 实例上走通审批：打开页面、解锁、提交决定、刷新、重新解锁、读回该动作的服务端状态。另测无凭证不能读取业务数据、非可信来源即使携带有效测试凭证也不能提交。按角色和可访问名称定位控件，验证键盘操作及窄屏布局，外部执行器使用本地替身。[Playwright 测试指南](https://playwright.dev/docs/best-practices)
+
 ## 安全边界
 
 - **密钥**：`config.local.yaml`、`data/api-token` 和 `data/` 下的会话数据含凭证或用户数据。不读取后输出、不写进日志或测试、不提交。
