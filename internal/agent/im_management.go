@@ -228,7 +228,12 @@ func setIMField(mapping *yaml.Node, key string, value any) error {
 			mapping.Content = append(mapping.Content[:i], mapping.Content[i+2:]...)
 			return nil
 		}
-		return mapping.Content[i+1].Encode(value)
+		var fresh yaml.Node
+		if e := fresh.Encode(value); e != nil {
+			return e
+		}
+		mergeYAML(mapping.Content[i+1], &fresh)
+		return nil
 	}
 	if value == nil {
 		return nil
@@ -239,6 +244,45 @@ func setIMField(mapping *yaml.Node, key string, value any) error {
 	}
 	mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, &node)
 	return nil
+}
+
+// mergeYAML writes fresh into old key by key, so the owner's comments and
+// keys the settings do not cover stay in place. Replaced values keep the
+// comments of the values they replace.
+func mergeYAML(old, fresh *yaml.Node) {
+	if old.Kind != yaml.MappingNode || fresh.Kind != yaml.MappingNode {
+		head, line, foot := old.HeadComment, old.LineComment, old.FootComment
+		*old = *fresh
+		old.HeadComment, old.LineComment, old.FootComment = head, line, foot
+		return
+	}
+	for j := 0; j < len(fresh.Content); j += 2 {
+		found := false
+		for i := 0; i < len(old.Content); i += 2 {
+			if old.Content[i].Value == fresh.Content[j].Value {
+				mergeYAML(old.Content[i+1], fresh.Content[j+1])
+				found = true
+				break
+			}
+		}
+		if !found {
+			old.Content = append(old.Content, fresh.Content[j], fresh.Content[j+1])
+		}
+	}
+}
+
+// encodeConfig keeps the two-space indentation of the shipped configs.
+func encodeConfig(doc *yaml.Node) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if e := enc.Encode(doc); e != nil {
+		return nil, e
+	}
+	if e := enc.Close(); e != nil {
+		return nil, e
+	}
+	return buf.Bytes(), nil
 }
 
 func (s *Service) saveIM(ctx context.Context, req imChange) error {
@@ -364,7 +408,7 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 	if e != nil {
 		return errIMWrite
 	}
-	next, e := yaml.Marshal(&doc)
+	next, e := encodeConfig(&doc)
 	if e != nil {
 		return errIMWrite
 	}

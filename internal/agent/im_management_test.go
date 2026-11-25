@@ -174,3 +174,56 @@ func TestIMConcurrentEdit(t *testing.T) {
 		t.Fatal("expected one committed edit and one conflict", a, b)
 	}
 }
+
+// Saving a channel edits only its settings: comments inside the section and
+// the file's two-space indentation stay as the owner wrote them.
+func TestIMSaveKeepsFormatting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private.yaml")
+	seed := "timezone: UTC # keep-top\nmodel:\n  name: x\nwecom:\n  # keep-head\n  team_knowledge: \"\" # keep-inner\n"
+	if e := os.WriteFile(path, []byte(seed), 0644); e != nil {
+		t.Fatal(e)
+	}
+	c, e := LoadConfig(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	s := openTest(t, c, finalModel())
+	v, e := s.imSettings(t.Context())
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = s.saveIM(t.Context(), imChange{Provider: "wecom", Operation: "save", ID: "bot", Owner: "owner", Secret: "fixture-secret", Revision: v.Revision}); e != nil {
+		t.Fatal(e)
+	}
+	raw, _ := os.ReadFile(path)
+	for _, want := range []string{"# keep-top", "# keep-head", "# keep-inner", "\n  name: x\n", "\n  bot_id: bot\n"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("saved config lacks %q:\n%s", want, raw)
+		}
+	}
+	if stat, e := os.Stat(path); e != nil || stat.Mode().Perm() != 0600 {
+		t.Fatal("config holding secrets not made private")
+	}
+}
+
+// A configured but disabled DingTalk parks its news: claim and the
+// workbench's unfinished-work count agree instead of running it unsent.
+func TestDisabledDingTalkParksNews(t *testing.T) {
+	c := testConfig()
+	c.IM.Provider = "dingtalk"
+	c.DingTalk.Enabled = false
+	s := openTest(t, c, finalModel())
+	if _, e := s.db.Exec("INSERT INTO inbox(dedup_key,payload,available_at) VALUES('legacy-news',?,0)", `{"kind":"ai_news"}`); e != nil {
+		t.Fatal(e)
+	}
+	s.mu.Lock()
+	batch, e := s.claim(t.Context())
+	s.mu.Unlock()
+	if e != nil || len(batch) != 0 {
+		t.Fatal("disabled channel's news was claimed", batch, e)
+	}
+	impact, e := s.imImpact(t.Context(), "dingtalk")
+	if e != nil || impact.Events != 1 {
+		t.Fatal("parked news not counted", impact, e)
+	}
+}

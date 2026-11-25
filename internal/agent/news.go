@@ -396,7 +396,9 @@ func (s *Service) translateHeadlines(ctx context.Context, items []newsItem) erro
 // eventScope is the owner scope that may run now. Legacy DingTalk timer and
 // test events have no news_target in their payload.
 func (s *Service) eventScope() string {
-	if s.cfg.provider() == "none" {
+	// Use the same selection as parking and the workbench: a configured but
+	// disabled DingTalk keeps its news queued rather than running it unsent.
+	if s.cfg.selectedIM() == "none" {
 		return "none"
 	}
 	if s.cfg.provider() == "wecom" {

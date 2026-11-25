@@ -31,7 +31,7 @@ curl -s http://127.0.0.1:8090/v1/outbox -H "Authorization: Bearer $TOKEN"
 
 普通通知默认遵循北京时间 23:00–08:00 静默期，审批提示不受静默期影响。需要立刻体验本地通知时，将配置中的 quiet_hours.start / end 都设为空字符串并重启。不要删除数据库来“重试”通知。
 
-带工作台的发布版公开提供页面和静态资源，业务 API 复用同一监听地址。工作台无需登录，能够访问该入口的人均可查看会话并审批动作。工作台请求的 Host 和写操作的 Origin 须与监听地址或显式配置的 `web_origin` 匹配，CLI 可省略 Origin。所有者可从 `/v1/conversations`、`/v1/runs`、`/v1/deliveries` 浏览历史，按返回的运行 ID 或消息 ID 打开 `/v1/runs/{id}`、`/v1/replies/{id}` 核对上下文和回执。在「IM 渠道」可查看脱敏身份、连接和未结工作量。GET `/v1/im` 返回当前修订号；POST `/v1/im` 使用相同修订号提交 `save`、`select` 或 `remove`，过期修改返回 409。页面保存后按提示重启 agentd，使运行进程加载新配置。详见[工作台说明](../../web/README.md)。
+带工作台的发布版公开提供页面和静态资源，业务 API 复用同一监听地址。工作台无需登录，能够访问该入口的人均可查看会话并审批动作。工作台请求的 Host 和写操作的 Origin 须与监听地址或显式配置的 `web_origin` 匹配，CLI 可省略 Origin。所有者可从 `/v1/conversations`、`/v1/runs`、`/v1/deliveries` 浏览历史，按返回的运行 ID 或消息 ID 打开 `/v1/runs/{id}`、`/v1/replies/{id}` 核对上下文和回执。在「IM 渠道」可查看脱敏身份、连接和未结工作量。GET `/v1/im` 返回当前修订号；POST `/v1/im` 使用相同修订号提交 `save`、`select` 或 `remove`，过期修改返回 409。页面保存后按提示重启 agentd，使运行进程加载新配置。保存只改动该渠道的设置，保留文件中的注释与其他段落，并把配置文件权限收紧为 0600。删除渠道后，它挂起的事件和投递继续保留，只能由原身份重新添加后接续；身份指纹存于状态根目录的 `data/im-identity.json`。确定不再需要的事件可用 `POST /v1/events/{id}/resolve` 跳过。详见[工作台说明](../../web/README.md)。
 
 **HTTP 接口**
 

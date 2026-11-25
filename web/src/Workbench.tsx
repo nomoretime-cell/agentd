@@ -1,4 +1,4 @@
-import { Fragment, Suspense, useState } from "react"
+import { Fragment, Suspense, useEffect, useState } from "react"
 import { Outlet, useLocation } from "@tanstack/react-router"
 import {
   LayoutDashboard,
@@ -35,6 +35,10 @@ export function Workbench() {
   const current = pathname.slice(1) || "overview"
   const pageTitle =
     navigation.find((n) => n.page === current)?.label ?? "工作台"
+  // Each page names itself in the tab title and in browser history.
+  useEffect(() => {
+    document.title = pageTitle + " · agentd 所有者工作台"
+  }, [pageTitle])
   const [compact, setCompact] = useState(false)
   const params = new URLSearchParams(searchStr)
   const actionID = params.get("action")

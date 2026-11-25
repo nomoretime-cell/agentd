@@ -37,6 +37,7 @@ test("所有者审批、回执与刷新后直接读回", async ({ page, request 
     await expect(page).toHaveURL(/#runtime$/)
     await expect(runtime).toHaveAttribute("aria-current", "page")
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("运行状态")
+    await expect(page).toHaveTitle(/^运行状态 · /)
     await expect(
       page.getByRole("navigation", { name: "当前位置" })
     ).toContainText("运行状态")
