@@ -54,15 +54,14 @@ export function MemoryDocument({
           revision,
           { signal }
         )
-        return r.before
+        return { body: r.before, masked: !!r.masked }
       }
-      return (
-        await request(
-          "evolution/document?" + new URLSearchParams({ path, at: past }),
-          documentSchema,
-          { signal }
-        )
-      ).body
+      const v = await request(
+        "evolution/document?" + new URLSearchParams({ path, at: past }),
+        documentSchema,
+        { signal }
+      )
+      return { body: v.body, masked: !!v.masked }
     },
   })
   const save = useMutation({
@@ -135,6 +134,12 @@ export function MemoryDocument({
           </blockquote>
         )
       })}
+      {d.draft && (
+        <p role="status">
+          此技能已有待审草稿，修订请在草稿中继续：
+          <a href={entryLink(d.draft)}>{d.draft}</a>
+        </p>
+      )}
       {d.writable && !draft && (
         <Button variant="outline" onClick={() => edit(d.body)}>
           {path.startsWith("skills/") ? "起草技能修订" : "编辑内容"}
@@ -160,12 +165,13 @@ export function MemoryDocument({
       </label>
       {past && old.data !== undefined && (
         <>
-          <VersionDiff before={old.data} after={d.body} />
-          {d.writable && (
+          <VersionDiff before={old.data.body} after={d.body} />
+          {/* A masked version would restore asterisks instead of secrets. */}
+          {d.writable && !old.data.masked && (
             <Button
               disabled={save.isPending}
               variant="outline"
-              onClick={() => edit(old.data)}
+              onClick={() => edit(old.data.body)}
             >
               以此版本起草修订
             </Button>

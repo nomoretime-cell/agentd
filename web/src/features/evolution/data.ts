@@ -17,6 +17,7 @@ export const revision = z.object({
   version: z.string(),
   event: z.number().optional(),
   attempt: z.string().optional(),
+  masked: z.boolean().optional(),
 })
 export const board = z.object({
   entries: z.array(z.object({ path: z.string(), source: z.string() })),
@@ -88,6 +89,8 @@ export const documentSchema = z.object({
   version: z.string(),
   base: z.string(),
   writable: z.boolean(),
+  masked: z.boolean().optional(),
+  draft: z.string().optional(),
   evidence: z
     .array(z.object({ source: z.string(), quote: z.string() }))
     .nullable(),

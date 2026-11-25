@@ -113,4 +113,4 @@
 3. **第二个角色出现时**：建立 `company/`、`roles/` 和虚拟路径映射，把单角色时的内容迁入 `roles/default/`。
 4. **第三阶段**：付费等级与知识集合的权限、提升闸门。
 
-工作台的记忆修订存入 `data/memory/edits/<修订号>.json`，包含操作人、来源和新旧版本哈希；正文按哈希保存在 `data/memory/edit-content/`。修订记录保留最近 1000 条（`keepEdits`），不再被任何保留记录引用的正文随之删除。`data/memory/edit-pending.json` 用于恢复被中断的写入。技能批准时由 `data/gate/publishing.json` 记录目录替换和审批回执写入位置，重启后完成发布。新增或修订技能草稿的 `.owner-base` 记录起草时有效技能的版本。
+工作台的记忆修订存入 `data/memory/edits/<修订号>.json`，包含操作人、来源和新旧版本哈希；正文按哈希保存在 `data/memory/edit-content/`。修订记录保留最近 1000 条（`keepEdits`），不再被任何保留记录引用的正文随之删除。`data/memory/edit-pending.json` 用于恢复被中断的写入；若现行文件已被整理提升、回滚或服务器上的编辑替换，与记录的两个版本都不一致，该记录改存为 `edit-pending.<时间>.orphan.json` 供核查，不再阻止写入和启动。技能批准时由 `data/gate/publishing.json` 记录目录替换和审批回执写入位置，重启后完成发布。新增或修订技能草稿的 `.owner-base` 记录起草时有效技能的版本。

@@ -181,3 +181,80 @@ func TestSkillPublicationRecovery(t *testing.T) {
 		t.Fatal("draft still active")
 	}
 }
+
+// A revision record left behind when its write was later replaced (by a
+// promotion, rollback or server edit) must not block writes or startup.
+func TestOrphanedRevisionRecordDoesNotBlock(t *testing.T) {
+	root := t.TempDir()
+	s, err := Open(root, testConfig(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	raw, _ := json.Marshal(memoryRevision{ID: "20260101T000000.000000000Z-abcdef01", Path: "MEMORY.md", Previous: "gone", Version: "also-gone"})
+	if err = os.WriteFile(filepath.Join(root, pendingEdit), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(root, testConfig(), nil)
+	if err != nil {
+		t.Fatal("orphaned record stopped startup:", err)
+	}
+	defer s.Close()
+	if fileExists(filepath.Join(root, pendingEdit)) {
+		t.Fatal("orphaned record left pending")
+	}
+	orphans, _ := filepath.Glob(filepath.Join(root, "data/memory/edit-pending.*.orphan.json"))
+	if len(orphans) != 1 {
+		t.Fatal("orphaned record not kept for inspection")
+	}
+	cur, err := s.workspaceRead("MEMORY.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.editDocument("MEMORY.md", "after", digest(cur), ""); err != nil {
+		t.Fatal("write after orphaned record:", err)
+	}
+}
+
+// Owner edits wait for a running consolidation; any edit would make its
+// candidate stale.
+func TestOwnerEditsWaitForConsolidation(t *testing.T) {
+	s := openTest(t, testConfig(), nil)
+	cur, err := s.workspaceRead("MEMORY.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.consolidating.Store(true)
+	defer s.consolidating.Store(false)
+	if _, err = s.editDocument("MEMORY.md", "edited", digest(cur), ""); !errors.Is(err, ErrConflict) {
+		t.Fatal("note edit during consolidation:", err)
+	}
+}
+
+// A skill with a pending draft is revised through the draft; a masked
+// version cannot be restored.
+func TestSkillDraftAndMaskedViews(t *testing.T) {
+	cfg := testConfig()
+	cfg.Model.APIKey = "sk-view-mask-0123456789"
+	s := openTest(t, cfg, nil)
+	const skill = "skills/memory-consolidation/SKILL.md"
+	if v, err := s.memoryDocument(skill, ""); err != nil || !v.Writable || v.Draft != "" {
+		t.Fatalf("skill without draft: %+v %v", v, err)
+	}
+	draft := filepath.Join(s.root, "workspace", draftsPrefix, "memory-consolidation")
+	if err := os.MkdirAll(draft, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(draft, "SKILL.md"), []byte("---\nname: memory-consolidation\ndescription: d\n---\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.memoryDocument(skill, ""); err != nil || v.Writable || v.Draft != draftsPrefix+"memory-consolidation/SKILL.md" {
+		t.Fatalf("skill with draft: %+v %v", v, err)
+	}
+	if err := s.workspaceWrite("notes/key.md", "key "+cfg.Model.APIKey, "absent"); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.memoryDocument("notes/key.md", ""); err != nil || !v.Masked || v.Writable {
+		t.Fatalf("masked note: %+v %v", v, err)
+	}
+}

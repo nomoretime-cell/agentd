@@ -236,15 +236,36 @@ function Dreaming({ data }: { data: Board }) {
     </section>
   )
 }
-export function Evolution({ path }: { path: string }) {
+// Filters that a shared or refreshed link restores live in the URL; an empty
+// source or group means all.
+export type EvolutionFilters = { source: string; group: string; days: 7 | 30 }
+
+export function Evolution({
+  path,
+  filters,
+  onFilter,
+}: {
+  path: string
+  filters: EvolutionFilters
+  onFilter: (next: Partial<EvolutionFilters>) => void
+}) {
   const q = useQuery({
     queryKey: ["evolution", "board"],
     queryFn: ({ signal }) => request("evolution", board, { signal }),
     refetchInterval: 3000,
   })
-  const [days, setDays] = useState(7),
-    [tab, setTab] = useState("全部")
-  const [group, setGroup] = useState("全部")
+  const { days } = filters
+  const tab = filters.source || "全部"
+  const group = filters.group || "全部"
+  // Opening an entry keeps the current filters.
+  const link = (p: string) =>
+    "#evolution?" +
+    new URLSearchParams({
+      path: p,
+      ...(filters.source && { source: filters.source }),
+      ...(filters.group && { group: filters.group }),
+      ...(days !== 7 && { days: String(days) }),
+    })
   const data = q.data
   if (!data)
     return <p role="status">{q.error?.message || "正在读取记忆与技能…"}</p>
@@ -313,7 +334,14 @@ export function Evolution({ path }: { path: string }) {
         <h2>生效条目与草稿</h2>
         <label>
           条目类型
-          <select value={tab} onChange={(e) => setTab(e.target.value)}>
+          <select
+            value={tab}
+            onChange={(e) =>
+              onFilter({
+                source: e.target.value === "全部" ? "" : e.target.value,
+              })
+            }
+          >
             {["全部", ...new Set(data.entries.map((e) => e.source))].map(
               (x) => (
                 <option key={x}>{x}</option>
@@ -327,7 +355,7 @@ export function Evolution({ path }: { path: string }) {
             .map((e) => (
               <li key={e.path}>
                 <a
-                  href={entryLink(e.path)}
+                  href={link(e.path)}
                   aria-current={path === e.path ? "page" : undefined}
                 >
                   {e.path}
@@ -346,7 +374,9 @@ export function Evolution({ path }: { path: string }) {
           时间范围
           <select
             value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
+            onChange={(e) =>
+              onFilter({ days: e.target.value === "30" ? 30 : 7 })
+            }
           >
             <option value={7}>近 7 天</option>
             <option value={30}>近 30 天</option>
@@ -358,7 +388,7 @@ export function Evolution({ path }: { path: string }) {
               key={g}
               variant={g === group ? "default" : "outline"}
               aria-pressed={g === group}
-              onClick={() => setGroup(g)}
+              onClick={() => onFilter({ group: g === "全部" ? "" : g })}
             >
               {g} ·{" "}
               {history.filter((r) => g === "全部" || r.group === g).length}

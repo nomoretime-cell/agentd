@@ -135,12 +135,51 @@ function KnowledgePage() {
     />
   )
 }
+const historyGroups = ["记忆整理", "技能与规则", "文件修订", "需核对"] as const
 const evolution = createRoute({
   ...base,
   path: "evolution",
-  validateSearch: z.object({ path: z.string().optional() }),
-  component: () => <Evolution path={evolution.useSearch().path ?? ""} />,
+  validateSearch: z.object({
+    path: z.string().optional(),
+    // Entry source names come from the server; unknown ones show nothing.
+    source: z.string().optional().catch(undefined),
+    group: z.enum(historyGroups).optional().catch(undefined),
+    days: z.enum(["7", "30"]).optional().catch(undefined),
+  }),
+  component: EvolutionPage,
 })
+function EvolutionPage() {
+  const { path, source, group, days } = evolution.useSearch()
+  const navigate = evolution.useNavigate()
+  return (
+    <Evolution
+      path={path ?? ""}
+      filters={{
+        source: source ?? "",
+        group: group ?? "",
+        days: days === "30" ? 30 : 7,
+      }}
+      onFilter={(next) =>
+        void navigate({
+          search: (prev) => ({
+            ...prev,
+            ...(next.source === undefined
+              ? {}
+              : { source: next.source || undefined }),
+            ...(next.group === undefined
+              ? {}
+              : {
+                  group: historyGroups.find((g) => g === next.group),
+                }),
+            ...(next.days === undefined
+              ? {}
+              : { days: next.days === 30 ? ("30" as const) : undefined }),
+          }),
+        })
+      }
+    />
+  )
+}
 const scopes = [
   "channel",
   "role",

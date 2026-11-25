@@ -564,6 +564,11 @@ func (s *Service) promoteCandidate() error {
 }
 
 func (s *Service) promoteLocked(src string) error {
+	// Finish an interrupted revision first, so its history matches the files
+	// this promotion replaces.
+	if err := s.recoverMemoryEdit(); err != nil {
+		return err
+	}
 	if fileExists(filepath.Join(s.root, promotingMarker)) {
 		return fmt.Errorf("%w: unfinished memory promotion", ErrConflict)
 	}

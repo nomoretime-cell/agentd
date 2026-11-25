@@ -56,11 +56,13 @@ func (s *Service) queueDream(ctx context.Context, key, profile, version string) 
 		return 0, ErrConflict
 	}
 	payload := Payload{Kind: kindConsolidation, Text: dreamPrompt, DreamProfile: profile, DreamVersion: version}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Hash memory before taking s.mu, which gates claims and sends. A held
+	// candidate appearing in between is caught again when the run prepares.
 	s.memoryMu.Lock()
 	held := fileExists(filepath.Join(s.root, heldDir)) && s.checkBase(heldDir) == nil
 	s.memoryMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var id int64
 	err := transaction(ctx, s.db, func(tx *sql.Tx) error {
 		var exists bool

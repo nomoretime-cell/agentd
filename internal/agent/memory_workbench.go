@@ -20,11 +20,16 @@ type memoryEntry struct {
 	Source string `json:"source"`
 }
 type memoryView struct {
-	Path     string     `json:"path"`
-	Body     string     `json:"body"`
-	Version  string     `json:"version"`
-	Base     string     `json:"base"`
-	Writable bool       `json:"writable"`
+	Path     string `json:"path"`
+	Body     string `json:"body"`
+	Version  string `json:"version"`
+	Base     string `json:"base"`
+	Writable bool   `json:"writable"`
+	// Masked reports that the body shown hides configured secrets, so it
+	// cannot be restored as is.
+	Masked bool `json:"masked,omitempty"`
+	// Draft names the pending draft of a skill; edits continue there.
+	Draft    string     `json:"draft,omitempty"`
 	Evidence []evidence `json:"evidence"`
 	History  []string   `json:"history"`
 }
@@ -104,10 +109,18 @@ func (s *Service) memoryDocument(p, at string) (memoryView, error) {
 		return d, e
 	}
 	d.Body = s.maskedFile(string(raw))
+	d.Masked = d.Body != string(raw)
 	d.Version = digest(raw)
 	d.Writable = at == "" && d.Body == string(raw) && (editableNote(p) || (len(parts) == 3 && parts[2] == "SKILL.md" && parts[1] != identityDraft))
 	if at != "" {
 		return d, nil
+	}
+	if strings.HasPrefix(p, "skills/") && len(parts) == 3 {
+		// A skill with a pending draft is revised through that draft.
+		if fileExists(filepath.Join(s.root, "workspace", draftsPrefix, parts[1])) {
+			d.Writable = false
+			d.Draft = draftsPrefix + parts[1] + "/SKILL.md"
+		}
 	}
 	if strings.HasPrefix(p, "skills/") {
 		f, e := s.skillFiles(parts[1])
@@ -158,6 +171,11 @@ func (s *Service) editDocument(p, body, version, base string) (string, error) {
 	if !visibleEntry(p) || s.maskedFile(body) != body {
 		return "", ErrDenied
 	}
+	// A running consolidation is based on the current memory; any edit would
+	// make its candidate stale and waste the run.
+	if s.consolidating.Load() {
+		return "", ErrConflict
+	}
 	if editableNote(p) {
 		return p, s.reviseLocked(p, body, version, "owner", callScope{})
 	}
@@ -168,9 +186,6 @@ func (s *Service) editDocument(p, body, version, base string) (string, error) {
 	meta, e := parseSkill([]byte(body))
 	if e != nil || meta.Name != parts[1] || strings.TrimSpace(meta.Description) == "" || len(meta.Description) > maxDescriptionLen || len(body) > maxSkillBytes {
 		return "", errors.New("技能名称、描述或大小无效")
-	}
-	if s.consolidating.Load() {
-		return "", ErrConflict
 	}
 	if parts[0] == "skills" {
 		d, e := s.memoryDocument(p, "")
@@ -461,6 +476,7 @@ func (s *Service) registerMemoryWorkbench(m *http.ServeMux) {
 						break
 					}
 					*dst = s.maskedFile(string(body))
+					rev.Masked = rev.Masked || *dst != string(body)
 				}
 			}
 		}

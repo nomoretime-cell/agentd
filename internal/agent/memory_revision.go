@@ -29,6 +29,8 @@ type memoryRevision struct {
 	Version  string `json:"version"`
 	Event    int64  `json:"event,omitempty"`
 	Attempt  string `json:"attempt,omitempty"`
+	// Masked is set only in workbench responses whose bodies hide secrets.
+	Masked bool `json:"masked,omitempty"`
 }
 
 func (s *Service) recoverMemoryEdit() error {
@@ -86,7 +88,12 @@ func (s *Service) recoverMemoryEdit() error {
 	if (e == nil && digest(cur) == r.Previous) || (errors.Is(e, fs.ErrNotExist) && r.Previous == "absent") {
 		return os.Remove(pending)
 	}
-	return errors.New("memory revision recovery: live content differs from both recorded versions")
+	// The file changed since (a promotion, rollback or edit on the server).
+	// The record only holds history and the live file is consistent, so keep
+	// the record aside for inspection instead of blocking writes and startup.
+	orphan := strings.TrimSuffix(pending, ".json") + "." + time.Now().UTC().Format("20060102T150405Z") + ".orphan.json"
+	s.logErr("memory revision recovery", fmt.Errorf("live %s differs from both recorded versions; record kept at %s", r.Path, filepath.Base(orphan)))
+	return os.Rename(pending, orphan)
 }
 
 // keepEdits bounds the revision log as keepVersions bounds consolidation
@@ -197,7 +204,8 @@ func (s *Service) reviseLocked(name, content, expected, actor string, scope call
 		return e
 	}
 	if previous != expected && (actor == "owner" || string(old) != content) {
-		return ErrConflict
+		// Same hint as other workspace writes: the model should reread.
+		return fmt.Errorf("%w: file changed; reread it", ErrConflict)
 	}
 	if previous != "absent" && string(old) == content {
 		return nil

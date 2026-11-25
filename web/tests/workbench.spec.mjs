@@ -137,6 +137,23 @@ test("保存的主题在首屏前生效，CSP 只放行页面自带的脚本", a
   }
 })
 
+test("记忆与技能的筛选保存在链接中，刷新后保留", async ({ page }) => {
+  const demo = await startInstance()
+  try {
+    await page.goto(demo.url + "/#evolution")
+    await page.getByLabel("时间范围").selectOption("30")
+    await page.getByRole("button", { name: /文件修订/ }).click()
+    await expect(page).toHaveURL(/days=30/)
+    await page.reload()
+    await expect(page.getByLabel("时间范围")).toHaveValue("30")
+    await expect(
+      page.getByRole("button", { name: /文件修订/ })
+    ).toHaveAttribute("aria-pressed", "true")
+  } finally {
+    await demo.stop()
+  }
+})
+
 test("单一服务直接进入工作台，刷新可继续查看", async ({ page, request }) => {
   const demo = await startInstance()
   try {
