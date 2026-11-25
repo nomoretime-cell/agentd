@@ -54,6 +54,9 @@ type capture struct {
 	promptSources []evidenceSource
 	prompt        string
 	bytes         int
+	// dropped remembers sources that did not fit, so a source resent by
+	// every later request is counted as omitted once.
+	dropped map[evidenceSource]bool
 }
 
 func captureFrom(ctx context.Context) *capture { c, _ := ctx.Value(evidenceKey{}).(*capture); return c }
@@ -94,7 +97,15 @@ func (c *capture) sourceIndex(src evidenceSource) int {
 		}
 	}
 	if len(c.Sources) >= maxEvidenceSources || c.bytes+len(src.Text) > 512<<10 {
-		c.Omitted++
+		key := src
+		key.Text = "" // the digest already identifies the content
+		if !c.dropped[key] {
+			if c.dropped == nil {
+				c.dropped = map[evidenceSource]bool{}
+			}
+			c.dropped[key] = true
+			c.Omitted++
+		}
 		return -1
 	}
 	c.bytes += len(src.Text)

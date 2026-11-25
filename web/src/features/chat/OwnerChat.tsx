@@ -171,6 +171,8 @@ function Thread({
     unconfirmed ? pendingKey(textKey) : ""
   )
   const sentText = useRef(draft)
+  // Mirrors sentText for rendering: a retry resends this text, not edits.
+  const [original, setOriginal] = useState(draft)
   const scroll = useRef<HTMLDivElement>(null)
   const follow = useRef(true)
   const older = useRef<{ height: number; top: number } | null>(null)
@@ -183,6 +185,7 @@ function Thread({
       pendingKey(textKey, "")
     }
     sentText.current = ""
+    setOriginal("")
     setUnconfirmed("")
     // Keep anything typed since; clear only the text that was sent.
     setDraft((current) => (current.trim() === sent ? "" : current))
@@ -241,6 +244,7 @@ function Thread({
     submitting.current = true
     const key = unconfirmed || requestKey()
     if (!unconfirmed || !sentText.current) sentText.current = draft.trim()
+    setOriginal(sentText.current)
     pendingKey(storageKey, key)
     pendingKey(textKey, sentText.current)
     setUnconfirmed(key)
@@ -349,6 +353,15 @@ function Thread({
                 : "尚未取得发送回执，可重新提交原文。"}
           </p>
         )}
+        {unconfirmed &&
+          !verified.data?.id &&
+          original &&
+          draft.trim() !== original && (
+            <p className="muted" role="status">
+              再次发送仍会提交原文「{original}」；修改后的内容会保留在输入框，
+              确认回执后可另行发送。
+            </p>
+          )}
         <textarea
           aria-label="消息内容"
           placeholder="给数字员工发消息…"

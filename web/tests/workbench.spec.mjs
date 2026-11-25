@@ -489,6 +489,30 @@ test("会话存储不可写时，直接回执和中断后核对都能清空已�
   }
 })
 
+test("发送未到达服务器时，改动正文会提示重发的是原文", async ({ page }) => {
+  const demo = await startInstance()
+  try {
+    await page.goto(demo.url + "/#chat")
+    await page.getByRole("button", { name: "新建会话" }).click()
+    const input = page.getByLabel("消息内容")
+    await page.route("**/v1/chats/*/messages", (route) =>
+      route.request().method() === "POST" ? route.abort() : route.continue()
+    )
+    await input.fill("原始问题")
+    await page.getByRole("button", { name: "发送", exact: true }).click()
+    await page.reload()
+    await expect(page.getByText(/可重新提交原文/)).toBeVisible()
+    await input.fill("改过的问题")
+    await expect(
+      page.getByText(/再次发送仍会提交原文「原始问题」/)
+    ).toBeVisible()
+    await input.fill("原始问题")
+    await expect(page.getByText(/再次发送仍会提交原文/)).toHaveCount(0)
+  } finally {
+    await demo.stop()
+  }
+})
+
 test("从访问电脑上传，另一个浏览器能检索服务器原件的正文", async ({
   page,
   browser,

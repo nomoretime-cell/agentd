@@ -329,3 +329,21 @@ func TestEvidenceRedactsToolArgumentsBeforeEncoding(t *testing.T) {
 		t.Fatal("secret kept in evidence")
 	}
 }
+
+// Once the source cap is reached, a message resent by later requests is
+// counted as omitted once, not once per request.
+func TestEvidenceOmittedCountsEachSourceOnce(t *testing.T) {
+	s := openTest(t, testConfig(), nil)
+	c := &capture{}
+	ctx := context.WithValue(t.Context(), evidenceKey{}, c)
+	for i := range maxEvidenceSources {
+		c.add("fill", s.source("tool", fmt.Sprint("t", i), "", "x"))
+	}
+	extra := Message{Role: "user", Content: "does not fit"}
+	for _, step := range []string{"a", "b", "c"} {
+		s.submitted(ctx, step, []Message{extra})
+	}
+	if c.Omitted != 1 {
+		t.Fatalf("omitted %d, want 1", c.Omitted)
+	}
+}
