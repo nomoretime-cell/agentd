@@ -161,6 +161,11 @@ func (c Config) Validate() error {
 		if err != nil || origin.Hostname() == "" || strings.Contains(origin.Hostname(), "*") || origin.User != nil || origin.Scheme+"://"+origin.Host != c.WebOrigin {
 			return errors.New("web_origin must be an exact origin without a path")
 		}
+		// Browsers send origins lowercased and without the default port; any
+		// other spelling would never match and every request would get 403.
+		if origin.Host != strings.ToLower(origin.Host) || (origin.Scheme == "http" && origin.Port() == "80") || (origin.Scheme == "https" && origin.Port() == "443") {
+			return errors.New("web_origin must be written as the browser sends it: lowercase host, no default port")
+		}
 		httpHost := origin.Hostname() == "localhost" || net.ParseIP(origin.Hostname()) != nil
 		if origin.Scheme != "https" && !(origin.Scheme == "http" && httpHost) {
 			return errors.New("web_origin requires HTTPS, or HTTP with an explicit IP address or localhost")

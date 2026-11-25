@@ -138,16 +138,26 @@ export async function startInstance(webOrigin, dreaming = false, localZone) {
     join(repo, "bin/agentd-web"),
     ["-root", root, "-config", cfg],
     {
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
       env: localZone ? { ...process.env, TZ: localZone } : process.env,
     }
   )
+  // Keep the tail of the server log for startup failures.
+  let log = ""
+  child.stderr.on("data", (chunk) => {
+    log = (log + chunk).slice(-4000)
+  })
   const ended = once(child, "exit")
   // Handle a launch error even before the readiness loop queries the child.
   ended.catch(() => {})
   async function stop() {
-    if (child.pid && child.exitCode === null && child.signalCode === null)
+    if (child.pid && child.exitCode === null && child.signalCode === null) {
       child.kill("SIGTERM")
+      // A hung shutdown must not outlive the test or leak its state root.
+      const force = setTimeout(() => child.kill("SIGKILL"), 10000)
+      await ended.catch(() => {})
+      clearTimeout(force)
+    }
     await ended.catch(() => {})
     stub.closeAllConnections()
     await new Promise((done) => stub.close(done))
@@ -157,7 +167,7 @@ export async function startInstance(webOrigin, dreaming = false, localZone) {
     let ready = false
     for (let i = 0; i < 100; i++) {
       if (!child.pid || child.exitCode !== null)
-        throw new Error("预览实例启动失败，请先 make release")
+        throw new Error("预览实例启动失败，请先 make release\n" + log)
       try {
         ready = (await fetch(url + "/healthz")).ok
       } catch {
@@ -166,7 +176,7 @@ export async function startInstance(webOrigin, dreaming = false, localZone) {
       if (ready) break
       await delay(80)
     }
-    if (!ready) throw new Error("预览实例启动超时")
+    if (!ready) throw new Error("预览实例启动超时\n" + log)
     const token = (await readFile(tokenPath, "utf8")).trim()
     const headers = {
       Authorization: "Bearer " + token,

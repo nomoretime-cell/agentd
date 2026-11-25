@@ -80,6 +80,10 @@ export function Dashboard({
     ? status.dataUpdatedAt
     : Math.min(status.dataUpdatedAt, work.dataUpdatedAt)
   const selectedCount = work.data?.counts[kind] ?? 0
+  // The server decides the page size; links with other offsets still land
+  // on the page that contains them.
+  const pageSize = work.data?.limit ?? 20
+  const page = Math.floor(offset / pageSize) + 1
   function select(value: Kind) {
     onFilter({ type: value, offset: 0 })
     setExpanded("")
@@ -222,20 +226,36 @@ export function Dashboard({
                 </li>
               ))}
             </ul>
-            {(offset > 0 || selectedCount > 20) && (
+            {work.data && offset > 0 && offset >= selectedCount && (
+              <p role="status">
+                本页事项已处理完。
+                <button
+                  className="outline-btn"
+                  onClick={() =>
+                    setOffset(
+                      Math.max(0, Math.ceil(selectedCount / pageSize) - 1) *
+                        pageSize
+                    )
+                  }
+                >
+                  回到最后一页
+                </button>
+              </p>
+            )}
+            {(offset > 0 || selectedCount > pageSize) && (
               <div className="pagination">
                 <button
                   aria-label="上一页"
                   disabled={!offset}
-                  onClick={() => setOffset(Math.max(0, offset - 20))}
+                  onClick={() => setOffset(Math.max(0, (page - 2) * pageSize))}
                 >
                   <ArrowLeft size={15} />
                 </button>
-                <span>第 {offset / 20 + 1} 页</span>
+                <span>第 {page} 页</span>
                 <button
                   aria-label="下一页"
-                  disabled={offset + 20 >= selectedCount}
-                  onClick={() => setOffset(offset + 20)}
+                  disabled={page * pageSize >= selectedCount}
+                  onClick={() => setOffset(page * pageSize)}
                 >
                   <ArrowRight size={15} />
                 </button>

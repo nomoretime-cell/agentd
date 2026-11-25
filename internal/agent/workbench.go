@@ -13,22 +13,24 @@ type workItem struct {
 	Detail string `json:"detail"`
 }
 
+// workPage carries its page size so the client pages by the server's rule.
 type workPage struct {
 	Counts map[string]int `json:"counts"`
 	Items  []workItem     `json:"items"`
+	Limit  int            `json:"limit"`
 }
 
 // Keep the list and its count on the same snapshot, including items older
 // than the general-purpose recent-activity endpoints.
 func (s *Service) workItems(ctx context.Context, kind, offsetText string) (workPage, error) {
-	page := workPage{Counts: map[string]int{}, Items: []workItem{}}
+	const limit = 20
+	page := workPage{Counts: map[string]int{}, Items: []workItem{}, Limit: limit}
 	type source struct{ kind, fields, from string }
 	sources := []source{
 		{"actions", "id,tool_name,status,resume_hint", "actions WHERE status IN ('pending_approval','unknown')"},
 		{"inbox", "id,json_extract(payload,'$.kind'),status,coalesce(json_extract(payload,'$.text'),'')", "inbox WHERE status='dead'"},
 		{"outbox", "id,target,status,content", "outbox WHERE status IN ('failed','unknown')"},
 	}
-	const limit = 20
 	offset := 0
 	if offsetText != "" {
 		var err error

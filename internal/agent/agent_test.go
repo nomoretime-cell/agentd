@@ -347,6 +347,18 @@ func TestApprovalExpiryAndReject(t *testing.T) {
 	if count(t, s, "SELECT count(*) FROM actions WHERE status='rejected'") != 2 || count(t, s, "SELECT count(*) FROM inbox") != 2 {
 		t.Fatal("expiry/rejection not idempotent")
 	}
+	// Approving after the deadline, before the sweep, records the expiry
+	// rather than an owner rejection and tells the owner it was too late.
+	if _, e := s.db.Exec("INSERT INTO actions VALUES('late','late','test','{}','','pending_approval',1,NULL)"); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.Decide(ctx, "late", "approve"); !errors.Is(e, ErrConflict) {
+		t.Fatal("late approval accepted:", e)
+	}
+	if count(t, s, "SELECT count(*) FROM actions WHERE id='late' AND status='rejected' AND result='approval expired'") != 1 ||
+		count(t, s, "SELECT count(*) FROM inbox WHERE dedup_key='action:late:expired'") != 1 {
+		t.Fatal("late approval not recorded as expiry")
+	}
 }
 func TestOutboxUnknownAndRateRetry(t *testing.T) {
 	var calls atomic.Int32

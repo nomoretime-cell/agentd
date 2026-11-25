@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Dialog } from "radix-ui"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { X } from "lucide-react"
@@ -41,7 +41,11 @@ export function ActionDetail({
   const query = useQuery({
     queryKey: ["action", id],
     queryFn: ({ signal }) => request(path, actionSchema, { signal }),
-    refetchInterval: 3000,
+    // Rejected, succeeded and failed actions no longer change.
+    refetchInterval: (q) =>
+      ["rejected", "succeeded", "failed"].includes(q.state.data?.status ?? "")
+        ? false
+        : 3000,
   })
   const mutation = useMutation({
     mutationFn: (decision: "approve" | "reject") =>
@@ -58,6 +62,7 @@ export function ActionDetail({
     },
   })
   const action = query.data
+  const expired = useExpired(action?.expires_at)
   return (
     <Dialog.Root
       open
@@ -120,7 +125,10 @@ export function ActionDetail({
                   <pre>{action.result}</pre>
                 </section>
               )}
-              {action.status === "pending_approval" && (
+              {action.status === "pending_approval" && expired && (
+                <p role="status">已过审批截止时间，服务器将按过期处理。</p>
+              )}
+              {action.status === "pending_approval" && !expired && (
                 <div className="decisions">
                   <Button
                     disabled={mutation.isPending || !!query.error}
@@ -144,4 +152,20 @@ export function ActionDetail({
       </Dialog.Portal>
     </Dialog.Root>
   )
+}
+
+// useExpired turns true when the deadline passes, even if no refetch
+// changes the data, so a dialog left open cannot approve too late.
+function useExpired(deadline?: number) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (deadline === undefined || now >= deadline) return
+    // Timers above 2^31-1 ms fire at once, so long waits re-arm.
+    const timer = setTimeout(
+      () => setNow(Date.now()),
+      Math.min(deadline - now, 2 ** 31 - 1)
+    )
+    return () => clearTimeout(timer)
+  }, [deadline, now])
+  return deadline !== undefined && now >= deadline
 }

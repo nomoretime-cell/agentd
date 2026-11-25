@@ -183,6 +183,19 @@ func TestConfigurationStrictness(t *testing.T) {
 	} else if !strings.Contains(e.Error(), "SSH tunnel") || !strings.Contains(e.Error(), "authenticated reverse proxy") {
 		t.Fatalf("listen error does not name the supported remote entries: %v", e)
 	}
+	c = testConfig()
+	for origin, ok := range map[string]bool{
+		"https://agent.example.com":     true,
+		"http://192.0.2.10:8080":        true,
+		"https://Agent.Example.com":     false,
+		"https://agent.example.com:443": false,
+		"http://192.0.2.10:80":          false,
+	} {
+		c.WebOrigin = origin
+		if e := c.Validate(); (e == nil) != ok {
+			t.Errorf("web_origin %s: %v", origin, e)
+		}
+	}
 }
 
 func TestSandboxNetworkAndTimeout(t *testing.T) {

@@ -118,6 +118,25 @@ test("转发端口上的可信页面可拒绝动作", async ({ page }) => {
   }
 })
 
+test("保存的主题在首屏前生效，CSP 只放行页面自带的脚本", async ({ page }) => {
+  const demo = await startInstance()
+  try {
+    const blocked = []
+    page.on("console", (m) => {
+      if (/Content Security Policy/i.test(m.text())) blocked.push(m.text())
+    })
+    await page.goto(demo.url)
+    await page.evaluate(() => localStorage.setItem("agentd-theme", "light"))
+    // Without the app bundle only the inline script can apply the theme.
+    await page.route("**/assets/*.js", (route) => route.abort())
+    await page.reload()
+    await expect(page.locator("html")).not.toHaveClass(/dark/)
+    expect(blocked).toEqual([])
+  } finally {
+    await demo.stop()
+  }
+})
+
 test("单一服务直接进入工作台，刷新可继续查看", async ({ page, request }) => {
   const demo = await startInstance()
   try {

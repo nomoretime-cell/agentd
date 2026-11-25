@@ -22,6 +22,7 @@ export const workSchema = z.object({
     drafts: z.number(),
   }),
   items: z.array(itemSchema),
+  limit: z.number().int().positive(),
 })
 const otherStatus: Record<string, string> = {
   dead: "死信",

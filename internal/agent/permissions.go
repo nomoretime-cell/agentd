@@ -216,6 +216,7 @@ func (s *Service) Decide(ctx context.Context, id, decision string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	expired := false
 	e := transaction(ctx, s.db, func(tx *sql.Tx) error {
 		a, e := scanAction(tx.QueryRowContext(ctx, "SELECT "+actionColumns+" FROM actions WHERE id=?", id))
 		if e != nil {
@@ -232,7 +233,9 @@ func (s *Service) Decide(ctx context.Context, id, decision string) error {
 			return ErrConflict
 		}
 		if a.ExpiresAt <= time.Now().UnixMilli() {
-			want = "rejected"
+			// A late decision records the expiry the sweep would have recorded.
+			expired = true
+			return expireActionTx(ctx, tx, id)
 		}
 		if _, e = tx.ExecContext(ctx, "UPDATE actions SET status=?,result=? WHERE id=? AND status='pending_approval'", want, "operator decision: "+want, id); e != nil {
 			return e
@@ -243,7 +246,19 @@ func (s *Service) Decide(ctx context.Context, id, decision string) error {
 	if e == nil {
 		s.notify()
 	}
+	if e == nil && expired && decision == "approve" {
+		return fmt.Errorf("%w: approval expired", ErrConflict)
+	}
 	return e
+}
+
+// expireActionTx rejects an action whose approval window has passed. The
+// sweep and late decisions both use it, so an expiry reads the same everywhere.
+func expireActionTx(ctx context.Context, tx *sql.Tx, id string) error {
+	if _, e := tx.ExecContext(ctx, "UPDATE actions SET status='rejected',result='approval expired' WHERE id=? AND status IN ('pending_approval','approved')", id); e != nil {
+		return e
+	}
+	return queueActionContinuation(ctx, tx, id, "expired", "Approval expired.")
 }
 func (s *Service) expireActions(ctx context.Context) error {
 	s.mu.Lock()
@@ -268,10 +283,7 @@ func (s *Service) expireActions(ctx context.Context) error {
 			return e
 		}
 		for _, id := range ids {
-			if _, e = tx.ExecContext(ctx, "UPDATE actions SET status='rejected',result='approval expired' WHERE id=? AND status IN ('pending_approval','approved')", id); e != nil {
-				return e
-			}
-			if e = queueActionContinuation(ctx, tx, id, "expired", "Approval expired."); e != nil {
+			if e = expireActionTx(ctx, tx, id); e != nil {
 				return e
 			}
 		}
