@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -93,7 +94,8 @@ func (s *Service) registerKnowledgeUploads(m *http.ServeMux) {
 			return
 		}
 		body, e := s.workspaceRead("knowledge/md/" + d.ID + ".md")
-		respond(w, map[string]any{"document": d, "body": string(body)}, e)
+		// Mask configured secrets as search hits and memory views do.
+		respond(w, map[string]any{"document": d, "body": s.maskedFile(string(body))}, e)
 	})
 	// The workbench may import files deposited in the server's incoming folder.
 	// The owner CLI retains the existing unrestricted server-path import.
@@ -104,12 +106,17 @@ func (s *Service) registerKnowledgeUploads(m *http.ServeMux) {
 		if !decodeHTTP(w, r, &req) {
 			return
 		}
-		base := filepath.Join(s.root, knowledgeIncoming)
 		if !filepath.IsLocal(req.Path) {
 			respond(w, nil, ErrDenied)
 			return
 		}
-		target, e := filepath.EvalSymlinks(filepath.Join(base, req.Path))
+		// Compare resolved paths: the state root itself may sit behind a
+		// symlink (for example /var on macOS).
+		base, e := filepath.EvalSymlinks(filepath.Join(s.root, knowledgeIncoming))
+		var target string
+		if e == nil {
+			target, e = filepath.EvalSymlinks(filepath.Join(base, req.Path))
+		}
 		if e == nil {
 			rel, err := filepath.Rel(base, target)
 			if err != nil || !filepath.IsLocal(rel) {
@@ -145,40 +152,74 @@ func saveUpload(dir string, b uploadBatch) error {
 	return atomicWrite(filepath.Join(dir, "receipt.json"), raw, 0600)
 }
 
+// Receiving is not part of an import: bytes may arrive slowly, so the import
+// lock is taken only when a committed batch is processed. At most
+// maxReceiving uploads stage at once, which bounds staging disk use.
+const (
+	maxReceiving  = 2
+	uploadIdle    = time.Minute
+	uploadOverall = time.Hour
+)
+
+func (s *Service) beginReceive() error {
+	s.knowledge.mu.Lock()
+	defer s.knowledge.mu.Unlock()
+	if s.knowledge.receiving >= maxReceiving {
+		return fmt.Errorf("%w: uploads are being received", ErrConflict)
+	}
+	s.knowledge.receiving++
+	return nil
+}
+func (s *Service) endReceive() {
+	s.knowledge.mu.Lock()
+	s.knowledge.receiving--
+	s.knowledge.mu.Unlock()
+}
+
+// idleBody extends the read deadline after each read that makes progress,
+// so a stalled client is dropped after uploadIdle while a slow but steady
+// one may continue until the overall limit or shutdown.
+type idleBody struct {
+	io.ReadCloser
+	rc       *http.ResponseController
+	life     context.Context
+	deadline time.Time
+}
+
+func (b *idleBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 && b.life.Err() == nil {
+		_ = b.rc.SetReadDeadline(idleDeadline(b.deadline))
+	}
+	return n, err
+}
+
+func idleDeadline(overall time.Time) time.Time {
+	if next := time.Now().Add(uploadIdle); next.Before(overall) {
+		return next
+	}
+	return overall
+}
+
 func (s *Service) receiveUpload(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("key")
 	if !batchKey.MatchString(id) {
 		respond(w, nil, errors.New("上传编号无效"))
 		return
 	}
-	// A retry of an accepted batch only compares the files with its receipt,
-	// so it must not wait for the import lock that batch may still hold.
-	_, known := s.uploadReceipt(id)
-	retry := known == nil
-	if !retry {
-		if err := s.beginImport(); err != nil {
-			if errors.Is(err, ErrConflict) {
-				writeJSON(w, 409, map[string]string{"error": "服务器正在导入资料，请稍后再试。"})
-				return
-			}
-			respond(w, nil, err)
-			return
-		}
+	if err := s.beginReceive(); err != nil {
+		writeJSON(w, 409, map[string]string{"error": "服务器正在接收其他上传，请稍后再试。"})
+		return
 	}
-	handedOff := false
-	defer func() {
-		if !handedOff && !retry {
-			s.finishImport(nil)
-		}
-	}()
+	defer s.endReceive()
 	// Override the normal short API deadlines only after workbench access checks.
-	deadline := time.Now().Add(10 * time.Minute)
+	overall := time.Now().Add(uploadOverall)
 	rc := http.NewResponseController(w)
-	if e := rc.SetReadDeadline(deadline); e != nil && !errors.Is(e, http.ErrNotSupported) {
+	if e := rc.SetReadDeadline(idleDeadline(overall)); e != nil && !errors.Is(e, http.ErrNotSupported) {
 		respond(w, nil, e)
 		return
 	}
-	if e := rc.SetWriteDeadline(deadline.Add(5 * time.Second)); e != nil && !errors.Is(e, http.ErrNotSupported) {
+	if e := rc.SetWriteDeadline(overall.Add(5 * time.Second)); e != nil && !errors.Is(e, http.ErrNotSupported) {
 		respond(w, nil, e)
 		return
 	}
@@ -189,7 +230,21 @@ func (s *Service) receiveUpload(w http.ResponseWriter, r *http.Request) {
 			<-interrupted
 		}
 	}()
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+(1<<20))
+	r.Body = &idleBody{http.MaxBytesReader(w, r.Body, maxUploadBytes+(1<<20)), rc, s.life, overall}
+	prior, known := s.uploadReceipt(id)
+	if known == nil {
+		// A retry of an accepted batch only proves it sent the same files.
+		b, e := stageUpload(r, "", id)
+		if e == nil {
+			e = sameUpload(prior, b)
+		}
+		respond(w, prior, e)
+		return
+	}
+	if !errors.Is(known, sql.ErrNoRows) {
+		respond(w, nil, known)
+		return
+	}
 	parent := filepath.Join(s.root, knowledgeUploads)
 	staging, e := os.MkdirTemp(parent, ".receiving-")
 	if e != nil {
@@ -202,44 +257,37 @@ func (s *Service) receiveUpload(w http.ResponseWriter, r *http.Request) {
 		respond(w, nil, e)
 		return
 	}
-	prior, e := s.uploadReceipt(id)
-	if e == nil {
-		if len(prior.Files) != len(b.Files) {
-			respond(w, nil, ErrConflict)
-			return
-		}
-		for i, f := range b.Files {
-			p := prior.Files[i]
-			if f.uploadChoice != p.uploadChoice || f.SHA != p.SHA {
-				respond(w, nil, ErrConflict)
-				return
-			}
-		}
-		respond(w, prior, nil)
-		return
-	}
-	if retry || !errors.Is(e, sql.ErrNoRows) {
-		// A known batch never loses its receipt; refuse rather than import twice.
-		if retry && errors.Is(e, sql.ErrNoRows) {
-			e = ErrConflict
-		}
-		respond(w, nil, e)
-		return
-	}
 	if e = saveUpload(staging, b); e == nil {
 		e = os.Rename(staging, filepath.Join(parent, id))
 	}
 	if e != nil {
+		// A concurrent request with the same key may have committed first.
+		if prior, err := s.uploadReceipt(id); err == nil {
+			respond(w, prior, sameUpload(prior, b))
+			return
+		}
 		respond(w, nil, e)
 		return
 	}
-	if e = syncDir(parent); e != nil {
-		respond(w, nil, e)
-		return
-	}
-	handedOff = true
-	s.runUploads([]uploadBatch{b})
+	// The batch is committed; an unsynced directory entry is recovered or
+	// re-sent by the client, so it does not stop processing.
+	s.logErr("sync knowledge uploads", syncDir(parent))
+	s.startUploads()
 	writeJSON(w, http.StatusAccepted, b)
+}
+
+// sameUpload reports whether a retried batch carries the files of its receipt.
+func sameUpload(prior, b uploadBatch) error {
+	if len(prior.Files) != len(b.Files) {
+		return ErrConflict
+	}
+	for i, f := range b.Files {
+		p := prior.Files[i]
+		if f.uploadChoice != p.uploadChoice || f.SHA != p.SHA {
+			return ErrConflict
+		}
+	}
+	return nil
 }
 
 func stageUpload(r *http.Request, dir, id string) (uploadBatch, error) {
@@ -270,16 +318,23 @@ func stageUpload(r *http.Request, dir, id string) (uploadBatch, error) {
 		if e != nil || p.FormName() != "file" {
 			return b, errors.New("文件传输不完整")
 		}
-		f, e := os.OpenFile(filepath.Join(dir, strconv.Itoa(i)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if e != nil {
-			return b, e
-		}
 		hash := sha256.New()
-		n, e := io.Copy(io.MultiWriter(f, hash), io.LimitReader(p, maxSourceBytes+1))
-		if e == nil {
-			e = f.Sync()
+		var n int64
+		if dir == "" {
+			// Retries only compare hashes; nothing is written.
+			n, e = io.Copy(hash, io.LimitReader(p, maxSourceBytes+1))
+		} else {
+			var f *os.File
+			f, e = os.OpenFile(filepath.Join(dir, strconv.Itoa(i)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+			if e != nil {
+				return b, e
+			}
+			n, e = io.Copy(io.MultiWriter(f, hash), io.LimitReader(p, maxSourceBytes+1))
+			if e == nil {
+				e = f.Sync()
+			}
+			e = errors.Join(e, f.Close())
 		}
-		e = errors.Join(e, f.Close())
 		if e != nil {
 			return b, e
 		}
@@ -295,50 +350,80 @@ func stageUpload(r *http.Request, dir, id string) (uploadBatch, error) {
 	return b, nil
 }
 
+// recoverUploads clears abandoned transmissions and processed staged files
+// at startup, then resumes committed batches. Cleanup failures are logged:
+// leftovers waste space but must not stop the service.
 func (s *Service) recoverUploads() error {
 	parent := filepath.Join(s.root, knowledgeUploads)
 	dirs, e := os.ReadDir(parent)
 	if e != nil {
 		return e
 	}
-	var pending []uploadBatch
 	for _, d := range dirs {
 		if strings.HasPrefix(d.Name(), ".receiving-") {
-			if e = os.RemoveAll(filepath.Join(parent, d.Name())); e != nil {
-				return e
-			}
-			continue
+			s.logErr("clean abandoned upload", os.RemoveAll(filepath.Join(parent, d.Name())))
 		}
+	}
+	for _, b := range s.pendingUploads() {
+		for i, f := range b.Files {
+			if f.Status != "processing" {
+				if e := os.Remove(filepath.Join(parent, b.ID, strconv.Itoa(i))); e != nil && !errors.Is(e, os.ErrNotExist) {
+					s.logErr("clean knowledge upload", e)
+				}
+			}
+		}
+	}
+	s.startUploads()
+	return nil
+}
+
+// pendingUploads lists committed batches that still have files to process.
+func (s *Service) pendingUploads() []uploadBatch {
+	dirs, e := os.ReadDir(filepath.Join(s.root, knowledgeUploads))
+	if e != nil {
+		s.logErr("list knowledge uploads", e)
+		return nil
+	}
+	var pending []uploadBatch
+	for _, d := range dirs {
 		if !batchKey.MatchString(d.Name()) {
 			continue
 		}
 		b, e := s.uploadReceipt(d.Name())
 		if e != nil {
 			// Keep the batch on disk for inspection; it must not stop the service.
-			s.logErr("recover upload "+d.Name(), e)
+			s.logErr("read upload receipt "+d.Name(), e)
 			continue
 		}
-		incomplete := false
-		for i, f := range b.Files {
-			if f.Status == "processing" {
-				incomplete = true
-			} else {
-				if e := os.Remove(filepath.Join(parent, b.ID, strconv.Itoa(i))); e != nil && !errors.Is(e, os.ErrNotExist) {
-					return e
-				}
-			}
-		}
-		if incomplete {
+		if slices.ContainsFunc(b.Files, func(f uploadFile) bool { return f.Status == "processing" }) {
 			pending = append(pending, b)
 		}
 	}
-	if len(pending) > 0 {
-		if e := s.beginImport(); e != nil {
-			return e
-		}
-		s.runUploads(pending)
+	return pending
+}
+
+// startUploads processes committed batches under the import lock. When
+// another import holds it, that import starts them as it finishes.
+func (s *Service) startUploads() {
+	s.knowledge.mu.Lock()
+	if s.life.Err() != nil {
+		s.knowledge.mu.Unlock()
+		return
 	}
-	return nil
+	if s.knowledge.running {
+		s.knowledge.uploadsWaiting = true
+		s.knowledge.mu.Unlock()
+		return
+	}
+	s.knowledge.running = true
+	s.wg.Add(1)
+	s.knowledge.mu.Unlock()
+	pending := s.pendingUploads()
+	if len(pending) == 0 {
+		s.finishImport(nil)
+		return
+	}
+	s.runUploads(pending)
 }
 func (s *Service) runUploads(batches []uploadBatch) {
 	go func() {
@@ -429,29 +514,32 @@ func (s *Service) acceptUpload(ctx context.Context, batch string, i int, f uploa
 	return result, e
 }
 
+// zipMarkers names the entry each zip-based format must contain.
+var zipMarkers = map[string]string{".docx": "word/document.xml", ".pptx": "ppt/presentation.xml", ".xlsx": "xl/workbook.xml", ".epub": "META-INF/container.xml"}
+
+// validateUploadContent checks files from another machine before import.
+// Supported formats come from knowledge.go. Native text must be non-empty
+// UTF-8; binary formats must carry their signature; other converted formats
+// (CSV, HTML in any encoding) go to the sandboxed converter as they are.
 func validateUploadContent(name string, raw []byte) error {
 	ext := strings.ToLower(filepath.Ext(name))
-	switch ext {
-	case ".pdf":
-		if bytes.HasPrefix(raw, []byte("%PDF-")) {
-			return nil
-		}
-	case ".docx", ".pptx", ".xlsx", ".epub":
-		z, e := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
-		if e == nil {
-			marker := map[string]string{".docx": "word/document.xml", ".pptx": "ppt/presentation.xml", ".xlsx": "xl/workbook.xml", ".epub": "META-INF/container.xml"}[ext]
-			for _, f := range z.File {
-				if f.Name == marker {
-					return nil
-				}
-			}
-		}
-	case ".md", ".markdown", ".txt", ".csv", ".html", ".htm":
+	switch {
+	case slices.Contains(nativeFormats, ext):
 		if len(bytes.TrimSpace(raw)) > 0 && utf8.Valid(raw) && !bytes.ContainsRune(raw, 0) {
 			return nil
 		}
-	default:
+		return errors.New("文本须为非空 UTF-8")
+	case !slices.Contains(convertedFormats, ext):
 		return errors.New("不支持此文件格式")
+	case ext == ".pdf":
+		if !bytes.HasPrefix(raw, []byte("%PDF-")) {
+			return errors.New("文件内容与格式不符")
+		}
+	case zipMarkers[ext] != "":
+		z, e := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+		if e != nil || !slices.ContainsFunc(z.File, func(f *zip.File) bool { return f.Name == zipMarkers[ext] }) {
+			return errors.New("文件内容与格式不符")
+		}
 	}
-	return errors.New("文件内容与格式不符，文本须为非空 UTF-8")
+	return nil
 }

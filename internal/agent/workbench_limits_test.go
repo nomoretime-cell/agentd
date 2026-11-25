@@ -166,7 +166,6 @@ func TestUploadRetryDoesNotWaitForImport(t *testing.T) {
 	if e := s.beginImport(); e != nil {
 		t.Fatal(e)
 	}
-	defer s.finishImport(nil)
 	post := func(key, content string) int {
 		body, typ := uploadPayload(t, []uploadChoice{choice}, content)
 		req := httptest.NewRequest("POST", "/v1/knowledge/uploads?key="+key, bytes.NewReader(body))
@@ -184,9 +183,20 @@ func TestUploadRetryDoesNotWaitForImport(t *testing.T) {
 	if code := post(id, "# different"); code != 409 {
 		t.Fatalf("changed retry got %d", code)
 	}
-	if code := post(stableID("new"), data); code != 409 {
+	// A new batch is received and committed during another import, then
+	// processed when that import finishes.
+	next := stableID("new")
+	if code := post(next, data); code != 202 {
 		t.Fatalf("new batch during import got %d", code)
 	}
+	if b, e := s.uploadReceipt(next); e != nil || b.Files[0].Status != "processing" {
+		t.Fatal("queued batch ran during another import", b, e)
+	}
+	s.finishImport(nil)
+	waitFor(t, 4*time.Second, func() bool {
+		b, e := s.uploadReceipt(next)
+		return e == nil && b.Files[0].Status != "processing"
+	})
 }
 
 func TestRespondStatusClasses(t *testing.T) {

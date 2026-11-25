@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -255,4 +257,137 @@ func TestKnowledgeUploadInterruptedConversion(t *testing.T) {
 		b, e := s.uploadReceipt(id)
 		return e == nil && b.Files[0].Status == "failed" && b.Files[1].Status == "added"
 	})
+}
+
+func TestStalledUploadDoesNotBlockImports(t *testing.T) {
+	s := openTest(t, testConfig(), nil)
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	data, typ := uploadPayload(t, []uploadChoice{{Name: "slow.md", Mode: "match"}}, "# slow")
+	input, output := io.Pipe()
+	req, e := http.NewRequest("POST", srv.URL+"/v1/knowledge/uploads?key="+stableID("stalled"), input)
+	if e != nil {
+		t.Fatal(e)
+	}
+	req.Header.Set("Authorization", "Bearer "+s.Token())
+	req.Header.Set("Content-Type", typ)
+	done := make(chan int, 1)
+	go func() {
+		res, e := srv.Client().Do(req)
+		if e != nil {
+			done <- 0
+			return
+		}
+		res.Body.Close()
+		done <- res.StatusCode
+	}()
+	if _, e = output.Write(data[:len(data)/2]); e != nil {
+		t.Fatal(e)
+	}
+	waitFor(t, 2*time.Second, func() bool { s.knowledge.mu.Lock(); defer s.knowledge.mu.Unlock(); return s.knowledge.receiving == 1 })
+	// While its bytes are still due, imports and other uploads proceed.
+	src := filepath.Join(t.TempDir(), "other.md")
+	if e = os.WriteFile(src, []byte("# other\nfree"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.StartImport(src); e != nil {
+		t.Fatal("import blocked by a receiving upload:", e)
+	}
+	waitFor(t, 4*time.Second, func() bool { s.knowledge.mu.Lock(); defer s.knowledge.mu.Unlock(); return !s.knowledge.running })
+	uploadTo(t, s, stableID("second"), []uploadChoice{{Name: "second.md", Mode: "match"}}, 202, "# second")
+	if _, e = output.Write(data[len(data)/2:]); e != nil {
+		t.Fatal(e)
+	}
+	output.Close()
+	if code := <-done; code != 202 {
+		t.Fatalf("stalled upload finished with %d", code)
+	}
+}
+
+func TestIncomingImportResolvesSymlinkedRoot(t *testing.T) {
+	real := t.TempDir()
+	root := filepath.Join(t.TempDir(), "root")
+	if e := os.Symlink(real, root); e != nil {
+		t.Fatal(e)
+	}
+	s, e := Open(root, testConfig(), nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	in := filepath.Join(root, knowledgeIncoming)
+	if e = os.WriteFile(filepath.Join(in, "a.md"), []byte("# a\nincoming"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e = os.Symlink(t.TempDir(), filepath.Join(in, "escape")); e != nil {
+		t.Fatal(e)
+	}
+	post := func(path string) int {
+		body, _ := json.Marshal(map[string]string{"path": path})
+		req := httptest.NewRequest("POST", "/v1/knowledge/incoming", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+s.Token())
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, req)
+		return w.Code
+	}
+	for path, want := range map[string]int{"../x": 403, "escape": 403} {
+		if got := post(path); got != want {
+			t.Errorf("%s: got %d want %d", path, got, want)
+		}
+	}
+	if got := post("a.md"); got != 200 {
+		t.Fatalf("import under a symlinked root got %d", got)
+	}
+}
+
+func TestKnowledgeBodyIsMasked(t *testing.T) {
+	cfg := testConfig()
+	cfg.Model.APIKey = "sk-test-mask-0123456789"
+	s := openTest(t, cfg, nil)
+	src := filepath.Join(t.TempDir(), "secret.md")
+	if e := os.WriteFile(src, []byte("# s\nkey sk-test-mask-0123456789"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.StartImport(src); e != nil {
+		t.Fatal(e)
+	}
+	waitFor(t, 4*time.Second, func() bool { s.knowledge.mu.Lock(); defer s.knowledge.mu.Unlock(); return !s.knowledge.running })
+	req := httptest.NewRequest("GET", "/v1/knowledge/"+docID(src), nil)
+	req.Header.Set("Authorization", "Bearer "+s.Token())
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != 200 || strings.Contains(w.Body.String(), "sk-test-mask") || !strings.Contains(w.Body.String(), "key ***") {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUploadFormatsFollowKnowledgeFormats(t *testing.T) {
+	samples := map[string][]byte{".pdf": []byte("%PDF-1.7")}
+	for ext, marker := range zipMarkers {
+		var buf bytes.Buffer
+		z := zip.NewWriter(&buf)
+		if _, e := z.Create(marker); e != nil {
+			t.Fatal(e)
+		}
+		z.Close()
+		samples[ext] = buf.Bytes()
+	}
+	for _, ext := range append(slices.Clone(nativeFormats), convertedFormats...) {
+		raw, ok := samples[ext]
+		if !ok {
+			raw = []byte("text")
+		}
+		if e := validateUploadContent("a"+ext, raw); e != nil {
+			t.Errorf("%s rejected: %v", ext, e)
+		}
+	}
+	// A CSV exported in GBK goes to the converter like a server import.
+	if e := validateUploadContent("a.csv", []byte{0xb1, 0xea, 0xcc, 0xe2, ',', '1'}); e != nil {
+		t.Error("GBK CSV rejected:", e)
+	}
+	for name, raw := range map[string][]byte{"a.exe": []byte("MZ"), "a.pdf": []byte("not pdf"), "a.md": {0xff, 0xfe}, "a.docx": []byte("PK")} {
+		if validateUploadContent(name, raw) == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
 }

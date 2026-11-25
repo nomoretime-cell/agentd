@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -70,6 +71,11 @@ type knowledgeState struct {
 	mu      sync.Mutex
 	running bool
 	last    []importResult
+	// uploadsWaiting records committed upload batches that arrived while
+	// another import held the lock; finishImport starts them.
+	uploadsWaiting bool
+	// receiving counts uploads whose bytes are still arriving.
+	receiving int
 }
 
 func docID(source string) string { return stableID("knowledge\x00" + source)[:16] }
@@ -146,7 +152,12 @@ func (s *Service) finishImport(results []importResult) {
 		s.knowledge.last = results
 	}
 	s.knowledge.running = false
+	waiting := s.knowledge.uploadsWaiting
+	s.knowledge.uploadsWaiting = false
 	s.knowledge.mu.Unlock()
+	if waiting {
+		s.startUploads()
+	}
 	s.wg.Done()
 }
 
@@ -216,7 +227,16 @@ func (s *Service) logImport(results []importResult) []importResult {
 // importFile converts one file and records it in docs; the caller saves docs.
 func (s *Service) importFile(ctx context.Context, source string, docs map[string]knowledgeDoc) importResult {
 	r := importResult{Source: source, DocID: docID(source)}
-	info, err := os.Stat(source)
+	// Open first and check the opened file: a path swapped after a check
+	// cannot slip in a FIFO, and O_NONBLOCK keeps a FIFO from blocking the
+	// import while it holds the lock.
+	f, err := os.OpenFile(source, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		r.Status, r.Error = "failed", s.redact(err.Error())
+		return r
+	}
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		r.Status, r.Error = "failed", s.redact(err.Error())
 		return r
@@ -225,12 +245,6 @@ func (s *Service) importFile(ctx context.Context, source string, docs map[string
 		r.Status, r.Error = "failed", "not a regular file of at most 50 MiB"
 		return r
 	}
-	f, err := os.Open(source)
-	if err != nil {
-		r.Status, r.Error = "failed", s.redact(err.Error())
-		return r
-	}
-	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, maxSourceBytes+1))
 	if err != nil || len(raw) > maxSourceBytes {
 		r.Status, r.Error = "failed", "cannot read source within 50 MiB"

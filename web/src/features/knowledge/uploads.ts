@@ -110,3 +110,11 @@ export function transmit(
     xhr.send(data)
   })
 }
+
+export function size(n: number) {
+  return n < 1024
+    ? n + " B"
+    : n < 1 << 20
+      ? Math.ceil(n / 1024) + " KiB"
+      : (n / (1 << 20)).toFixed(1) + " MiB"
+}
