@@ -11,7 +11,7 @@ import {
   ChevronRight,
   PanelLeft,
 } from "lucide-react"
-import { Brand } from "./Brand"
+import { Brand, productName } from "./Brand"
 import { ThemeMenu } from "./ThemeMenu"
 import { ActionDetail } from "./features/actions/ActionDetail"
 import { actionStatus } from "@/lib/status"
@@ -37,7 +37,7 @@ export function Workbench() {
     navigation.find((n) => n.page === current)?.label ?? "工作台"
   // Each page names itself in the tab title and in browser history.
   useEffect(() => {
-    document.title = pageTitle + " · agentd 所有者工作台"
+    document.title = pageTitle + " · " + productName
   }, [pageTitle])
   const [compact, setCompact] = useState(false)
   const params = new URLSearchParams(searchStr)
@@ -45,7 +45,7 @@ export function Workbench() {
   return (
     <div className={compact ? "workspace compact" : "workspace"}>
       <aside className="sidebar">
-        <Brand subtitle="所有者工作台" />
+        <Brand />
         <nav aria-label="工作台导航">
           {navigation.map(({ page, label, icon: Icon, group }) => (
             <Fragment key={page}>
