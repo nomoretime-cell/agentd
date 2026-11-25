@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -325,11 +326,24 @@ func (s *Service) maskedFile(v string) string {
 	return s.redactText(v, func(value, _ string) string { return strings.Repeat("*", len(value)) })
 }
 
+// secretSpellings lists a secret as written and as JSON encodes it: tool
+// results and evidence are JSON, which escapes <, >, &, quotes and controls.
+func secretSpellings(secret string) []string {
+	if secret == "" {
+		return nil
+	}
+	b, _ := json.Marshal(secret)
+	if escaped := string(b[1 : len(b)-1]); escaped != secret {
+		return []string{secret, escaped}
+	}
+	return []string{secret}
+}
+
 func (s *Service) redactText(v string, mask func(value, label string) string) string {
 	v = s.redactIM(v, mask)
 	replace := func(secret string) {
-		if secret != "" {
-			v = strings.ReplaceAll(v, secret, mask(secret, "[redacted]"))
+		for _, spelling := range secretSpellings(secret) {
+			v = strings.ReplaceAll(v, spelling, mask(spelling, "[redacted]"))
 		}
 	}
 	replace(s.token)

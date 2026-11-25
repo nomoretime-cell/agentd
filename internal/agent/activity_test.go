@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -82,10 +84,7 @@ func TestActivityAcrossMidnightAndRepeatedReceipts(t *testing.T) {
 		t.Fatal(err)
 	}
 	scoped := context.WithValue(ctx, callScopeKey{}, callScope{id, "attempt", "message"})
-	c, err := s.startCall(scoped, "native", "example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := s.startCall(scoped, "native", "example")
 	c.At = midnight.Add(-time.Second).UnixMilli()
 	sum := int64(10)
 	c.Total = &sum
@@ -218,5 +217,96 @@ func TestUsageFormatDoesNotChangeValidAnswer(t *testing.T) {
 	answer, err := m.Complete(t.Context(), nil, nil)
 	if err != nil || answer.Content != "received" || answer.usage.Total != nil {
 		t.Fatalf("invalid optional telemetry changed completion: %v", err)
+	}
+}
+
+// The call ledger only measures. When it cannot be written the run still
+// completes, consumes no retry and does not pause the service.
+func TestCallLedgerFailureKeepsRunning(t *testing.T) {
+	var calls atomic.Int32
+	s := openTest(t, testConfig(), modelFunc(func(context.Context, []Message, []Tool) (Message, error) {
+		calls.Add(1)
+		return Message{Role: "assistant", Content: "Complete."}, nil
+	}))
+	if _, err := s.db.Exec(`CREATE TRIGGER fail_ledger BEFORE UPDATE OF model_calls ON inbox BEGIN SELECT RAISE(ABORT,'unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	s.Start(context.Background())
+	id, _, err := s.Append(context.Background(), "ledger", Payload{Kind: "message", Text: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		return count(t, s, "SELECT count(*) FROM inbox WHERE id=? AND status='done'", id) == 1
+	})
+	if calls.Load() != 1 || count(t, s, "SELECT retries FROM inbox WHERE id=?", id) != 0 || fileExists(filepath.Join(s.root, "data/paused.lock")) {
+		t.Fatalf("calls=%d retries=%d", calls.Load(), count(t, s, "SELECT retries FROM inbox WHERE id=?", id))
+	}
+}
+
+// A database from before the workbench carries inbox rows in every state.
+// Opening it migrates in place, recovers interrupted rows without inventing
+// run history, and later runs are recorded once.
+func TestSchemaV1InboxRowsMigrate(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "data"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	old, err := sql.Open("sqlite", filepath.Join(root, "data", "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rows use the stored formats: external dedup keys and Payload bytes.
+	msg := func(text string) string { b, _ := json.Marshal(Payload{Kind: "message", Text: text}); return string(b) }
+	_, err = old.Exec(schema+`INSERT INTO inbox(id,dedup_key,payload,status,retries,available_at) VALUES
+ (1,'external:a',?,'running',0,1),(2,'external:b',?,'running',2,1),(3,'external:c',?,'dead',3,1),(4,'external:d',?,'done',0,1),(5,'external:e',?,'pending',0,1);
+ INSERT INTO outbox(dedup_key,target,content,deliver_at,status) VALUES('reply:4','local','old reply',1,'sent');`,
+		msg("a"), msg("b"), msg("c"), msg("d"), msg("e"))
+	old.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(root, testConfig(), finalModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := t.Context()
+	var version int
+	if err = s.read.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
+		t.Fatalf("schema version %d, %v", version, err)
+	}
+	if count(t, s, "SELECT count(*) FROM inbox WHERE run_index IS NOT NULL OR model_calls IS NOT NULL OR run_data IS NOT NULL") != 0 {
+		t.Fatal("migration invented run history")
+	}
+	for id, status := range map[int]string{1: "pending", 2: "dead", 3: "dead", 4: "done", 5: "pending"} {
+		if count(t, s, "SELECT count(*) FROM inbox WHERE id=? AND status=?", id, status) != 1 {
+			t.Errorf("row %d not %s after recovery", id, status)
+		}
+	}
+	if _, err = s.dailyActivity(ctx, 7, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.runHistory(ctx, url.Values{}); err != nil {
+		t.Fatal(err)
+	}
+	// Replaying an old event with the same bytes finds it rather than conflicting.
+	if id, inserted, err := s.Append(ctx, "e", Payload{Kind: "message", Text: "e"}); err != nil || inserted || id != 5 {
+		t.Fatalf("replay of old event: %d %v %v", id, inserted, err)
+	}
+	// Dead heads block the queue until the owner resolves them.
+	if err = s.ResolveEvent(ctx, 2, "skip"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ResolveEvent(ctx, 3, "retry"); err != nil {
+		t.Fatal(err)
+	}
+	s.Start(ctx)
+	waitFor(t, 4*time.Second, func() bool {
+		return count(t, s, "SELECT count(*) FROM inbox WHERE id IN (1,3,5) AND status='done'") == 3
+	})
+	if count(t, s, "SELECT count(*) FROM inbox i, json_each(i.run_index) j WHERE i.id=3 AND j.key NOT LIKE '\\_%' ESCAPE '\\'") != 1 ||
+		count(t, s, "SELECT count(*) FROM inbox WHERE id=3 AND reply_at IS NOT NULL AND model_calls IS NOT NULL") != 1 {
+		t.Fatal("retried old event not recorded once")
 	}
 }

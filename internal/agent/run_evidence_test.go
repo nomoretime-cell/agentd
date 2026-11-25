@@ -213,3 +213,79 @@ func TestIndexedAttemptsResumeThroughSparseResultsAndArchive(t *testing.T) {
 		t.Fatal("lost or duplicated indexed or archived attempt", len(ids))
 	}
 }
+
+// Every step resends the conversation; evidence must still keep the last
+// step's tool result instead of filling its use cap with repeats.
+func TestEvidenceKeepsLastStepOfLongRun(t *testing.T) {
+	// 30 steps resend about a thousand messages in total, far above the cap.
+	steps := 0
+	model := modelFunc(func(_ context.Context, m []Message, _ []Tool) (Message, error) {
+		if steps < 30 {
+			steps++
+			return call("search", fmt.Sprintf(`{"query":"step-%d","path":"notes/"}`, steps)), nil
+		}
+		return Message{Role: "assistant", Content: "done"}, nil
+	})
+	cfg := testConfig()
+	cfg.Limits.MaxSteps = 32
+	s := openTest(t, cfg, model)
+	ctx := t.Context()
+	id, _, err := s.Append(ctx, "long", Payload{Kind: "message", Text: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Start(ctx)
+	waitFor(t, 4*time.Second, func() bool { return count(t, s, "SELECT count(*) FROM inbox WHERE id=? AND status='done'", id) == 1 })
+	m, err := s.messageDetail(ctx, fmt.Sprintf("local:%d", id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.historicalRun(ctx, m.Run)
+	if err != nil || r.Evidence == nil {
+		t.Fatal(err)
+	}
+	last := false
+	for _, src := range r.Evidence.Sources {
+		if src.Kind == "tool_args" && strings.Contains(src.Text, "step-30") {
+			last = true
+		}
+	}
+	if !last || r.Evidence.Omitted != 0 {
+		t.Fatalf("last step kept=%v omitted=%d uses=%d", last, r.Evidence.Omitted, len(r.Evidence.Uses))
+	}
+}
+
+// JSON escapes "<", ">" and "&"; tool arguments must be redacted before
+// encoding or a secret containing them survives in evidence.
+func TestEvidenceRedactsToolArgumentsBeforeEncoding(t *testing.T) {
+	const secret = "sk<test>&key-0123456789"
+	model := modelFunc(func(_ context.Context, m []Message, _ []Tool) (Message, error) {
+		if m[len(m)-1].Role != "tool" {
+			return call("search", `{"query":"`+secret+`","path":"notes/"}`), nil
+		}
+		return Message{Role: "assistant", Content: "done"}, nil
+	})
+	cfg := testConfig()
+	cfg.Model.APIKey = secret
+	s := openTest(t, cfg, model)
+	ctx := t.Context()
+	id, _, err := s.Append(ctx, "escaped", Payload{Kind: "message", Text: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Start(ctx)
+	waitFor(t, 4*time.Second, func() bool { return count(t, s, "SELECT count(*) FROM inbox WHERE id=? AND status='done'", id) == 1 })
+	var data string
+	if err = s.read.QueryRow("SELECT run_data FROM inbox WHERE id=?", id).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	escaped, _ := json.Marshal(secret)
+	if strings.Contains(data, secret) || strings.Contains(data, strings.Trim(string(escaped), `"`)) || strings.Contains(data, "0123456789") {
+		for _, probe := range []string{secret, strings.Trim(string(escaped), `"`), "0123456789"} {
+			if i := strings.Index(data, probe); i >= 0 {
+				t.Logf("found %q near: %s", probe, data[max(0, i-300):min(len(data), i+80)])
+			}
+		}
+		t.Fatal("secret kept in evidence")
+	}
+}

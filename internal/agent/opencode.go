@@ -225,20 +225,11 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 	scan.Buffer(make([]byte, 4096), 4<<20)
 	var answer, reason string
 	// Keep a missing receipt visible when the process exits before step_finish.
-	current, captureErr := s.startCall(ctx, "opencode", s.cfg.Model.Name)
-	if captureErr != nil {
-		cancel()
-		_ = cmd.Wait()
-		return out, captureErr
-	}
+	current := s.startCall(ctx, "opencode", s.cfg.Model.Name)
 	seen := map[string]bool{}
 	started := false
 	var failed bool
 	for scan.Scan() {
-		if captureErr != nil {
-			cancel()
-			break
-		}
 		var frame struct {
 			Type, SessionID string
 			Part            struct {
@@ -268,10 +259,7 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 		switch frame.Type {
 		case "step_start":
 			if started || current.ID == "" {
-				current, captureErr = s.startCall(ctx, "opencode", s.cfg.Model.Name)
-				if captureErr != nil {
-					cancel()
-				}
+				current = s.startCall(ctx, "opencode", s.cfg.Model.Name)
 			}
 			started = true
 			answer = ""
@@ -294,8 +282,8 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 				continue
 			}
 			started = false
-			if current.ID == "" && captureErr == nil {
-				current, captureErr = s.startCall(ctx, "opencode", s.cfg.Model.Name)
+			if current.ID == "" {
+				current = s.startCall(ctx, "opencode", s.cfg.Model.Name)
 			}
 			var tokens ocTokens
 			if json.Unmarshal(frame.Part.Tokens, &tokens) == nil {
@@ -305,9 +293,6 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 			reason = frame.Part.Reason
 		}
 	}
-	if captureErr != nil {
-		cancel()
-	}
 	if scan.Err() != nil {
 		cancel()
 	}
@@ -316,9 +301,6 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 	turn.mu.Lock()
 	defer turn.mu.Unlock()
 	out = turn.out
-	if captureErr != nil {
-		return out, captureErr
-	}
 	if ctx.Err() != nil {
 		return out, ctx.Err()
 	}

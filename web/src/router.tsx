@@ -141,17 +141,33 @@ const evolution = createRoute({
   validateSearch: z.object({ path: z.string().optional() }),
   component: () => <Evolution path={evolution.useSearch().path ?? ""} />,
 })
+const scopes = [
+  "channel",
+  "role",
+  "principal",
+  "conversation",
+  "status",
+  "attempt",
+]
+const runKeys = [
+  ...["run", "message", "action", "q", "from", "to", "flag", "active", "event"],
+  ...scopes,
+  ...scopes.map((key) => "match_" + key),
+]
 const runs = createRoute({
   ...base,
   path: "runs",
-  validateSearch: z
-    .object({
-      view: z
-        .enum(["runs", "conversations", "deliveries"])
-        .optional()
-        .catch(undefined),
-    })
-    .catchall(z.string()),
+  // Only the keys the runs pages and the Go history filters read pass
+  // through; their values are checked by Go. Paging cursors stay out of URLs.
+  validateSearch: z.object({
+    view: z
+      .enum(["runs", "conversations", "deliveries"])
+      .optional()
+      .catch(undefined),
+    ...Object.fromEntries(
+      runKeys.map((key) => [key, z.string().optional().catch(undefined)])
+    ),
+  }),
   component: RunsPage,
 })
 function searchParams(values: Record<string, unknown>) {

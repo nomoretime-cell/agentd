@@ -67,8 +67,8 @@ func (s *Service) redactIM(v string, mask func(value, label string) string) stri
 	})
 	v = dingTalkSecretURL.ReplaceAllStringFunc(v, func(url string) string { return mask(url, "[dingtalk-webhook-redacted]") })
 	for _, secret := range []string{s.cfg.DingTalk.ClientSecret, s.cfg.WeCom.Secret} {
-		if secret != "" {
-			v = strings.ReplaceAll(v, secret, mask(secret, "[redacted]"))
+		for _, spelling := range secretSpellings(secret) {
+			v = strings.ReplaceAll(v, spelling, mask(spelling, "[redacted]"))
 		}
 	}
 	return v

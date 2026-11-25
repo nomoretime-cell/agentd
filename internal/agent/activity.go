@@ -80,13 +80,19 @@ func (s *Service) storeCall(ctx context.Context, c modelCall) error {
 	}
 	return err
 }
-func (s *Service) startCall(ctx context.Context, executor, model string) (modelCall, error) {
+
+// startCall records a placeholder before each model call so a call without
+// a receipt stays visible. The ledger only measures: a failed write is logged
+// and the call proceeds, shown as unreported, so it neither consumes a retry
+// nor interrupts an executor that may already have run tools.
+func (s *Service) startCall(ctx context.Context, executor, model string) modelCall {
 	sc, _ := ctx.Value(callScopeKey{}).(callScope)
 	if sc.Event == 0 {
-		return modelCall{}, nil
+		return modelCall{}
 	}
 	c := modelCall{callScope: sc, ID: randomID(), At: time.Now().UnixMilli(), Executor: executor, Model: s.redact(model)}
-	return c, s.storeCall(ctx, c)
+	s.logErr("model call ledger", s.storeCall(ctx, c))
+	return c
 }
 func (s *Service) finishCall(c modelCall, usage tokenUsage) {
 	if c.ID == "" || (usage.Input == nil && usage.Output == nil && usage.Total == nil) {
@@ -105,10 +111,7 @@ func (s *Service) completeMeasured(ctx context.Context, m Model, messages []Mess
 			name = selected
 		}
 	}
-	c, err := s.startCall(ctx, "native", name)
-	if err != nil {
-		return Message{}, err
-	}
+	c := s.startCall(ctx, "native", name)
 	s.submitted(ctx, c.ID, messages)
 	msg, err := m.Complete(ctx, messages, tools)
 	s.finishCall(c, msg.usage)

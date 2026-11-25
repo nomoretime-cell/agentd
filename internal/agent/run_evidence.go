@@ -64,16 +64,22 @@ func (c *capture) add(step string, src evidenceSource) {
 	defer c.mu.Unlock()
 	c.addLocked(step, src)
 }
+func (c *capture) indexLocked(src evidenceSource) int {
+	for i, prior := range c.Sources {
+		if prior.Kind == src.Kind && prior.Name == src.Name && prior.Digest == src.Digest && prior.Version == src.Version && prior.Offset == src.Offset && prior.End == src.End {
+			return i
+		}
+	}
+	return -1
+}
 func (c *capture) addLocked(step string, src evidenceSource) {
 	if len(c.Uses) >= 512 {
 		c.Omitted++
 		return
 	}
-	for i, prior := range c.Sources {
-		if prior.Kind == src.Kind && prior.Name == src.Name && prior.Digest == src.Digest && prior.Version == src.Version && prior.Offset == src.Offset && prior.End == src.End {
-			c.Uses = append(c.Uses, evidenceUse{step, i})
-			return
-		}
+	if i := c.indexLocked(src); i >= 0 {
+		c.Uses = append(c.Uses, evidenceUse{step, i})
+		return
 	}
 	if len(c.Sources) >= 256 || c.bytes+len(src.Text) > 512<<10 {
 		c.Omitted++
@@ -95,18 +101,25 @@ func (s *Service) submitted(ctx context.Context, step string, messages []Message
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Every step resends the whole conversation. Record each source at the
+	// step that first submitted it, so uses grow with new content rather
+	// than with steps times history and the final steps are not cut off.
 	for _, src := range c.pending {
 		c.addLocked(step, src)
 	}
+	c.pending = nil
 	for _, msg := range messages {
 		// Include tool call IDs/arguments as sent, even if the text is empty.
+		// source redacts the encoded message, including JSON-escaped secrets.
 		msg.Content = s.redact(msg.Content)
 		b, _ := json.Marshal(msg)
 		src := s.source("request", msg.Role, "", string(b))
 		if msg.historyID != "" {
 			src.Kind, src.Name = "history", msg.historyID
 		}
-		c.addLocked(step, src)
+		if c.indexLocked(src) < 0 {
+			c.addLocked(step, src)
+		}
 	}
 }
 func (s *Service) captureTool(ctx context.Context, key string, call ToolCall, result string, err error) {
