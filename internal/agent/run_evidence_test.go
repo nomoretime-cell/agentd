@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -245,13 +246,52 @@ func TestEvidenceKeepsLastStepOfLongRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	last := false
-	for _, src := range r.Evidence.Sources {
+	sawDocument := false
+	if len(r.Calls) != 31 {
+		t.Fatalf("got %d model calls, want 31", len(r.Calls))
+	}
+	for index, src := range r.Evidence.Sources {
+		if src.Kind == "document" && src.Name == "MEMORY.md" {
+			sawDocument = true
+			steps := map[string]bool{}
+			for _, use := range r.Evidence.Uses {
+				if use.Source == index {
+					steps[use.Step] = true
+				}
+			}
+			for _, call := range r.Calls {
+				if !steps[call.ID] {
+					t.Fatalf("missing document evidence for call %s", call.ID)
+				}
+			}
+		}
 		if src.Kind == "tool_args" && strings.Contains(src.Text, "step-30") {
 			last = true
 		}
 	}
-	if !last || r.Evidence.Omitted != 0 {
+	if !sawDocument || !last || r.Evidence.Omitted != 0 {
 		t.Fatalf("last step kept=%v omitted=%d uses=%d", last, r.Evidence.Omitted, len(r.Evidence.Uses))
+	}
+}
+
+func TestRequestEvidenceUsesOnlySourcesActuallySent(t *testing.T) {
+	s := openTest(t, testConfig(), nil)
+	c := &capture{}
+	ctx := context.WithValue(t.Context(), evidenceKey{}, c)
+	system := Message{Role: "system", Content: "original prompt"}
+	user := Message{Role: "user", Content: "one question", historyID: "message-1"}
+	c.staged(s.source("document", "MEMORY.md", "v1", "note"))
+	s.submitted(ctx, "first", []Message{system, user})
+	s.submitted(ctx, "second", []Message{{Role: "system", Content: "different prompt"}, user})
+	s.submitted(ctx, "third", []Message{system})
+	want := [][]int{{0, 1, 2}, {3, 2}, {0, 1}}
+	if len(c.Requests) != len(want) || len(c.Sources) != 4 {
+		t.Fatalf("unexpected requests or duplicate sources: %d requests, %d sources", len(c.Requests), len(c.Sources))
+	}
+	for i, step := range c.Requests {
+		if !slices.Equal(step.Sources, want[i]) {
+			t.Fatalf("%s sources %v, want %v", step.Step, step.Sources, want[i])
+		}
 	}
 }
 

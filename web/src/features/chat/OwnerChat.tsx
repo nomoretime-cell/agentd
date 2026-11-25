@@ -168,19 +168,21 @@ function Thread({
   const [unconfirmed, setUnconfirmed] = useState(() => pendingKey(storageKey))
   // An unconfirmed send keeps its text, so a reload can resubmit it as is.
   const [draft, setDraft] = useState(() =>
-    pendingKey(storageKey) ? pendingKey(textKey) : ""
+    unconfirmed ? pendingKey(textKey) : ""
   )
+  const sentText = useRef(draft)
   const scroll = useRef<HTMLDivElement>(null)
   const follow = useRef(true)
   const older = useRef<{ height: number; top: number } | null>(null)
   const rows = (feed.data?.pages.flatMap((p) => p.items) ?? []).reverse()
   const submitting = useRef(false)
   function acknowledge(key: string) {
-    const sent = pendingKey(textKey)
+    const sent = sentText.current
     if (pendingKey(storageKey) === key) {
       pendingKey(storageKey, "")
       pendingKey(textKey, "")
     }
+    sentText.current = ""
     setUnconfirmed("")
     // Keep anything typed since; clear only the text that was sent.
     setDraft((current) => (current.trim() === sent ? "" : current))
@@ -238,10 +240,11 @@ function Thread({
       return
     submitting.current = true
     const key = unconfirmed || requestKey()
+    if (!unconfirmed || !sentText.current) sentText.current = draft.trim()
     pendingKey(storageKey, key)
-    pendingKey(textKey, draft.trim())
+    pendingKey(textKey, sentText.current)
     setUnconfirmed(key)
-    send.mutate({ text: draft.trim(), key })
+    send.mutate({ text: sentText.current, key })
   }
   return (
     <section className="chat-thread" aria-label="对话内容">

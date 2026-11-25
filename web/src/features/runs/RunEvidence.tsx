@@ -54,6 +54,8 @@ export function RunEvidence({
   answer: string
 }) {
   const sources = data?.sources ?? []
+  const steps = sources.map(() => new Set<string>())
+  for (const use of data?.uses ?? []) steps[use.source]?.add(use.step)
   const mentioned = sources.filter(
     (s) =>
       ["read", "hit", "document"].includes(s.kind) &&
@@ -66,7 +68,7 @@ export function RunEvidence({
         <p>
           {data
             ? "本次没有采集到可展示的输入或工具回执。"
-            : "这次尝试没有留存上下文快照。"}
+            : "这次尝试没有可用的上下文快照。已完成事件的快照保留 30 天。"}
         </p>
       )}
       {groups.map((g) => {
@@ -83,14 +85,8 @@ export function RunEvidence({
                     {labels[s.kind] ?? s.kind} · {s.name}
                   </summary>
                   <small>
-                    步骤{" "}
-                    {Array.from(
-                      new Set(
-                        data?.uses
-                          ?.filter((u) => u.source === index)
-                          .map((u) => u.step)
-                      )
-                    ).join("、") || "未记录"}
+                    已记录的步骤{" "}
+                    {Array.from(steps[index]).join("、") || "未记录"}
                   </small>
                   {s.version && (
                     <small>

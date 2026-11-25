@@ -49,6 +49,8 @@ test("所有者审批、回执与刷新后直接读回", async ({ page, request 
     await page.getByRole("link", { name: /当前待处理/ }).click()
     await expect(page).toHaveURL(/#queue$/)
     const first = page.getByRole("button", { name: /create_ticket/ }).first()
+    // The visiting computer and the Go server may have different clocks.
+    await page.clock.setFixedTime(new Date(Date.now() + 2 * 86400000))
     await first.click()
     const dialog = page.getByRole("dialog")
     await expect(dialog.getByText("已冻结的执行参数")).toBeVisible()
@@ -446,6 +448,42 @@ test("发送回执中断后，刷新可恢复且不会重复入队", async ({ pa
       headers: webHeaders,
     })
     expect((await p.json()).items).toHaveLength(1)
+  } finally {
+    await demo.stop()
+  }
+})
+
+test("会话存储不可写时，直接回执和中断后核对都能清空已发送正文", async ({
+  page,
+}) => {
+  const demo = await startInstance()
+  try {
+    await page.addInitScript(() => {
+      const setItem = Storage.prototype.setItem
+      Storage.prototype.setItem = function (key, value) {
+        if (this === window.sessionStorage)
+          throw new DOMException("Storage unavailable", "QuotaExceededError")
+        return setItem.call(this, key, value)
+      }
+    })
+    await page.goto(demo.url + "/#chat")
+    await page.getByRole("button", { name: "新建会话" }).click()
+    const input = page.getByLabel("消息内容")
+    const send = page.getByRole("button", { name: "发送", exact: true })
+    await input.fill("正常取得回执")
+    await send.click()
+    await expect(input).toHaveValue("")
+    await expect(send).toBeDisabled()
+    await page.route("**/v1/chats/*/messages", async (route) => {
+      if (route.request().method() !== "POST") return route.continue()
+      expect((await route.fetch()).ok()).toBe(true)
+      await route.abort()
+    })
+    await input.fill("传输回执中断")
+    await send.click()
+    await page.getByRole("button", { name: "确认回执" }).click()
+    await expect(input).toHaveValue("")
+    await expect(send).toBeDisabled()
   } finally {
     await demo.stop()
   }

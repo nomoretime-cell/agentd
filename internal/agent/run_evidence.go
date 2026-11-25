@@ -29,16 +29,31 @@ type evidenceUse struct {
 	Step   string `json:"step"`
 	Source int    `json:"source"`
 }
-type runEvidence struct {
-	Sources []evidenceSource `json:"sources"`
-	Uses    []evidenceUse    `json:"uses"`
-	Omitted int              `json:"omitted"`
+
+// Store a request's source indexes together; the public uses list is expanded
+// when a run is read. Repeated history costs one record per call.
+type evidenceRequest struct {
+	Step    string `json:"step"`
+	Sources []int  `json:"sources"`
 }
+type runEvidence struct {
+	Requests []evidenceRequest `json:"requests,omitempty"`
+	Sources  []evidenceSource  `json:"sources"`
+	Uses     []evidenceUse     `json:"uses"`
+	Omitted  int               `json:"omitted"`
+}
+
+const (
+	maxEvidenceSources = 256
+	maxEvidenceRecords = 512
+)
+
 type capture struct {
 	mu sync.Mutex
 	runEvidence
-	pending []evidenceSource
-	bytes   int
+	promptSources []evidenceSource
+	prompt        string
+	bytes         int
 }
 
 func captureFrom(ctx context.Context) *capture { c, _ := ctx.Value(evidenceKey{}).(*capture); return c }
@@ -62,65 +77,73 @@ func (c *capture) add(step string, src evidenceSource) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.addLocked(step, src)
+	if len(c.Uses)+len(c.Requests) >= maxEvidenceRecords {
+		c.Omitted++
+		return
+	}
+	if i := c.sourceIndex(src); i >= 0 {
+		c.Uses = append(c.Uses, evidenceUse{step, i})
+	}
 }
-func (c *capture) indexLocked(src evidenceSource) int {
+
+// sourceIndex interns a source under the capture lock.
+func (c *capture) sourceIndex(src evidenceSource) int {
 	for i, prior := range c.Sources {
 		if prior.Kind == src.Kind && prior.Name == src.Name && prior.Digest == src.Digest && prior.Version == src.Version && prior.Offset == src.Offset && prior.End == src.End {
 			return i
 		}
 	}
-	return -1
-}
-func (c *capture) addLocked(step string, src evidenceSource) {
-	if len(c.Uses) >= 512 {
+	if len(c.Sources) >= maxEvidenceSources || c.bytes+len(src.Text) > 512<<10 {
 		c.Omitted++
-		return
-	}
-	if i := c.indexLocked(src); i >= 0 {
-		c.Uses = append(c.Uses, evidenceUse{step, i})
-		return
-	}
-	if len(c.Sources) >= 256 || c.bytes+len(src.Text) > 512<<10 {
-		c.Omitted++
-		return
+		return -1
 	}
 	c.bytes += len(src.Text)
-	c.Uses = append(c.Uses, evidenceUse{step, len(c.Sources)})
 	c.Sources = append(c.Sources, src)
+	return len(c.Sources) - 1
 }
 func (c *capture) staged(src evidenceSource) {
 	if c != nil {
-		c.pending = append(c.pending, src)
+		c.promptSources = append(c.promptSources, src)
 	}
 }
 func (s *Service) submitted(ctx context.Context, step string, messages []Message) {
 	c := captureFrom(ctx)
-	if c == nil {
+	if c == nil || len(messages) == 0 {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// Every step resends the whole conversation. Record each source at the
-	// step that first submitted it, so uses grow with new content rather
-	// than with steps times history and the final steps are not cut off.
-	for _, src := range c.pending {
-		c.addLocked(step, src)
+	if len(c.Uses)+len(c.Requests) >= maxEvidenceRecords {
+		c.Omitted++
+		return
 	}
-	c.pending = nil
+	request := evidenceRequest{Step: step}
+	var seen [maxEvidenceSources]bool
+	include := func(src evidenceSource) {
+		if i := c.sourceIndex(src); i >= 0 && !seen[i] {
+			request.Sources = append(request.Sources, i)
+			seen[i] = true
+		}
+	}
+	// Staged documents belong to the original prompt, including each resend.
+	if len(c.promptSources) > 0 && len(c.Requests) == 0 {
+		c.prompt = messages[0].Content
+	}
+	if messages[0].Content == c.prompt {
+		for _, src := range c.promptSources {
+			include(src)
+		}
+	}
 	for _, msg := range messages {
-		// Include tool call IDs/arguments as sent, even if the text is empty.
-		// source redacts the encoded message, including JSON-escaped secrets.
 		msg.Content = s.redact(msg.Content)
 		b, _ := json.Marshal(msg)
 		src := s.source("request", msg.Role, "", string(b))
 		if msg.historyID != "" {
 			src.Kind, src.Name = "history", msg.historyID
 		}
-		if c.indexLocked(src) < 0 {
-			c.addLocked(step, src)
-		}
+		include(src)
 	}
+	c.Requests = append(c.Requests, request)
 }
 func (s *Service) captureTool(ctx context.Context, key string, call ToolCall, result string, err error) {
 	c := captureFrom(ctx)
@@ -254,6 +277,13 @@ func (s *Service) indexedRun(ctx context.Context, id string) (historyRecord, err
 		return rec, err
 	}
 	if rec.Evidence != nil {
+		// Older snapshots already contain flat uses. Both formats expose the same API.
+		for _, request := range rec.Evidence.Requests {
+			for _, i := range request.Sources {
+				rec.Evidence.Uses = append(rec.Evidence.Uses, evidenceUse{request.Step, i})
+			}
+		}
+		rec.Evidence.Requests = nil
 		for i := range rec.Evidence.Sources {
 			src := &rec.Evidence.Sources[i]
 			src.Text = s.redact(src.Text)
