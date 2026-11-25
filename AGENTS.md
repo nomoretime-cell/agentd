@@ -46,7 +46,7 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 | --- | --- | --- |
 | Event Inbox · `inbox.go`、`run_evidence.go`、`activity.go` | 事件去重、合批、顺序领取、失败退避与批次提交；随事件保存的运行快照、正式回复与模型调用回执（存于 `inbox` 表，仅所有者可见） | 渠道校验并归一化输入后落库，再确认接收。需要与其他写入原子提交时，复用 `store.go` 的 `insertEvent`。运行快照与 `data/sessions/` 运行记录由同一个 `runRecord` 构建：前者供工作台溯源，后者供模型检索，两者都不作为动作或投递结果的依据。 |
 | Timers · `timers.go` | 计划何时到期、下一次何时触发 | 到期事件入 Inbox 与更新计划共用一个短事务。具体业务由 Worker 执行。 |
-| Memory · `memory.go`、`consolidation.go` | 工作区读写、文件版本冲突、MEMORY.md 上限、提示上下文、会话缓存与运行记录（`data/sessions/`）；整理的候选版本、检查、提升与回滚（`data/memory/`） | 工具复用 `workspaceRead`、`workspaceWrite`；运行记录只由 `appendTranscript` 写入。判断动作是否执行、消息是否发送，分别查 Actions 和 Outbox 回执，不查运行记录。 |
+| Memory · `memory.go`、`consolidation.go`、`memory_revision.go`、`dreaming.go` | 工作区读写、文件版本冲突、MEMORY.md 上限、提示上下文、会话缓存与运行记录（`data/sessions/`）；整理的候选版本、检查、提升与回滚（`data/memory/`）；`MEMORY.md` 与 `notes/` 的修订记录及其上限；手动整理的排队条件 | 工具复用 `workspaceRead`、`workspaceWrite`；运行记录只由 `appendTranscript` 写入；所有者工作区里 `MEMORY.md` 与 `notes/` 的单文件写入（模型工具与所有者修订）经 `reviseLocked` 留下修订，整理提升按 `data/memory/versions/` 保存版本。判断动作是否执行、消息是否发送，分别查 Actions 和 Outbox 回执，不查运行记录。 |
 | Permissions · `permissions.go`、`sandbox.go` | 受控外部动作的授权、冻结参数、审批、执行与核对；本地命令隔离 | 执行器调用宿主工具入口。获批后按原动作记录执行，业务代码复用动作账本。 |
 | Outbox · `outbox.go` | 通知入队、投递时机、重试与结果状态 | 业务返回 `Outcome.Notifications`，批次提交复用 `enqueueTx`；渠道适配器执行一次发送并解释平台回执，Outbox 据此推进状态。 |
 
