@@ -417,10 +417,13 @@ test("发送回执中断后，刷新可恢复且不会重复入队", async ({ pa
     await page.getByRole("button", { name: "发送", exact: true }).click()
     await expect(page.getByRole("button", { name: "确认回执" })).toBeVisible()
     await page.reload()
+    // The unconfirmed text survives the reload with its key.
+    await expect(page.getByLabel("消息内容")).toHaveValue("只创建一次")
     await page.getByRole("button", { name: "确认回执" }).click()
     await expect(
       page.getByText("收到，只创建一次", { exact: true })
     ).toBeVisible({ timeout: 10000 })
+    await expect(page.getByLabel("消息内容")).toHaveValue("")
     const p = await request.get(demo.url + "/v1/chats/" + id + "/messages", {
       headers: webHeaders,
     })

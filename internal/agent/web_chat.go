@@ -148,14 +148,17 @@ func (s *Service) webChatHistory(ctx context.Context, chat string, before int64)
 		if e.Kind == "message" {
 			turns = append(turns, Message{Role: "user", Content: s.bounded(e.Text), historyID: fmt.Sprintf("inbox/%d", e.ID)})
 		}
+		// Keep an event's reply and input together so history never starts
+		// with an answer whose question was cut off.
+		size := 0
 		for _, m := range turns {
-			bytes += len(m.Content)
-			if len(history) >= limit || bytes > 48<<10 {
-				slices.Reverse(history)
-				return history, nil
-			}
-			history = append(history, m)
+			size += len(m.Content)
 		}
+		if len(history)+len(turns) > limit || bytes+size > 48<<10 {
+			break
+		}
+		bytes += size
+		history = append(history, turns...)
 	}
 	slices.Reverse(history)
 	return history, nil

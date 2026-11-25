@@ -234,3 +234,87 @@ func TestWebChatCursorSkipsOtherScopesAndNewArrivals(t *testing.T) {
 		t.Fatal("zero history", err)
 	}
 }
+
+// A batch that died together but was resolved separately must not leave a
+// skipped input pointing at the other input's reply.
+func TestWebChatSplitBatchKeepsRepliesApart(t *testing.T) {
+	var calls atomic.Int32
+	model := modelFunc(func(context.Context, []Message, []Tool) (Message, error) {
+		if calls.Add(1) <= 3 {
+			return Message{}, errors.New("model unavailable")
+		}
+		return Message{Role: "assistant", Content: "the reply"}, nil
+	})
+	cfg := testConfig()
+	cfg.Limits.DebounceMS = 200
+	s := openTest(t, cfg, model)
+	ctx := t.Context()
+	chat := "web-" + randomID()
+	var ids []int64
+	for i, text := range []string{"first", "second"} {
+		id, _, err := s.Append(ctx, fmt.Sprint("k", i), Payload{Kind: "message", WebChat: chat, Text: text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	s.Start(ctx)
+	waitFor(t, 4*time.Second, func() bool { return count(t, s, "SELECT count(*) FROM inbox WHERE status='dead'") == 2 })
+	if err := s.ResolveEvent(ctx, ids[1], "skip"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResolveEvent(ctx, ids[0], "retry"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 4*time.Second, func() bool {
+		return count(t, s, "SELECT count(*) FROM inbox WHERE id=? AND status='done'", ids[0]) == 1
+	})
+	p, err := s.webChatEvents(ctx, chat, 1<<62, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replies := map[int64]string{}
+	for _, e := range p.Items {
+		replies[e.ID] = e.ReplyID
+	}
+	if replies[ids[0]] == "" || replies[ids[1]] != "" {
+		t.Fatalf("reply links %v", replies)
+	}
+	history, err := s.webChatHistory(ctx, chat, 1<<62)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answers := 0
+	for _, m := range history {
+		if m.Role == "assistant" {
+			answers++
+		}
+	}
+	if answers != 1 {
+		t.Fatalf("history has %d answers", answers)
+	}
+}
+
+// Trimming history keeps a reply with its question.
+func TestWebChatHistoryKeepsTurnsWhole(t *testing.T) {
+	cfg := testConfig()
+	cfg.Limits.MaxHistoryMessages = 3
+	s := openTest(t, cfg, finalModel())
+	ctx := t.Context()
+	chat := "web-" + randomID()
+	s.Start(ctx)
+	for i := range 2 {
+		id, _, err := s.Append(ctx, fmt.Sprint("t", i), Payload{Kind: "message", WebChat: chat, Text: fmt.Sprint("question ", i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, 4*time.Second, func() bool { return count(t, s, "SELECT count(*) FROM inbox WHERE id=? AND status='done'", id) == 1 })
+	}
+	history, err := s.webChatHistory(ctx, chat, 1<<62)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 || history[0].Role != "user" || history[1].Role != "assistant" {
+		t.Fatalf("history %+v", history)
+	}
+}

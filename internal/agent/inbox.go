@@ -263,13 +263,16 @@ func (s *Service) returnBatch(ctx context.Context, batch []Event, failure bool, 
 			}
 			attempt = record.key
 		}
+		// One time base keeps a returned batch together: claim merges only
+		// events with equal available_at.
+		now := time.Now()
 		for _, ev := range batch {
 			n := ev.Retries
 			status := "pending"
-			due := time.Now().UnixMilli()
+			due := now.UnixMilli()
 			if failure {
 				n++
-				due = time.Now().Add(s.retryDelay(n)).UnixMilli()
+				due = now.Add(s.retryDelay(n)).UnixMilli()
 				if n >= 3 {
 					status = "dead"
 				}
@@ -279,7 +282,8 @@ func (s *Service) returnBatch(ctx context.Context, batch []Event, failure bool, 
 					return e
 				}
 			}
-			if _, e := tx.ExecContext(ctx, "UPDATE inbox SET status=?,retries=?,available_at=? WHERE id=? AND status='running'", status, n, due, ev.ID); e != nil {
+			// The reply link is set again by the claim that runs the event.
+			if _, e := tx.ExecContext(ctx, "UPDATE inbox SET status=?,retries=?,available_at=?,chat_head=NULL WHERE id=? AND status='running'", status, n, due, ev.ID); e != nil {
 				return e
 			}
 		}
@@ -347,9 +351,10 @@ func (s *Service) ResolveEvent(ctx context.Context, id int64, op string) error {
 	var r sql.Result
 	switch op {
 	case "retry":
-		r, e = s.db.ExecContext(ctx, "UPDATE inbox SET status='pending',retries=0,available_at=? WHERE id=? AND status='dead'", time.Now().UnixMilli(), id)
+		r, e = s.db.ExecContext(ctx, "UPDATE inbox SET status='pending',retries=0,available_at=?,chat_head=NULL WHERE id=? AND status='dead'", time.Now().UnixMilli(), id)
 	case "skip":
-		r, e = s.db.ExecContext(ctx, "UPDATE inbox SET status='done' WHERE id=? AND status IN ('dead','pending')", id)
+		// A skipped input has no reply; drop any link to another input's.
+		r, e = s.db.ExecContext(ctx, "UPDATE inbox SET status='done',chat_head=NULL WHERE id=? AND status IN ('dead','pending')", id)
 	default:
 		return errors.New("operation must be retry or skip")
 	}

@@ -268,6 +268,7 @@ func TestPayloadEncodingIsStable(t *testing.T) {
 			`{"dingtalk":{"conversation_id":"c","conversation_type":"1","sender":"u","mentioned":false,"session_webhook":"","expires_at":0},"kind":"dingtalk","text":"hi"}`},
 		{Payload{ownerScope: ownerScope{NewsTarget: "wecom-owner:x"}, Kind: "ai_news", imRoutes: imRoutes{WeCom: &IMRoute{BotID: "b"}}},
 			`{"news_target":"wecom-owner:x","wecom":{"bot_id":"b","conversation_id":"","conversation_type":"","sender":"","mentioned":false,"session_webhook":"","expires_at":0},"kind":"ai_news"}`},
+		{Payload{Kind: "message", Text: "hi", WebChat: "web-x"}, `{"kind":"message","text":"hi","web_chat":"web-x"}`},
 	} {
 		b, err := json.Marshal(c.p)
 		if err != nil || string(b) != c.want {

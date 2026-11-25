@@ -147,20 +147,43 @@ function Thread({
         signal,
       }),
     getNextPageParam: (p) => p.next || undefined,
-    refetchInterval: 2000,
+    // Poll quickly while a message or its approved action is still being
+    // handled, so continued replies appear promptly.
+    refetchInterval: (q) =>
+      q.state.data?.pages.some((p) =>
+        p.items.some(
+          (e) =>
+            e.state === "pending" ||
+            e.state === "running" ||
+            ["pending_approval", "approved", "executing"].includes(
+              e.action_status
+            )
+        )
+      )
+        ? 2000
+        : 10000,
   })
-  const [draft, setDraft] = useState("")
   const storageKey = "agentd:chat-send:" + id
+  const textKey = storageKey + ":text"
   const [unconfirmed, setUnconfirmed] = useState(() => pendingKey(storageKey))
+  // An unconfirmed send keeps its text, so a reload can resubmit it as is.
+  const [draft, setDraft] = useState(() =>
+    pendingKey(storageKey) ? pendingKey(textKey) : ""
+  )
   const scroll = useRef<HTMLDivElement>(null)
   const follow = useRef(true)
   const older = useRef<{ height: number; top: number } | null>(null)
   const rows = (feed.data?.pages.flatMap((p) => p.items) ?? []).reverse()
   const submitting = useRef(false)
   function acknowledge(key: string) {
-    if (pendingKey(storageKey) === key) pendingKey(storageKey, "")
+    const sent = pendingKey(textKey)
+    if (pendingKey(storageKey) === key) {
+      pendingKey(storageKey, "")
+      pendingKey(textKey, "")
+    }
     setUnconfirmed("")
-    setDraft("")
+    // Keep anything typed since; clear only the text that was sent.
+    setDraft((current) => (current.trim() === sent ? "" : current))
     follow.current = true
     void client.invalidateQueries({ queryKey: ["chat-events", id] })
     void client.invalidateQueries({ queryKey: ["web-chats"] })
@@ -179,7 +202,9 @@ function Thread({
   const verified = useQuery<z.infer<typeof receipt>>({
     queryKey: ["chat-submission", id, unconfirmed],
     enabled: !!unconfirmed && !send.isPending,
-    refetchInterval: (q) => (q.state.data?.id ? false : 2000),
+    // Stop after about a minute; the owner can then resubmit the same text.
+    refetchInterval: (q) =>
+      q.state.data?.id || q.state.dataUpdateCount >= 30 ? false : 2000,
     queryFn: ({ signal }) =>
       request(
         path + "/submissions/" + encodeURIComponent(unconfirmed),
@@ -214,6 +239,7 @@ function Thread({
     submitting.current = true
     const key = unconfirmed || requestKey()
     pendingKey(storageKey, key)
+    pendingKey(textKey, draft.trim())
     setUnconfirmed(key)
     send.mutate({ text: draft.trim(), key })
   }
