@@ -77,4 +77,28 @@ func TestDirectWorkbenchAccess(t *testing.T) {
 			t.Errorf("%s %s host %q origin %q site %q: got %d want %d", tc.method, tc.path, tc.host, tc.origin, tc.site, rec.Code, tc.want)
 		}
 	}
+	// Credentials added by an authenticating reverse proxy keep the workbench
+	// path and its route limits; they never open the management API.
+	for _, tc := range []struct {
+		method, path string
+		workbench    bool
+		want         int
+	}{
+		{"GET", "/v1/status", true, 200},
+		{"POST", "/v1/control", true, 404},
+		{"GET", "/v1/status", false, 401},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader("{}"))
+		req.Host = cfg.Listen
+		req.Header.Set("Origin", cfg.WebOrigin)
+		req.Header.Set("Authorization", "Basic b3duZXI6c2VjcmV0")
+		if tc.workbench {
+			req.Header.Set("X-Agentd-Workbench", "1")
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("proxy credentials %s %s workbench=%v: got %d want %d", tc.method, tc.path, tc.workbench, rec.Code, tc.want)
+		}
+	}
 }

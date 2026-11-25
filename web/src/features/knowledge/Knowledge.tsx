@@ -14,6 +14,7 @@ import {
   type Selection,
 } from "./uploads"
 import "./knowledge.css"
+import { viewerInstant } from "@/lib/server-time"
 const searchResult = z.object({
   hits: z.array(z.object({ path: z.string(), snippet: z.string() })),
   truncated: z.boolean().optional(),
@@ -419,7 +420,7 @@ export function Knowledge({
           <article>
             <h3>{detail.data.document.title}</h3>
             <small>入库版本 SHA-256 · {detail.data.document.sha256}</small>
-            <pre>{detail.data.body}</pre>
+            <pre data-testid="document-body">{detail.data.body}</pre>
             <div className="knowledge-actions">
               <Button variant="outline" onClick={() => onSelect("")}>
                 收起正文
@@ -451,8 +452,7 @@ export function Knowledge({
           cfg.batches.map((b) => (
             <details key={b.id}>
               <summary>
-                {new Date(b.created).toLocaleString("zh-CN")} · {b.files.length}{" "}
-                个文件 ·{" "}
+                {viewerInstant(b.created)} · {b.files.length} 个文件 ·{" "}
                 {b.files.some((f) => f.status === "processing")
                   ? "处理中"
                   : b.files.some((f) => f.status === "failed")
@@ -462,7 +462,7 @@ export function Knowledge({
               <ul>
                 {b.files.map((f, i) => (
                   <li key={i}>
-                    {f.name} · {statuses[f.status]} {f.error}
+                    {f.name} · {statuses[f.status] ?? f.status} {f.error}
                   </li>
                 ))}
               </ul>
@@ -498,7 +498,7 @@ export function Knowledge({
         {docs.data?.importing && <p role="status">正在导入资料…</p>}
         {docs.data?.last_import?.map((r, i) => (
           <p key={i}>
-            {r.source} · {statuses[r.status]} {r.error}
+            {r.source} · {statuses[r.status] ?? r.status} {r.error}
           </p>
         ))}
       </details>

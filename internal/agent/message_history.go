@@ -28,15 +28,16 @@ type messageTrace struct {
 }
 
 func noticeKind(key string) string {
+	if _, test, ok := newsNotice(key); ok {
+		if test {
+			return "news-test"
+		}
+		return "news"
+	}
 	prefix, _, _ := strings.Cut(key, ":")
 	switch prefix {
 	case "progress", "approval", "failure", "action-result", "reply", "message", "drafts", "memory-held":
 		return prefix
-	case "ai-news":
-		if strings.HasPrefix(key, "ai-news:test:") {
-			return "news-test"
-		}
-		return "news"
 	default:
 		return "notification"
 	}
@@ -132,6 +133,10 @@ func (s *Service) messageDetail(ctx context.Context, id string) (messageTrace, e
 	return m, nil
 }
 func (s *Service) legacyNoticeEvent(ctx context.Context, key string) int64 {
+	if ev, _, ok := newsNotice(key); ok {
+		n, _ := strconv.ParseInt(ev, 10, 64)
+		return n
+	}
 	p := strings.Split(key, ":")
 	if len(p) < 2 {
 		return 0
@@ -142,11 +147,6 @@ func (s *Service) legacyNoticeEvent(ctx context.Context, key string) int64 {
 		raw = p[1]
 	case "message":
 		if len(p) > 2 && p[1] == "ev" {
-			raw = p[2]
-		}
-	case "ai-news":
-		raw = p[1]
-		if raw == "test" && len(p) > 2 {
 			raw = p[2]
 		}
 	case "approval", "action-result":

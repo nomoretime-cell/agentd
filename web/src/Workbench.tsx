@@ -14,7 +14,7 @@ import {
 import { Brand } from "./Brand"
 import { ThemeMenu } from "./ThemeMenu"
 import { ActionDetail } from "./features/actions/ActionDetail"
-import { statusNames } from "./features/overview/items"
+import { actionStatus } from "@/lib/status"
 
 const navigation = [
   {
@@ -68,9 +68,13 @@ export function Workbench() {
           >
             <PanelLeft size={16} />
           </button>
-          <span>工作台</span>
-          <ChevronRight size={14} />
-          {pageTitle}
+          <nav aria-label="当前位置" className="breadcrumb">
+            <span>工作台</span>
+            <ChevronRight size={14} aria-hidden />
+            <span className="current" aria-current="page">
+              {pageTitle}
+            </span>
+          </nav>
           <div className="date">
             {new Intl.DateTimeFormat("zh-CN", { dateStyle: "full" }).format(
               new Date()
@@ -93,12 +97,18 @@ export function Workbench() {
         <ActionDetail
           key={actionID}
           id={actionID}
-          statusNames={statusNames}
+          statusNames={actionStatus}
+          // The overview opens actions from its queue; return to its selected type.
+          fallbackFocus={() =>
+            document.querySelector<HTMLElement>('#queue [aria-pressed="true"]')
+          }
           close={() => {
             params.delete("action")
             location.replace(
               current === "overview"
-                ? "#queue"
+                ? params.size
+                  ? "#" + params
+                  : "#queue"
                 : "#" + current + (params.size ? "?" + params : "")
             )
           }}

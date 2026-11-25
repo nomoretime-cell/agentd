@@ -74,6 +74,10 @@ func (s *Service) redactIM(v string, mask func(value, label string) string) stri
 	return v
 }
 
+// imEventKind reports whether an Inbox payload kind is a message received
+// from an IM provider. Such events use the provider name as their kind.
+func imEventKind(kind string) bool { return kind == "dingtalk" || kind == "wecom" }
+
 func imReplyTarget(target string) bool {
 	return strings.HasPrefix(target, "dingtalk:") || strings.HasPrefix(target, "wecom:")
 }

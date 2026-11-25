@@ -235,6 +235,7 @@ func (s *Service) workerLoop(ctx context.Context) {
 			}
 			outcome.indexed = startErr == nil
 			s.recordRun(batch, outcome, record.status, runErr)
+			s.pruneRunEvidence(time.Now())
 			s.logErr("execute", runErr)
 			s.logErr("commit", err)
 			if err != nil || (startErr != nil && !aborted) {

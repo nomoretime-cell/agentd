@@ -8,12 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
 )
 
 func (s *Service) Handler() http.Handler {
@@ -268,7 +273,9 @@ func (s *Service) Handler() http.Handler {
 				writeJSON(w, 403, map[string]string{"error": "browser cross-origin access disabled"})
 				return
 			}
-			if r.Header.Get("X-Agentd-Workbench") == "1" && r.Header.Get("Authorization") == "" {
+			// An authenticating reverse proxy may forward its own Basic or other
+			// credentials; only a Bearer token selects the management API.
+			if r.Header.Get("X-Agentd-Workbench") == "1" && !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 				localHost := r.Host == s.cfg.Listen || r.Host == "localhost:"+port
 				publicHost := public != nil && public.Host != "" && r.Host == public.Host
 				if (!localHost && !publicHost) || r.Header.Get("Sec-Fetch-Site") == "cross-site" || (r.Method != "GET" && r.Method != "HEAD" && origin == "") {
@@ -314,10 +321,29 @@ func respond(w http.ResponseWriter, v any, e error) {
 		code = 403
 	} else if errors.Is(e, ErrPaused) {
 		code = 409
-	} else if errors.Is(e, sql.ErrNoRows) {
+	} else if errors.Is(e, sql.ErrNoRows) || errors.Is(e, fs.ErrNotExist) {
 		code = 404
+	} else if errors.Is(e, context.DeadlineExceeded) {
+		code = 503
+	} else if serverFault(e) {
+		code = 500
+	}
+	if code >= 500 {
+		// The client cannot fix these; record them once for the operator.
+		slog.Default().Error("request failed", "status", code, "error", e.Error())
 	}
 	writeJSON(w, code, map[string]string{"error": e.Error()})
+}
+
+// serverFault reports failures of the host rather than of the request:
+// file system, system call and database errors. Handlers report invalid
+// input with plain errors, which stay 400.
+func serverFault(e error) bool {
+	var path *fs.PathError
+	var link *os.LinkError
+	var call *os.SyscallError
+	var db *sqlite.Error
+	return errors.As(e, &path) || errors.As(e, &link) || errors.As(e, &call) || errors.As(e, &db)
 }
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

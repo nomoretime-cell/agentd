@@ -5,6 +5,7 @@ import { X } from "lucide-react"
 import { z } from "zod"
 import { request } from "@/api"
 import { Button } from "@/components/ui/button"
+import { viewerInstant } from "@/lib/server-time"
 
 const actionSchema = z.object({
   id: z.string(),
@@ -26,10 +27,13 @@ export function ActionDetail({
   id,
   close,
   statusNames,
+  fallbackFocus,
 }: {
   id: string
   close: () => void
   statusNames: Record<string, string>
+  // Where focus returns when the element that opened the dialog is gone.
+  fallbackFocus?: () => HTMLElement | null
 }) {
   const [opener] = useState(() => document.activeElement)
   const client = useQueryClient()
@@ -72,9 +76,7 @@ export function ActionDetail({
               opener !== document.body &&
               opener.isConnected
                 ? opener
-                : document.querySelector<HTMLElement>(
-                    '.queue-choices [aria-pressed="true"]'
-                  )
+                : fallbackFocus?.()
             if (target) {
               event.preventDefault()
               target.focus({ preventScroll: true })
@@ -110,7 +112,7 @@ export function ActionDetail({
               </section>
               <section>
                 <h3>审批截止</h3>
-                <p>{new Date(action.expires_at).toLocaleString("zh-CN")}</p>
+                <p>{viewerInstant(action.expires_at)}</p>
               </section>
               {action.result && (
                 <section>

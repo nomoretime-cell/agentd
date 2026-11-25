@@ -19,6 +19,7 @@
 └── .agentd/                             # 状态根目录（-root），整个目录被 git 忽略，整体备份
     ├── data/                            # 宿主私有：模型不能直接访问
     │   ├── state.db                     # 4 张业务表；运行快照、回复、调用和投递回执归属 Inbox / Outbox
+    │   ├── im-identity.json             # 已删除 IM 渠道的身份指纹，重新添加时须一致才能接管挂起的工作
     │   ├── workbench-since               # 工作台指标开始采集的 UTC 时间，随数据库备份
     │   ├── agentd.lock  paused.lock  api-token
     │   ├── deliveries/  outputs/  opencode/
@@ -54,7 +55,7 @@
 - `<role>`：在配置中声明，只允许 `[a-z0-9-]`。只有一个角色时固定为 `default`。
 - `<principal>`：由宿主根据身份生成，取值为 `owner`、`local`、`user-<hash>`、`group-<hash>`，其中 `<hash>` 用 `stableID`。平台 ID 不进路径，避免特殊字符和账号暴露；对应关系记在 `data/principals.jsonl`。
 
-网页会话的输入、批次关联和回复存于现有 `data/state.db`。使用 OpenCode 时，网页会话标识派生独立的执行器会话 ID，项目目录沿用 `data/opencode/projects/<sid>/`。
+网页会话的输入、批次关联和回复存于现有 `data/state.db`。运行快照（`inbox.run_data`）只保留 30 天（`runEvidenceDays`），之后只留运行索引，详情回退到运行记录。使用 OpenCode 时，网页会话标识派生独立的执行器会话 ID，项目目录沿用 `data/opencode/projects/<sid>/`。
 
 ## 3. 模型看到的虚拟路径
 
@@ -112,4 +113,4 @@
 3. **第二个角色出现时**：建立 `company/`、`roles/` 和虚拟路径映射，把单角色时的内容迁入 `roles/default/`。
 4. **第三阶段**：付费等级与知识集合的权限、提升闸门。
 
-工作台的记忆修订存入 `data/memory/edits/<修订号>.json`，包含操作人、来源和新旧版本哈希；正文按哈希保存在 `data/memory/edit-content/`。`data/memory/edit-pending.json` 用于恢复被中断的写入。技能批准时由 `data/gate/publishing.json` 记录目录替换和审批回执写入位置，重启后完成发布。新增或修订技能草稿的 `.owner-base` 记录起草时有效技能的版本。
+工作台的记忆修订存入 `data/memory/edits/<修订号>.json`，包含操作人、来源和新旧版本哈希；正文按哈希保存在 `data/memory/edit-content/`。修订记录保留最近 1000 条（`keepEdits`），不再被任何保留记录引用的正文随之删除。`data/memory/edit-pending.json` 用于恢复被中断的写入。技能批准时由 `data/gate/publishing.json` 记录目录替换和审批回执写入位置，重启后完成发布。新增或修订技能草稿的 `.owner-base` 记录起草时有效技能的版本。

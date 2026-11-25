@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { z } from "zod"
 
+const serverError = z.object({ error: z.string() })
+
 export async function request<T>(
   path: string,
   schema: z.ZodType<T>,
@@ -28,13 +30,14 @@ export async function request<T>(
       404: "找不到这条记录。",
       409: "状态已经变化，请查看最新记录。",
     }
-    const detail =
-      readError && readError(await response.json().catch(() => null))
-    throw new Error(
-      detail ??
-        errors[response.status] ??
-        `服务请求失败（HTTP ${response.status}）`
-    )
+    const body: unknown = await response.json().catch(() => null)
+    const detail = readError?.(body)
+    if (detail !== undefined) throw new Error(detail)
+    const summary =
+      errors[response.status] ?? `服务请求失败（HTTP ${response.status}）`
+    // Keep the server's original error for troubleshooting.
+    const raw = serverError.safeParse(body)
+    throw new Error(raw.success ? `${summary}（${raw.data.error}）` : summary)
   }
   const parsed = schema.safeParse(await response.json())
   if (!parsed.success) throw new Error("服务返回的数据格式与工作台不兼容。")

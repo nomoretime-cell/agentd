@@ -180,6 +180,8 @@ func TestConfigurationStrictness(t *testing.T) {
 	c.Listen = "0.0.0.0:9000"
 	if e := c.Validate(); e == nil {
 		t.Fatal("public bind enabled without explicit secure proxy")
+	} else if !strings.Contains(e.Error(), "SSH tunnel") || !strings.Contains(e.Error(), "authenticated reverse proxy") {
+		t.Fatalf("listen error does not name the supported remote entries: %v", e)
 	}
 }
 

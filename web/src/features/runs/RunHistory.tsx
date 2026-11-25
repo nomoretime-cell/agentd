@@ -7,6 +7,7 @@ import { request } from "@/api"
 
 import { RunEvidence, evidenceSchema } from "./RunEvidence"
 import { ConversationList, DeliveryList, MessageDetail } from "./TraceBrowser"
+import { deliveryStatus } from "@/lib/status"
 
 const scope = z.object({
   ts: z.string(),
@@ -72,13 +73,6 @@ const states: Record<string, string> = {
   commit_failed: "提交失败",
   aborted: "已中断",
   skipped: "已跳过",
-}
-const deliveries: Record<string, string> = {
-  sent: "投递已确认",
-  pending: "待投递",
-  sending: "投递中",
-  unknown: "待核对",
-  failed: "投递失败",
 }
 function runLink(params: URLSearchParams) {
   return params.size ? "#runs?" + params.toString() : "#runs"
@@ -520,7 +514,7 @@ function RunDetail({ id, filters }: { id: string; filters: URLSearchParams }) {
                     <div key={i}>
                       <p>
                         {n.target} ·{" "}
-                        {deliveries[n.delivery_status] ||
+                        {deliveryStatus[n.delivery_status] ||
                           n.delivery_status ||
                           "无对应投递回执"}{" "}
                         {n.delivery_id > 0 && "#" + n.delivery_id}

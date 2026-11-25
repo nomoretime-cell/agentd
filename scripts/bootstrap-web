@@ -1,0 +1,41 @@
+#!/bin/sh
+# Installs a pinned, checksum-verified Node.js and the pnpm version named in
+# web/package.json entirely inside this project. Only front-end work needs it;
+# `make build`, `make test` and `make vet` depend on Go alone.
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export TMPDIR="$ROOT/.cache/tmp"
+mkdir -p "$ROOT/.tools" "$TMPDIR"
+python3 -I - "$ROOT" <<'PY'
+import hashlib,pathlib,platform,shutil,sys,tarfile,urllib.request
+root=pathlib.Path(sys.argv[1]); version='v24.22.3'
+target=root/'.tools/node'
+if (target/'bin/node').exists(): sys.exit(0)
+osname={'Darwin':'darwin','Linux':'linux'}[platform.system()]
+arch={'arm64':'arm64','aarch64':'arm64','x86_64':'x64'}[platform.machine()]
+name=f'node-{version}-{osname}-{arch}'
+filename=name+'.tar.gz'
+base=f'https://nodejs.org/dist/{version}/'
+sums=urllib.request.urlopen(base+'SHASUMS256.txt',timeout=30).read().decode()
+expected=next(line.split()[0] for line in sums.splitlines() if line.split()[1:]==[filename])
+archive=root/'.tools/node.tar.gz'
+urllib.request.urlretrieve(base+filename,archive)
+if hashlib.sha256(archive.read_bytes()).hexdigest()!=expected: raise SystemExit('Node archive checksum mismatch')
+staging=root/'.tools/node-staging'
+shutil.rmtree(staging,ignore_errors=True)
+with tarfile.open(archive) as tf:
+    for member in tf.getmembers():
+        if pathlib.PurePosixPath(member.name).parts[0]!=name:
+            raise SystemExit('Unexpected archive entry: '+member.name)
+    # The data filter rejects absolute paths, escapes and links leaving the tree.
+    tf.extractall(staging,filter='data')
+(staging/name).rename(target)
+shutil.rmtree(staging)
+print('Installed Node',version,'inside',target)
+PY
+PNPM_VERSION=$(sed -n 's/.*"packageManager": *"pnpm@\([0-9.]*\)".*/\1/p' "$ROOT/web/package.json")
+if [ ! -x "$ROOT/.tools/pnpm/bin/pnpm" ]; then
+  PATH="$ROOT/.tools/node/bin:$PATH" npm_config_cache="$ROOT/.cache/npm" \
+    "$ROOT/.tools/node/bin/npm" install --global --prefix "$ROOT/.tools/pnpm" "pnpm@$PNPM_VERSION"
+fi
+"$ROOT/scripts/pnpm" --dir web install --frozen-lockfile

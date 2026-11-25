@@ -83,7 +83,7 @@ func (s *Service) decodeHistory(line []byte) (historyRecord, error) {
 	rec.Role, rec.Principal, rec.Conversation = s.redact(rec.Role), s.redact(rec.Principal), s.redact(rec.Conversation)
 	if rec.Channel == "" {
 		for _, in := range rec.Inputs {
-			if in.Kind == "wecom" || in.Kind == "dingtalk" {
+			if imEventKind(in.Kind) {
 				rec.Channel = in.Kind
 				break
 			}
@@ -394,7 +394,7 @@ func (s *Service) runReceipts(ctx context.Context, rec historyRecord) (historyRe
 func (r historyRecord) summary(id, excerpt string) historySummary {
 	active := false
 	for _, in := range r.Inputs {
-		if in.Kind == "message" || in.Kind == "wecom" || in.Kind == "dingtalk" {
+		if in.Kind == "message" || imEventKind(in.Kind) {
 			active = true
 			break
 		}

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Runs the project-local pnpm with its store, caches and Playwright browsers
+# kept inside the project, like ./scripts/go.
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ ! -x "$ROOT/.tools/pnpm/bin/pnpm" ] || [ ! -x "$ROOT/.tools/node/bin/node" ]; then
+  echo 'Run ./scripts/bootstrap-web first.' >&2
+  exit 1
+fi
+export PATH="$ROOT/.tools/pnpm/bin:$ROOT/.tools/node/bin:$PATH"
+export npm_config_store_dir="$ROOT/.cache/pnpm-store"
+export npm_config_cache="$ROOT/.cache/npm"
+export XDG_CACHE_HOME="$ROOT/.cache"
+export PLAYWRIGHT_BROWSERS_PATH="$ROOT/.cache/ms-playwright"
+export TMPDIR="$ROOT/.cache/tmp"
+mkdir -p "$TMPDIR"
+cd "$ROOT"
+exec pnpm "$@"

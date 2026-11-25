@@ -18,7 +18,7 @@ import { LedgerChart } from "./LedgerChart"
 import { request, useServiceStatus } from "@/api"
 import {
   categories,
-  statusNames,
+  itemStatus,
   workSchema,
   type Item,
   type Kind,
@@ -33,10 +33,22 @@ const icons = {
 const kinds = Object.keys(categories) as Kind[]
 const formatNumber = (n: number) => n.toLocaleString("zh-CN")
 
-export function Dashboard({ runtime }: { runtime: boolean }) {
+// Filters that a shared or refreshed link restores live in the URL.
+export type Filters = { type: Kind; offset: number; days: 7 | 30 }
+const defaults: Filters = { type: "actions", offset: 0, days: 7 }
+
+export function Dashboard({
+  runtime,
+  filters = defaults,
+  onFilter = () => {},
+}: {
+  runtime: boolean
+  filters?: Filters
+  onFilter?: (next: Partial<Filters>) => void
+}) {
   const client = useQueryClient()
-  const [kind, setKind] = useState<Kind>("actions")
-  const [offset, setOffset] = useState(0)
+  const { type: kind, offset } = filters
+  const setOffset = (offset: number) => onFilter({ offset })
   const [expanded, setExpanded] = useState("")
   const status = useServiceStatus()
   const work = useQuery({
@@ -69,8 +81,7 @@ export function Dashboard({ runtime }: { runtime: boolean }) {
     : Math.min(status.dataUpdatedAt, work.dataUpdatedAt)
   const selectedCount = work.data?.counts[kind] ?? 0
   function select(value: Kind) {
-    setKind(value)
-    setOffset(0)
+    onFilter({ type: value, offset: 0 })
     setExpanded("")
   }
   function inspect(item: Item) {
@@ -78,7 +89,11 @@ export function Dashboard({ runtime }: { runtime: boolean }) {
       setExpanded(expanded === item.id ? "" : item.id)
       return
     }
-    location.assign("#" + new URLSearchParams({ action: item.id }).toString())
+    const link = new URLSearchParams({ action: item.id })
+    if (kind !== defaults.type) link.set("type", kind)
+    if (offset) link.set("offset", String(offset))
+    if (filters.days !== defaults.days) link.set("days", String(filters.days))
+    location.assign("#" + link.toString())
   }
   return (
     <>
@@ -123,6 +138,8 @@ export function Dashboard({ runtime }: { runtime: boolean }) {
       )}
       {!runtime && (
         <DailyActivity
+          range={filters.days}
+          setRange={(days) => onFilter({ days })}
           pending={
             work.data &&
             Object.values(work.data.counts).reduce((n, v) => n + v, 0)
@@ -189,7 +206,7 @@ export function Dashboard({ runtime }: { runtime: boolean }) {
                       </small>
                     </div>
                     <span className="pill">
-                      {statusNames[item.status] ?? item.status}
+                      {itemStatus(kind, item.status)}
                     </span>
                     <ArrowUpRight size={15} />
                   </button>

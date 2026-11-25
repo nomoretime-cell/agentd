@@ -9,6 +9,7 @@ import { ArrowUp, MessageSquare, MessagesSquare, Plus } from "lucide-react"
 import { z } from "zod"
 import { requestKey, pendingKey } from "@/lib/request-key"
 import { request } from "@/api"
+import { actionStatus } from "@/lib/status"
 
 const chat = z.object({ id: z.string(), title: z.string() })
 const chats = z.object({ items: z.array(chat), next: z.string() })
@@ -36,15 +37,6 @@ const stateNames: Record<string, string> = {
   running: "处理中",
   dead: "执行失败",
   done: "已完成",
-}
-const actionNames: Record<string, string> = {
-  pending_approval: "待审批",
-  approved: "已批准",
-  rejected: "已拒绝",
-  executing: "执行中",
-  succeeded: "已执行",
-  failed: "执行失败",
-  unknown: "待核对",
 }
 function link(id: string) {
   return "#chat?" + new URLSearchParams({ id })
@@ -233,6 +225,8 @@ function Thread({
       </header>
       <div
         className="chat-scroll"
+        role="log"
+        aria-label="对话记录"
         ref={scroll}
         onScroll={(e) => {
           const el = e.currentTarget
@@ -286,7 +280,7 @@ function Thread({
                     className="history-link"
                     href={link(id) + "&action=" + encodeURIComponent(e.action)}
                   >
-                    {actionNames[e.action_status] || "查看审批"}
+                    {actionStatus[e.action_status] || "查看审批"}
                   </a>
                 </>
               )}

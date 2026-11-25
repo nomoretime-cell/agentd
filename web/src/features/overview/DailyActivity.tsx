@@ -5,6 +5,7 @@ import { Activity, Inbox, MessageSquare, Newspaper, X } from "lucide-react"
 import { z } from "zod"
 import { serverTime } from "@/lib/server-time"
 import { request } from "@/api"
+import { deliveryStatus } from "@/lib/status"
 
 const daySchema = z.object({
   date: z.string(),
@@ -71,13 +72,16 @@ function coverage(day: Day, metric: Metric) {
 type Selection = { metric: Metric; date: string }
 
 export function DailyActivity({
+  range,
+  setRange,
   pending,
   children,
 }: {
+  range: 7 | 30
+  setRange: (days: 7 | 30) => void
   pending?: number
   children: ReactNode
 }) {
-  const [range, setRange] = useState(7)
   const [metric, setMetric] = useState<Metric>("replies")
   const [selection, setSelection] = useState<Selection | null>(null)
   const origin = useRef<HTMLButtonElement | null>(null)
@@ -160,7 +164,7 @@ export function DailyActivity({
             <select
               aria-label="统计范围"
               value={range}
-              onChange={(e) => setRange(Number(e.target.value))}
+              onChange={(e) => setRange(e.target.value === "30" ? 30 : 7)}
             >
               <option value={7}>近 7 天</option>
               <option value={30}>近 30 天</option>
@@ -178,7 +182,7 @@ export function DailyActivity({
             ))}
           </div>
           <div className="trend-scroll">
-            <div className="trend-bars">
+            <div className="trend-bars" role="group" aria-label="每日趋势">
               {data?.days.map((day) => {
                 const n = value(day, metric)
                 return (
@@ -254,13 +258,6 @@ export function DailyActivity({
   )
 }
 
-const deliveryNames: Record<string, string> = {
-  sent: "投递已确认",
-  unknown: "待核对",
-  pending: "待投递",
-  sending: "投递中",
-  failed: "投递失败",
-}
 function ActivityDetails({
   selection,
   timezone,
@@ -351,7 +348,7 @@ function ActivityDetails({
                     : "渠道回执"
                   : metric === "tokens"
                     ? it.status
-                    : deliveryNames[it.status] || "本地提交"}
+                    : deliveryStatus[it.status] || "本地提交"}
               </small>
               {metric === "tokens" ? (
                 <p>

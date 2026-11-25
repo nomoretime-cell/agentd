@@ -67,8 +67,9 @@ func (s *Service) registerKnowledgeUploads(m *http.ServeMux) {
 			if batchKey.MatchString(d.Name()) {
 				b, e := s.uploadReceipt(d.Name())
 				if e != nil {
-					respond(w, nil, e)
-					return
+					// One damaged receipt must not hide the other batches.
+					s.logErr("read upload receipt "+d.Name(), e)
+					continue
 				}
 				batches = append(batches, b)
 			}
@@ -150,17 +151,23 @@ func (s *Service) receiveUpload(w http.ResponseWriter, r *http.Request) {
 		respond(w, nil, errors.New("上传编号无效"))
 		return
 	}
-	if err := s.beginImport(); err != nil {
-		if errors.Is(err, ErrConflict) {
-			writeJSON(w, 409, map[string]string{"error": "服务器正在导入资料，请稍后再试。"})
+	// A retry of an accepted batch only compares the files with its receipt,
+	// so it must not wait for the import lock that batch may still hold.
+	_, known := s.uploadReceipt(id)
+	retry := known == nil
+	if !retry {
+		if err := s.beginImport(); err != nil {
+			if errors.Is(err, ErrConflict) {
+				writeJSON(w, 409, map[string]string{"error": "服务器正在导入资料，请稍后再试。"})
+				return
+			}
+			respond(w, nil, err)
 			return
 		}
-		respond(w, nil, err)
-		return
 	}
 	handedOff := false
 	defer func() {
-		if !handedOff {
+		if !handedOff && !retry {
 			s.finishImport(nil)
 		}
 	}()
@@ -211,7 +218,11 @@ func (s *Service) receiveUpload(w http.ResponseWriter, r *http.Request) {
 		respond(w, prior, nil)
 		return
 	}
-	if !errors.Is(e, sql.ErrNoRows) {
+	if retry || !errors.Is(e, sql.ErrNoRows) {
+		// A known batch never loses its receipt; refuse rather than import twice.
+		if retry && errors.Is(e, sql.ErrNoRows) {
+			e = ErrConflict
+		}
 		respond(w, nil, e)
 		return
 	}
@@ -303,7 +314,9 @@ func (s *Service) recoverUploads() error {
 		}
 		b, e := s.uploadReceipt(d.Name())
 		if e != nil {
-			return e
+			// Keep the batch on disk for inspection; it must not stop the service.
+			s.logErr("recover upload "+d.Name(), e)
+			continue
 		}
 		incomplete := false
 		for i, f := range b.Files {

@@ -62,7 +62,15 @@
 | | `sandbox.go` | 沙箱：`bash` 工具与 knowledge 转换器共用，无网络、只读系统目录 |
 | | `store.go` | SQLite 打开（写库单连接 + 只读库）、4 张表、Payload 格式 |
 | | `service.go` | `Service` 结构、启动/关闭、暂停、脱敏、原子写 |
-| | `http.go` | 管理 API：事件、定时器、审批、对账、状态、列表 |
+| | `http.go` | 管理 API：事件、定时器、审批、对账、状态、列表；工作台入口校验与免 Bearer 的 `workbench` 路由 |
+| 工作台 | `workbench.go` | 首页待办：待审批 / 结果未知的动作、死信事件、失败投递、草稿，同一快照计数 |
+| | `activity.go` / `activity_http.go` | 模型调用与正式回复的计量（写入 Inbox 列）；按日汇总回复、token、新闻推送并给出明细 |
+| | `run_evidence.go` / `run_history.go` | 运行快照（Inbox 列，仅所有者可见，保留 30 天）；按运行记录与快照浏览运行、核对回执 |
+| | `message_history.go` | 会话、回复与投递历史的只读视图 |
+| | `web_chat.go` | 网页对话：会话、消息提交（`chat:` 去重键）、提交回执与历史 |
+| | `knowledge_upload.go` | 浏览器上传与服务器 `incoming/` 导入，批次回执与重启恢复；入库复用 `knowledge.go` |
+| | `memory_workbench.go` / `memory_revision.go` / `dreaming.go` | 记忆与技能浏览、所有者修订（写入复用 Memory）、手动触发整理 |
+| | `im_management.go` | IM 渠道查看、保存、切换与删除：改写 `-config` 文件，修订号防并发覆盖，重启后生效 |
 | | `config.go` | 配置结构、默认值、校验 |
 | 渠道 | `im.go` | `imChannel` 接口、IM 路由、群聊判定、团队提示、渠道脱敏 |
 | | `dingtalk.go` / `wecom.go` / `im_phrases.go` | 钉钉 Stream、企微长连接的具体实现 |
@@ -175,5 +183,8 @@ tool() 调用命名操作 ─► permissions: 需要审批 ─► actions(pendin
 | `workspace/IDENTITY.md`、`MEMORY.md`、`notes/`、`skills/`、`scratch/` | 模型可见的工作区；`IDENTITY.md`、`skills/` 对模型只读 | 模型（经工具）；`IDENTITY.md`、`MEMORY.md` 首次启动由模板生成 |
 | `data/memory/` | 整理的候选、待确认、被拒副本，历史版本，整理指标 | `consolidation.go` |
 | `data/gate/`、`workspace/skills-drafts/` | 闸门决定记录与被替换的旧版本；等待审核的草稿（只有关键动作可读写） | `gate.go`；草稿由整理写 |
-| `data/knowledge/`、`workspace/knowledge/` | 原文件、清单、导入记录；模型只读的 Markdown 与 `INDEX.md` | `knowledge.go` |
+| `data/knowledge/`、`workspace/knowledge/` | 原文件、清单、导入记录、`incoming/` 待导入目录、`uploads/` 上传批次；模型只读的 Markdown 与 `INDEX.md` | `knowledge.go`、`knowledge_upload.go` |
+| `data/workbench-since` | 工作台指标开始采集的时间 | `activity.go` |
+| `data/memory/edits/`、`edit-content/`、`edit-pending.json` | 记忆修订记录（保留最近 1000 条）、按哈希保存的正文、中断写入的恢复标记 | `memory_revision.go` |
+| `data/im-identity.json` | 已删除 IM 渠道的身份指纹，防止换身份接管挂起的工作 | `im_management.go` |
 | 程序内置（`internal/agent/defaults/`） | `IDENTITY.md`、`MEMORY.md` 模板；内置 skill，以 `skills/...` 只读提供，`workspace/skills/` 下同名文件优先 | 随版本发布 |

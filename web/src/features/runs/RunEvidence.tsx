@@ -80,7 +80,7 @@ export function RunEvidence({
               {rows.map(({ s, index }) => (
                 <details key={index}>
                   <summary>
-                    {labels[s.kind]} · {s.name}
+                    {labels[s.kind] ?? s.kind} · {s.name}
                   </summary>
                   <small>
                     步骤{" "}

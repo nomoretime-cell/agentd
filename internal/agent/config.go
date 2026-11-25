@@ -23,7 +23,9 @@ type NewsFeed struct {
 type Config struct {
 	sourcePath string
 	IM         struct {
-		Provider         string            `yaml:"provider"`
+		Provider string `yaml:"provider"`
+		// PreviousIdentity is read only for configs written by earlier builds;
+		// removed identities now live in data/im-identity.json.
 		PreviousIdentity map[string]string `yaml:"previous_identity,omitempty"`
 	} `yaml:"im"`
 	WeCom              WeComConfig            `yaml:"wecom"`
@@ -152,7 +154,7 @@ func (c Config) Validate() error {
 	}
 	ip := net.ParseIP(host)
 	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		return errors.New("listen must use a loopback address; use an authenticated reverse proxy for remote access")
+		return errors.New("listen must use a loopback address; restrict remote access to the owner with an SSH tunnel or an authenticated reverse proxy")
 	}
 	if c.WebOrigin != "" {
 		origin, err := url.Parse(c.WebOrigin)

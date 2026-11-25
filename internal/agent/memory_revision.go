@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -75,12 +76,75 @@ func (s *Service) recoverMemoryEdit() error {
 		if e = atomicWrite(filepath.Join(dir, r.ID+".json"), meta, 0600); e != nil {
 			return e
 		}
-		return os.Remove(pending)
+		if e = os.Remove(pending); e != nil {
+			return e
+		}
+		// The revision is durable; a pruning failure must not fail the write.
+		s.logErr("prune memory revisions", s.pruneEdits())
+		return nil
 	}
 	if (e == nil && digest(cur) == r.Previous) || (errors.Is(e, fs.ErrNotExist) && r.Previous == "absent") {
 		return os.Remove(pending)
 	}
 	return errors.New("memory revision recovery: live content differs from both recorded versions")
+}
+
+// keepEdits bounds the revision log as keepVersions bounds consolidation
+// versions. Pruning starts only when the log exceeds the bound by a tenth, so
+// most writes skip the directory scan. Bodies are content-addressed and are
+// removed once no kept revision refers to them.
+const keepEdits = 1000
+
+// pruneEdits runs with memoryMu held or before the service starts.
+func (s *Service) pruneEdits() error {
+	dir := filepath.Join(s.root, editDir)
+	entries, e := os.ReadDir(dir)
+	if errors.Is(e, fs.ErrNotExist) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	var names []string
+	for _, d := range entries {
+		if !d.IsDir() && strings.HasSuffix(d.Name(), ".json") {
+			names = append(names, d.Name())
+		}
+	}
+	if len(names) <= keepEdits+keepEdits/10 {
+		return nil
+	}
+	// Revision IDs start with their UTC time, so name order is age order.
+	for _, n := range names[:len(names)-keepEdits] {
+		if e = os.Remove(filepath.Join(dir, n)); e != nil && !errors.Is(e, fs.ErrNotExist) {
+			return e
+		}
+	}
+	keep := map[string]bool{}
+	for _, n := range names[len(names)-keepEdits:] {
+		b, e := os.ReadFile(filepath.Join(dir, n))
+		if e != nil {
+			return e
+		}
+		var r memoryRevision
+		if e = json.Unmarshal(b, &r); e != nil {
+			// Without its hashes no body can be proven unused.
+			return fmt.Errorf("revision %s: %w", n, e)
+		}
+		keep[r.Previous], keep[r.Version] = true, true
+	}
+	bodies, e := os.ReadDir(filepath.Join(s.root, editBodies))
+	if e != nil {
+		return e
+	}
+	for _, d := range bodies {
+		if !keep[d.Name()] {
+			if e = os.Remove(filepath.Join(s.root, editBodies, d.Name())); e != nil && !errors.Is(e, fs.ErrNotExist) {
+				return e
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Service) runWorkspaceWrite(ctx context.Context, name, content, expected string) error {

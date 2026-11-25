@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { z } from "zod"
-import { request } from "../../api"
+import { request } from "@/api"
 import "./im.css"
 
 const platform = z.enum(["wecom", "dingtalk"])
@@ -159,13 +159,15 @@ export default function IMChannels() {
         </div>
       </section>
       {data.restart && (
-        <p role="status">重启 Mac 上的 agentd 后，新配置生效。</p>
+        <p role="status">在服务器上重启 agentd 后，新配置生效。</p>
       )}
       {!data.writable && (
         <p>当前使用示例或临时配置。请使用私有配置文件启动 agentd 后编辑。</p>
       )}
-      {(notice || query.error) && (
-        <p role="status">{query.error?.message || notice}</p>
+      {query.error ? (
+        <p role="alert">{query.error.message}</p>
+      ) : (
+        notice && <p role="status">{notice}</p>
       )}
       {data.channels.map((slot) => (
         <section

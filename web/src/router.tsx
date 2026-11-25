@@ -30,12 +30,57 @@ const IM = lazy(() => import("./features/im/IMChannels"))
 const root = createRootRoute({ component: Workbench })
 const base = { getParentRoute: () => root }
 const action = z.string().optional()
+// Search values stay strings: parseSearch and stringifySearch use
+// URLSearchParams. Invalid values fall back to the defaults.
 const overview = createRoute({
   ...base,
   path: "/",
-  validateSearch: z.object({ action }),
-  component: () => <Dashboard runtime={false} />,
+  validateSearch: z.object({
+    action,
+    type: z
+      .enum(["actions", "inbox", "outbox", "drafts"])
+      .optional()
+      .catch(undefined),
+    offset: z
+      .string()
+      .regex(/^(0|[1-9]\d*)$/)
+      .optional()
+      .catch(undefined),
+    days: z.enum(["7", "30"]).optional().catch(undefined),
+  }),
+  component: OverviewPage,
 })
+function OverviewPage() {
+  const { type, offset, days } = overview.useSearch()
+  const navigate = overview.useNavigate()
+  return (
+    <Dashboard
+      runtime={false}
+      filters={{
+        type: type ?? "actions",
+        offset: Number(offset ?? 0),
+        days: days === "30" ? 30 : 7,
+      }}
+      onFilter={(next) =>
+        void navigate({
+          // Defaults are left out of the URL; unchanged filters are kept.
+          search: (prev) => ({
+            ...prev,
+            ...(next.type === undefined
+              ? {}
+              : { type: next.type === "actions" ? undefined : next.type }),
+            ...(next.offset === undefined
+              ? {}
+              : { offset: next.offset ? String(next.offset) : undefined }),
+            ...(next.days === undefined
+              ? {}
+              : { days: next.days === 30 ? ("30" as const) : undefined }),
+          }),
+        })
+      }
+    />
+  )
+}
 const runtime = createRoute({
   ...base,
   path: "runtime",
@@ -140,9 +185,10 @@ export const router = createRouter({
       const hash = url.hash.slice(1)
       const [page] = hash.split("?", 1)
       const anchor = ["overview", "queue", "trend"].includes(page)
-      const actionLink = page.startsWith("action=")
-      url.pathname = anchor || actionLink ? "/" : "/" + page
-      url.search = actionLink ? hash : hash.slice(page.length + 1)
+      // The overview has no page name, so its search is the whole fragment.
+      const overviewSearch = page.includes("=")
+      url.pathname = anchor || overviewSearch ? "/" : "/" + page
+      url.search = overviewSearch ? hash : hash.slice(page.length + 1)
       url.hash = anchor ? page : ""
       return url
     },

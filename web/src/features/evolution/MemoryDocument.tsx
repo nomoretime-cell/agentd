@@ -105,7 +105,9 @@ export function MemoryDocument({
       <p className="muted">
         当前版本 <code>{d.version.slice(0, 12)}</code>
       </p>
-      <pre className="memory-body">{d.body}</pre>
+      <pre className="memory-body" data-testid="memory-body">
+        {d.body}
+      </pre>
       {(d.evidence ?? []).map((ev, i) => {
         const session = /^sessions\/(\d{4}-\d{2}-\d{2})\.jsonl(?:@.*)?$/.exec(
           ev.source

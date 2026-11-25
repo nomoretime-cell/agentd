@@ -125,7 +125,7 @@ small,
   border: 1px solid var(--line);
   border-radius: 15px;
   background: var(--background);
-  box-shadow: 0 1px 3px #0f172a0d;
+  box-shadow: 0 1px 3px var(--shadow);
 }
 .topbar {
   display: flex;
@@ -139,6 +139,14 @@ small,
 }
 .topbar span {
   color: var(--muted-ink);
+}
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.topbar .current {
+  color: inherit;
 }
 .theme-trigger {
   display: inline-grid;
@@ -158,7 +166,7 @@ small,
   border-radius: 8px;
   background: var(--popover);
   color: var(--popover-foreground);
-  box-shadow: 0 4px 16px #0002;
+  box-shadow: 0 4px 16px var(--shadow);
   z-index: 10;
 }
 .theme-choice {
@@ -219,7 +227,7 @@ small,
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
-  box-shadow: 0 2px 4px #0f172a0f;
+  box-shadow: 0 2px 4px var(--shadow);
 }
 .stat {
   padding: 24px;
@@ -310,11 +318,11 @@ small,
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #278659;
+  background: var(--success);
   margin-right: 7px;
 }
 .dot.amber {
-  background: #a97019;
+  background: var(--warning);
 }
 .empty {
   display: grid;
@@ -502,7 +510,7 @@ small,
 .scrim {
   position: fixed;
   inset: 0;
-  background: #02061766;
+  background: var(--overlay);
 }
 .sheet {
   position: fixed;
@@ -511,7 +519,7 @@ small,
   width: min(490px, 100%);
   padding: 0 24px 28px;
   overflow: auto;
-  box-shadow: -6px 0 40px #02061720;
+  box-shadow: -6px 0 40px var(--shadow);
 }
 .sheet .section-head {
   padding: 19px 0;

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { actionStatus, deliveryStatus, label } from "@/lib/status"
 export const categories = {
   actions: "动作审批与核对",
   inbox: "异常事件",
@@ -22,15 +23,18 @@ export const workSchema = z.object({
   }),
   items: z.array(itemSchema),
 })
-export const statusNames: Record<string, string> = {
-  pending_approval: "待审批",
-  approved: "已批准",
-  rejected: "已拒绝",
-  executing: "执行中",
-  succeeded: "已执行",
-  failed: "失败",
-  unknown: "待核对",
+const otherStatus: Record<string, string> = {
   dead: "死信",
   skill: "技能草稿",
   identity: "规则草稿",
+}
+// Each queue shows the wording of the record it lists.
+export function itemStatus(kind: Kind, code: string) {
+  const names =
+    kind === "actions"
+      ? actionStatus
+      : kind === "outbox"
+        ? deliveryStatus
+        : otherStatus
+  return label(names, code)
 }

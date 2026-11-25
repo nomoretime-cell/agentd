@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -83,21 +84,77 @@ func (c Config) imIdentity(p string) (string, string) {
 
 func (s *Service) imImpact(ctx context.Context, p string) (imImpact, error) {
 	// Include approvals already decided but whose continuation is still queued.
+	// Owner-scoped kinds and their scope field come from the business that
+	// parks them (scopedKinds, scopeField), so this count matches claim.
+	// Legacy DingTalk events carry an empty scope, as eventScope documents.
 	var impact imImpact
 	err := s.read.QueryRowContext(ctx, `WITH origins AS (
  SELECT id FROM inbox WHERE json_extract(payload,'$.kind')=?1 OR (
- json_extract(payload,'$.kind') IN ('news_test','ai_news') AND
- (json_extract(payload,'$.news_target') GLOB ?2 OR (?1='dingtalk' AND coalesce(json_extract(payload,'$.news_target'),'')='')))),
+ json_extract(payload,'$.kind') IN (SELECT value FROM json_each(?4)) AND
+ (json_extract(payload,?5) GLOB ?2 OR (?1='dingtalk' AND coalesce(json_extract(payload,?5),'')='')))),
  related AS (SELECT a.id, a.status FROM actions a JOIN origins ON origins.id=CAST(substr(a.dedup_key,4) AS INTEGER) WHERE a.dedup_key GLOB 'ev:[0-9]*:*')
  SELECT (SELECT count(*) FROM inbox WHERE status!='done' AND (id IN origins OR (json_extract(payload,'$.kind')='approval' AND json_extract(payload,'$.action_id') IN (SELECT id FROM related)))),
  (SELECT count(*) FROM related WHERE status IN ('pending_approval','approved','executing','unknown')),
- (SELECT count(*) FROM outbox WHERE status!='sent' AND (target GLOB ?2 OR target GLOB ?3))`, p, p+"-owner:*", p+":*").Scan(&impact.Events, &impact.Actions, &impact.Deliveries)
+ (SELECT count(*) FROM outbox WHERE status!='sent' AND (target GLOB ?2 OR target GLOB ?3))`, p, p+"-owner:*", p+":*", scopedKinds, scopeField).Scan(&impact.Events, &impact.Actions, &impact.Deliveries)
 	return impact, err
 }
 
 var errIMRead = errors.New("无法读取有效的启动配置，请在服务器检查配置文件")
 var errIMWrite = errors.New("无法保存私有配置，请检查文件权限")
+
+// errIMInvalid is logged in place of YAML decode errors, which can quote
+// configuration values, including secrets that redaction does not know yet.
+var errIMInvalid = errors.New("config file does not decode or validate; start agentd with it to see the cause")
+
+// imFail records the cause for the operator once and returns the message the
+// workbench may show. File-system errors carry the path, never file content.
+func (s *Service) imFail(op string, cause, public error) error {
+	s.logErr("im config "+op, cause)
+	return public
+}
+
 var errIMIncomplete = errors.New("请填写应用 ID 和密钥，关闭仅发现模式时还须填写所有者 ID；请核对群准入设置")
+
+// imIdentityFile keeps the identity fingerprint of each removed channel under
+// the state root, so it is backed up with the work it protects and survives
+// edits to the config file.
+const imIdentityFile = "data/im-identity.json"
+
+// removedIdentity returns the fingerprint a re-added channel must match.
+// Builds before imIdentityFile stored it as im.previous_identity in the
+// config file, which is still honoured when the state root has no entry.
+func (s *Service) removedIdentity(p string, cfg Config) (string, error) {
+	ids, e := s.removedIdentities()
+	if v, ok := ids[p]; ok || e != nil {
+		return v, e
+	}
+	return cfg.IM.PreviousIdentity[p], nil
+}
+func (s *Service) removedIdentities() (map[string]string, error) {
+	ids := map[string]string{}
+	b, e := os.ReadFile(filepath.Join(s.root, imIdentityFile))
+	if errors.Is(e, fs.ErrNotExist) {
+		return ids, nil
+	}
+	if e == nil {
+		e = json.Unmarshal(b, &ids)
+	}
+	return ids, e
+}
+
+// recordRemovedIdentity runs with imConfigMu held.
+func (s *Service) recordRemovedIdentity(p, fingerprint string) error {
+	ids, e := s.removedIdentities()
+	if e != nil {
+		return e
+	}
+	ids[p] = fingerprint
+	raw, e := json.Marshal(ids)
+	if e != nil {
+		return e
+	}
+	return atomicWrite(filepath.Join(s.root, imIdentityFile), raw, 0600)
+}
 
 func (s *Service) imSnapshot() (Config, []byte, string, error) {
 	if s.cfg.sourcePath == "" {
@@ -105,11 +162,11 @@ func (s *Service) imSnapshot() (Config, []byte, string, error) {
 	}
 	data, e := os.ReadFile(s.cfg.sourcePath)
 	if e != nil {
-		return Config{}, nil, "", errIMRead
+		return Config{}, nil, "", s.imFail("read", e, errIMRead)
 	}
 	cfg, e := decodeConfig(bytes.NewReader(data))
 	if e != nil {
-		return Config{}, nil, "", errIMRead
+		return Config{}, nil, "", s.imFail("decode", errIMInvalid, errIMRead)
 	}
 	mac := hmac.New(sha256.New, []byte(s.token))
 	mac.Write(data)
@@ -204,12 +261,15 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 	var doc yaml.Node
 	documents := yaml.NewDecoder(bytes.NewReader(raw))
 	if documents.Decode(&doc) != nil || documents.Decode(new(yaml.Node)) != io.EOF || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
-		return errIMRead
+		return s.imFail("decode", errIMInvalid, errIMRead)
 	}
 	root := doc.Content[0]
 	id, owner := cfg.imIdentity(p)
 	originalID, originalOwner := id, owner
-	prior := cfg.IM.PreviousIdentity[p]
+	prior, e := s.removedIdentity(p, cfg)
+	if e != nil {
+		return s.imFail("read identity", e, errIMRead)
+	}
 	if id != "" {
 		prior = stableID(id + "\x00" + owner)
 	}
@@ -291,13 +351,10 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 			return errors.New("请先切换或停用该渠道，重启生效后再删除")
 		}
 		// A future add may restore parked work only to its original identity.
+		// Record it under the state root before the config loses the identity.
 		if prior != "" {
-			if cfg.IM.PreviousIdentity == nil {
-				cfg.IM.PreviousIdentity = map[string]string{}
-			}
-			cfg.IM.PreviousIdentity[p] = prior
-			if e = setIMField(root, "im", cfg.IM); e != nil {
-				return errIMWrite
+			if e = s.recordRemovedIdentity(p, prior); e != nil {
+				return s.imFail("write identity", e, errIMWrite)
 			}
 		}
 		e = setIMField(root, p, nil)
@@ -323,17 +380,17 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 	}
 	path, e := filepath.EvalSymlinks(s.cfg.sourcePath)
 	if e != nil {
-		return errIMRead
+		return s.imFail("resolve", e, errIMRead)
 	}
 	current, e := os.ReadFile(path)
 	if e != nil {
-		return errIMRead
+		return s.imFail("read", e, errIMRead)
 	}
 	if !bytes.Equal(current, raw) {
 		return ErrConflict
 	}
 	if e = atomicWrite(path, next, 0600); e != nil {
-		return errIMWrite
+		return s.imFail("write", e, errIMWrite)
 	}
 	return nil
 }

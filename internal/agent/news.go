@@ -408,6 +408,19 @@ func (s *Service) eventScope() string {
 // Only news notifications may be sent to the owner without an incoming message.
 func proactiveKey(key string) bool { return strings.HasPrefix(key, "ai-news:") }
 
+// newsNotice parses a news notification key into the event that produced it:
+// "ai-news:test:<event>" for a test push, "ai-news:<event>:since:<baseline>"
+// for a digest.
+func newsNotice(key string) (event string, test, ok bool) {
+	rest, ok := strings.CutPrefix(key, "ai-news:")
+	if !ok {
+		return "", false, false
+	}
+	rest, test = strings.CutPrefix(rest, "test:")
+	event, _, _ = strings.Cut(rest, ":")
+	return event, test, true
+}
+
 func newsLinkKey(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {

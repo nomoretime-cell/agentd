@@ -42,13 +42,15 @@ type Service struct {
 	memoryMu      sync.Mutex
 	consolidating atomic.Bool
 	dreamChecking atomic.Bool
-	knowledge     knowledgeState
-	convert       func(context.Context, string, []byte) ([]byte, error) // converts a knowledge file to Markdown
-	life          context.Context                                       // background work such as imports; ends at Close
-	endLife       context.CancelFunc
-	started       bool
-	lastSend      time.Time
-	starts        []time.Time
+	// evidencePruned is the Unix millisecond time of the last run evidence pruning.
+	evidencePruned atomic.Int64
+	knowledge      knowledgeState
+	convert        func(context.Context, string, []byte) ([]byte, error) // converts a knowledge file to Markdown
+	life           context.Context                                       // background work such as imports; ends at Close
+	endLife        context.CancelFunc
+	started        bool
+	lastSend       time.Time
+	starts         []time.Time
 }
 
 func Open(root string, cfg Config, model Model) (s *Service, err error) {

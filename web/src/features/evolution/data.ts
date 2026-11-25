@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { viewerInstant } from "@/lib/server-time"
 export const delta = z.object({
   path: z.string(),
   before: z.string(),
@@ -124,4 +125,4 @@ export const labels: Record<string, string> = {
   dead: "失败待处理",
   interrupted: "已中断",
 }
-export const when = (ts: string) => new Date(ts).toLocaleString("zh-CN")
+export const when = (ts: string) => viewerInstant(ts)

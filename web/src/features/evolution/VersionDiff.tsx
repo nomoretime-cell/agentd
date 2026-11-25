@@ -16,7 +16,7 @@ export function VersionDiff({
     last++
   if (before === after) return <p className="muted">内容相同</p>
   return (
-    <div className="version-diff">
+    <div className="version-diff" data-testid="version-diff">
       <div>
         <small>原有内容</small>
         <pre>{a.slice(first, a.length - last).join("\n") || "（空）"}</pre>

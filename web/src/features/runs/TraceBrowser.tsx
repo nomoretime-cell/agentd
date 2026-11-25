@@ -3,6 +3,8 @@ import { Dialog } from "radix-ui"
 import { X } from "lucide-react"
 import { z } from "zod"
 import { request } from "@/api"
+import { viewerInstant } from "@/lib/server-time"
+import { deliveryStatus } from "@/lib/status"
 
 const message = z.object({
   id: z.string(),
@@ -50,11 +52,7 @@ const kinds: Record<string, string> = {
   notification: "业务通知",
 }
 const states: Record<string, string> = {
-  pending: "待投递",
-  sending: "投递中",
-  sent: "已确认送达",
-  failed: "投递失败",
-  unknown: "待核对",
+  ...deliveryStatus,
   committed: "本地已提交",
 }
 
@@ -217,7 +215,7 @@ export function DeliveryList() {
                 <span className="history-copy">
                   <strong>{m.body}</strong>
                   <small>
-                    {kinds[m.kind]} · {m.target}
+                    {kinds[m.kind] ?? m.kind} · {m.target}
                   </small>
                 </span>
                 <span className="pill">{states[m.status] || m.status}</span>
@@ -291,7 +289,7 @@ export function MessageDetail({
                     : m.confirmed_by === "adapter"
                       ? "投递适配器确认"
                       : ""}{" "}
-                  {m.at > 0 && new Date(m.at).toLocaleString("zh-CN")}
+                  {m.at > 0 && viewerInstant(m.at)}
                 </p>
                 <code>{m.key}</code>
               </section>

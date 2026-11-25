@@ -103,6 +103,16 @@ func TestIMSettingsLifecycle(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
+	// Owner-scoped news counts toward the provider it is parked for; a legacy
+	// event without a scope belongs to DingTalk.
+	for key, payload := range map[string]string{
+		"news-dingtalk": `{"kind":"news_test","text":"parked"}`,
+		"news-wecom":    `{"kind":"ai_news","text":"parked","news_target":"wecom-owner:x"}`,
+	} {
+		if _, e = s.db.Exec("INSERT INTO inbox(dedup_key,payload,available_at) VALUES(?,?,0)", key, payload); e != nil {
+			t.Fatal(e)
+		}
+	}
 	batch, e := s.claim(t.Context())
 	if e != nil || len(batch) != 0 {
 		t.Fatal("disabled IM claimed an event", e)
@@ -111,8 +121,21 @@ func TestIMSettingsLifecycle(t *testing.T) {
 		t.Fatal("disabled IM consumed delivery", e)
 	}
 	change(imChange{Provider: "dingtalk", Operation: "remove"})
-	if v := view(); v.Channels[1].Configured || v.Channels[1].Impact.Events != 1 || v.Channels[1].Impact.Deliveries != 1 {
+	if v := view(); v.Channels[1].Configured || v.Channels[1].Impact.Events != 2 || v.Channels[1].Impact.Deliveries != 1 {
 		t.Fatal("removal lost parked work")
+	}
+	// The guard lives under the state root, not in the owner's config file.
+	if raw, e := os.ReadFile(path); e != nil || strings.Contains(string(raw), "previous_identity") {
+		t.Fatal("identity guard written to the config file", e)
+	}
+	if ids, e := s.removedIdentities(); e != nil || ids["dingtalk"] == "" {
+		t.Fatal("identity guard not recorded", ids, e)
+	}
+	// Configs from earlier builds still guard a state root without an entry.
+	legacy := Config{}
+	legacy.IM.PreviousIdentity = map[string]string{"wecom": "legacy"}
+	if v, e := openTest(t, testConfig(), nil).removedIdentity("wecom", legacy); e != nil || v != "legacy" {
+		t.Fatal("legacy identity guard ignored", v, e)
 	}
 	add.ID = "different-app"
 	add.Revision = view().Revision

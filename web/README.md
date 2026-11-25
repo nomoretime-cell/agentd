@@ -44,18 +44,21 @@ W1 提供服务和 IM 状态、四类待办、冻结参数审批与回执。动�
 
 `make release` 构建带静态资源的 `bin/agentd-web`。与原二进制使用相同的 `-config` 和 `-root`。一个状态根目录只能被一个运行实例拥有。普通 `make build`、`make test` 和 `make vet` 继续只依赖 Go。
 
-浏览器打开与配置一致的地址（默认 `http://127.0.0.1:8090`）。经 SSH 转发到不同端口或通过反向代理访问时，在该实例的配置中将 `web_origin` 设为浏览器地址栏确切的来源，例如 `https://agent.example.com` 或可信网络的 `http://192.0.2.10`，重启后生效。代理原样转发 Origin。页面直接打开，无需所有者令牌。能够访问该入口的人均可查看历史、对话或审批动作，请将入口限定在可信网络。工作台和真实模型会话共用同一个 agentd 实例。
+浏览器打开与配置一致的地址（默认 `http://127.0.0.1:8090`）。经 SSH 转发到不同端口或通过反向代理访问时，在该实例的配置中将 `web_origin` 设为浏览器地址栏确切的来源，例如 `https://agent.example.com` 或可信网络的 `http://192.0.2.10`，重启后生效。代理原样转发 Origin。页面直接打开，无需所有者令牌。能够访问该入口的人均可查看历史、对话或审批动作，请将入口限定给所有者，例如使用 SSH 隧道或带认证的反向代理。工作台和真实模型会话共用同一个 agentd 实例。
 
-开发时在单独的开发实例配置 `web_origin: "http://127.0.0.1:5173"`。启动 Go 服务后运行 `pnpm --dir web dev`，Vite 将 /v1 请求转到 127.0.0.1:8090。用独立状态目录和本地替身验证审批。
+开发时在单独的开发实例配置 `web_origin: "http://127.0.0.1:5173"`。启动 Go 服务后运行 `./scripts/pnpm --dir web dev`，Vite 将 /v1 请求转到 127.0.0.1:8090。用独立状态目录和本地替身验证审批。
 
 ## 验证
 
+前端工具链装在项目目录内：`./scripts/bootstrap-web` 安装固定版本并校验过的 Node、`package.json` 指定的 pnpm 和锁定的依赖；`./scripts/pnpm` 让 pnpm 的存储、缓存和 Playwright 浏览器都留在 `.cache/`。已全局安装 pnpm 时，也可以直接用 `pnpm` 并给 `make release` 传 `PNPM=pnpm`。
+
 ```sh
-pnpm --dir web typecheck
-pnpm --dir web lint
+./scripts/bootstrap-web
+./scripts/pnpm --dir web typecheck
+./scripts/pnpm --dir web lint
 make release
-pnpm --dir web exec playwright install chromium
-pnpm --dir web test:e2e
+./scripts/pnpm --dir web exec playwright install chromium
+./scripts/pnpm --dir web test:e2e
 ```
 
-本机已有 Google Chrome 时可用 `PLAYWRIGHT_CHANNEL=chrome pnpm --dir web test:e2e`。
+本机已有 Google Chrome 时可用 `PLAYWRIGHT_CHANNEL=chrome ./scripts/pnpm --dir web test:e2e`。

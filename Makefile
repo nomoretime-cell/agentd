@@ -20,7 +20,8 @@ dingtalk-live:
 	AGENTD_LIVE=1 ./scripts/go test -v ./internal/agent -run '^TestDingTalkLiveLocalModel$$' -count=1 -timeout 4m
 
 .PHONY: release
-PNPM ?= pnpm
+# Project-local pnpm (./scripts/bootstrap-web); override with PNPM=pnpm.
+PNPM ?= ./scripts/pnpm
 release:
 	$(PNPM) --dir web install --frozen-lockfile
 	$(PNPM) --dir web run build

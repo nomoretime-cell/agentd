@@ -190,6 +190,28 @@ func (r runWrite) save(ctx context.Context, tx *sql.Tx) error {
 	}
 	return err
 }
+
+// Run evidence holds the redacted request of every attempt, so it is kept only
+// for the longest range the workbench browses. The run index stays, and run
+// details for older attempts show the transcript record without evidence.
+const runEvidenceDays = 30
+
+// pruneRunEvidence runs at most hourly from the worker after a batch settles,
+// so retention needs no background loop of its own. Only finished events are
+// pruned; dead events keep their evidence until the owner resolves them.
+func (s *Service) pruneRunEvidence(now time.Time) {
+	last := s.evidencePruned.Load()
+	if now.UnixMilli()-last < time.Hour.Milliseconds() || !s.evidencePruned.CompareAndSwap(last, now.UnixMilli()) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := s.db.ExecContext(ctx, `UPDATE inbox SET run_data=NULL
+	  WHERE run_data IS NOT NULL AND status='done' AND run_index IS NOT NULL AND run_index->>'_last'<?`,
+		now.AddDate(0, 0, -runEvidenceDays).UnixMilli())
+	s.logErr("prune run evidence", err)
+}
+
 func durableRunID(event int64, attempt string) string { return fmt.Sprintf("%d~%s", event, attempt) }
 func parseRunID(id string) (int64, string, error) {
 	ev, key, ok := strings.Cut(id, "~")

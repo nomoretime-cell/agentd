@@ -154,8 +154,6 @@ function Dreaming({ data }: { data: Board }) {
     onSuccess: (r, submitted) => {
       if (pendingKey(submitted.storageKey) === submitted.key)
         pendingKey(submitted.storageKey, "")
-      const legacy = "agentd-dream-" + submitted.version
-      if (pendingKey(legacy) === submitted.key) pendingKey(legacy, "")
       keys.current.delete(submitted.storageKey)
       setEvent(r.event)
       void client.invalidateQueries({ queryKey: ["evolution"] })
@@ -165,10 +163,7 @@ function Dreaming({ data }: { data: Board }) {
     if (!selected || send.isPending) return
     const storageKey = "agentd-dream-" + selected.id + "-" + selected.version
     const key =
-      keys.current.get(storageKey) ||
-      pendingKey(storageKey) ||
-      pendingKey("agentd-dream-" + selected.version) ||
-      requestKey()
+      keys.current.get(storageKey) || pendingKey(storageKey) || requestKey()
     keys.current.set(storageKey, key)
     pendingKey(storageKey, key)
     send.mutate({

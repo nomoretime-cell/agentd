@@ -452,6 +452,10 @@ func (s *Service) registerMemoryWorkbench(m *http.ServeMux) {
 						continue
 					}
 					body, err := os.ReadFile(filepath.Join(s.root, editBodies, hash))
+					if errors.Is(err, fs.ErrNotExist) {
+						// Pruned together with its revision after this read began.
+						err = sql.ErrNoRows
+					}
 					if err != nil {
 						e = err
 						break

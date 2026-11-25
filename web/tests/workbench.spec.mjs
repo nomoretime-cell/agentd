@@ -37,7 +37,9 @@ test("所有者审批、回执与刷新后直接读回", async ({ page, request 
     await expect(page).toHaveURL(/#runtime$/)
     await expect(runtime).toHaveAttribute("aria-current", "page")
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("运行状态")
-    await expect(page.locator("main > header")).toContainText("运行状态")
+    await expect(
+      page.getByRole("navigation", { name: "当前位置" })
+    ).toContainText("运行状态")
     await expect(page.getByText("当前模型", { exact: true })).toBeVisible()
     await page.reload()
     await expect(page.getByRole("heading", { name: "账本概览" })).toBeVisible()
@@ -233,7 +235,18 @@ test("首页的按日用量能核对到调用及相应运行", async ({ page, re
       .getByRole("link", { name: "工作概览" })
       .click()
     await page.getByLabel("统计范围").selectOption("30")
-    await expect(page.locator(".trend-bars button")).toHaveCount(30)
+    await expect(
+      page.getByRole("group", { name: "每日趋势" }).getByRole("button")
+    ).toHaveCount(30)
+    // Filters live in the URL, so a refreshed or shared link restores them.
+    await page.getByRole("button", { name: /异常投递/ }).click()
+    await expect(page).toHaveURL(/#.*days=30/)
+    await expect(page).toHaveURL(/type=outbox/)
+    await page.reload()
+    await expect(page.getByLabel("统计范围")).toHaveValue("30")
+    await expect(
+      page.getByRole("button", { name: /异常投递/ })
+    ).toHaveAttribute("aria-pressed", "true")
     await page.setViewportSize({ width: 375, height: 760 })
     expect(
       await page.evaluate(
@@ -265,9 +278,9 @@ test("会话、历史版本和投递回执可双向追溯", async ({ page, reque
     await page.getByRole("link", { name: /已记录处理结果/ }).click()
     const run = page.getByRole("dialog", { name: "运行详情" })
     const snapshot = run
-      .locator("details")
-      .filter({ has: page.locator("summary", { hasText: "文档 · MEMORY.md" }) })
-    await snapshot.locator("summary").click()
+      .getByRole("group")
+      .filter({ has: page.getByText("文档 · MEMORY.md", { exact: true }) })
+    await snapshot.getByText("文档 · MEMORY.md", { exact: true }).click()
     await expect(snapshot.getByText(/来源版本 SHA-256/)).toBeVisible()
     await run.getByRole("link", { name: /查看完整回复/ }).click()
     const msg = page.getByRole("dialog", { name: "消息详情" })
@@ -426,21 +439,25 @@ test("从访问电脑上传，另一个浏览器能检索服务器原件的正�
     await other.getByLabel("检索正文").fill("鹭岛交接编号321")
     await other.getByRole("button", { name: "检索", exact: true }).click()
     await other.getByRole("button", { name: /鹭岛交接编号321/ }).click()
-    await expect(other.locator("article pre")).toHaveText(
+    await expect(other.getByTestId("document-body")).toHaveText(
       "# 跨机资料\n鹭岛交接编号321"
     )
     const documentURL = other.url()
     expect(documentURL).toMatch(/doc=[a-f0-9]{16}/)
     await other.reload()
     await expect(other.getByLabel("检索正文")).toHaveValue("鹭岛交接编号321")
-    await expect(other.locator("article pre")).toContainText("鹭岛交接编号321")
+    await expect(other.getByTestId("document-body")).toContainText(
+      "鹭岛交接编号321"
+    )
     await other.getByRole("button", { name: "收起正文" }).click()
-    await expect(other.locator("article pre")).toHaveCount(0)
+    await expect(other.getByTestId("document-body")).toHaveCount(0)
     await other.goBack()
     await expect(other).toHaveURL(documentURL)
-    await expect(other.locator("article pre")).toContainText("鹭岛交接编号321")
+    await expect(other.getByTestId("document-body")).toContainText(
+      "鹭岛交接编号321"
+    )
     await other.goForward()
-    await expect(other.locator("article pre")).toHaveCount(0)
+    await expect(other.getByTestId("document-body")).toHaveCount(0)
     await other.getByText(/2 个文件 · 含失败项/).click()
     await expect(other.getByText("异地交接.md · 已入库")).toBeVisible()
     await other.getByRole("button", { name: "跨机资料", exact: true }).click()
@@ -504,7 +521,7 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
       page.getByRole("button", { name: "保存记忆修订" }),
       () => expect(page.getByLabel("修订正文")).toBeDisabled()
     )
-    await expect(page.locator(".memory-body")).toHaveText("工作台人工修订")
+    await expect(page.getByTestId("memory-body")).toHaveText("工作台人工修订")
     await expect(second.getByText(/服务器已有新版本/)).toBeVisible({
       timeout: 12000,
     })
@@ -512,7 +529,9 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
     await page.getByLabel("历史版本").selectOption({ index: 1 })
     await page.getByRole("button", { name: "以此版本起草修订" }).click()
     await page.getByRole("button", { name: "保存记忆修订" }).click()
-    await expect(page.locator(".memory-body")).not.toHaveText("工作台人工修订")
+    await expect(page.getByTestId("memory-body")).not.toHaveText(
+      "工作台人工修订"
+    )
     await page
       .getByRole("link", {
         name: "skills/memory-consolidation/SKILL.md",
@@ -534,7 +553,9 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
         exact: true,
       })
       .click()
-    await expect(page.locator(".memory-body")).toContainText("经人工复核的修订")
+    await expect(page.getByTestId("memory-body")).toContainText(
+      "经人工复核的修订"
+    )
     await page.getByRole("link", { name: "MEMORY.md", exact: true }).click()
     await page.getByLabel("整理模型").selectOption("openai")
     await whileSubmitting(
@@ -550,16 +571,16 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
       )
     ).toEqual([])
     await page
-      .locator(".evolution-page details summary")
-      .filter({ hasText: "MEMORY.md" })
+      .getByRole("group")
+      .getByText("MEMORY.md", { exact: true })
       .click({ timeout: 12000 })
     await expect(
-      page.locator(".version-diff").getByText("已核实的交接习惯")
+      page.getByTestId("version-diff").getByText("已核实的交接习惯")
     ).toBeVisible()
-    await expect(page.locator(".memory-body")).not.toContainText(
+    await expect(page.getByTestId("memory-body")).not.toContainText(
       "已核实的交接习惯"
     )
-    await expect(page.locator(".memory-body")).toContainText(
+    await expect(page.getByTestId("memory-body")).toContainText(
       "已核实的交接习惯",
       { timeout: 15000 }
     )
