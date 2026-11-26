@@ -47,6 +47,7 @@ archive/                            第一阶段之前的草稿，stage-1 由它
 | [reports/2026-11-17-dingtalk-integration.md](reports/2026-11-17-dingtalk-integration.md) | 钉钉首次接入的验证记录：已验证行为与真实本地模型端到端测试 | 2026-11-17，冻结 |
 | [reports/2026-11-17-local-validation.md](reports/2026-11-17-local-validation.md) | 第一阶段实现后的本地验证报告 | 2026-11-17，冻结 |
 | [reports/2026-11-22-inkling-2-mini-vs-qwen38-dflash.md](reports/2026-11-22-inkling-2-mini-vs-qwen38-dflash.md) | 本地模型选型：Inkling 2 Mini 4-bit 与 Qwen3.8-27B + DFlash 2 的速度与可用性对比 | 2026-11-22，冻结 |
+| [工作台临时公网分享](reports/2026-11-25-workbench-public-tunnel.md) | Mac 上 Cloudflare 隧道与 Caddy 登录代理的部署过程、权限边界、验收和恢复 | 2026-11-25，部署记录 |
 
 企业微信、新闻推送和 OpenCode 的用法写在仓库根目录的 [README](../README.md)；开发约定写在 [AGENTS.md](../AGENTS.md)。
 

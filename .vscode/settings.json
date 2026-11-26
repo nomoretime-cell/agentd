@@ -1,0 +1,10 @@
+{
+  "go.goroot": "${workspaceFolder}/.tools/go",
+  "go.gopath": "${workspaceFolder}/.cache/gopath",
+  "go.toolsEnvVars": {
+    "PATH": "${workspaceFolder}/.tools/go/bin:${env:PATH}",
+    "GOMODCACHE": "${workspaceFolder}/.cache/gomod",
+    "GOCACHE": "${workspaceFolder}/.cache/go-build",
+    "GOTOOLCHAIN": "local"
+  }
+}
