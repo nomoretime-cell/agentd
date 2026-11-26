@@ -27,7 +27,7 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 
 1. **规模预算**：1 个 Go 进程，1 个业务包 `internal/agent`，5 个核心组件，4 张 SQLite 业务表，7 个基础工具（2026-11-23 起加入 `search`，见[开发路线](docs/design/91-convention-roadmap.md) D2）。
 2. **核心不认识具体渠道和业务。** 核心文件（`inbox.go`、`timers.go`、`outbox.go`、`permissions.go`、`sandbox.go`、`memory.go`、`loop.go`、`store.go`、`service.go`）里不出现具体 IM 平台名或具体业务名，由 `boundary_test.go` 检查。
-   - **渠道**：只负责平台协议、身份校验和一次发送。核心通过 `im.go` 的 `imChannel` 接口（`deliver`、`owner`、`connect`、`run`、`connected`）调用，钉钉和企微各一个实现。渠道专属的路由、准入、群聊策略和脱敏也放在 `im.go`。所有者的网页对话不是 IM 渠道：它和本机 `message` 一样是核心自带的所有者入口，回复直接存入 Inbox 供页面读取，不经过 `imChannel`。
+   - **渠道**：只负责平台协议、身份校验和一次发送。核心通过 `im.go` 的 `imChannel` 接口（`deliver`、`owner`、`connect`、`connected`）调用，钉钉和企微各一个实现；`connect` 返回已认证的会话，断线重连由 `im.go` 统一负责。渠道专属的路由、准入、群聊策略和脱敏也放在 `im.go`。所有者的网页对话不是 IM 渠道：它和本机 `message` 一样是核心自带的所有者入口，回复直接存入 Inbox 供页面读取，不经过 `imChannel`。
    - **业务**：核心只通过三个入口接入：执行循环调 `runBusiness`，`Append` 调 `admitBusiness`，定时器调 `timerEvent`。目前只有新闻一个业务，入口都在 `news.go`，不设计通用的业务结构；出现第二个业务时再抽象。
    - **数据格式**：已存数据保持不变，包括 inbox 载荷字段、投递目标字符串、去重键，以保证重放和重启恢复。`insertEvent` 按字节比较载荷，`TestPayloadEncodingIsStable` 固定了序列化格式。
 3. **路径相对状态根目录。** 运行时路径一律由 `s.root` 拼接，不写死仓库路径、`.agentd` 或 `/var/lib/agentd`；模型可见路径只经宿主函数映射；新增运行时路径先更新 [docs/design/90-convention-storage-layout.md](docs/design/90-convention-storage-layout.md)。

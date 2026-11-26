@@ -24,13 +24,7 @@ type Service struct {
 	metricsSince  time.Time
 	cfg           Config
 	im            atomic.Pointer[imRuntime]
-	imFactory     func(*Service, *Config) imChannel
-	imContext     context.Context // channel lifecycle serialized by imConfigMu
-	stopIM        func()
-	imChanging    bool // guarded by mu, coordinates the handover with Inbox and Outbox
-	imSending     bool
-	imAttempt     atomic.Pointer[imAttempt]
-	imSecrets     atomic.Pointer[[]string]
+	imLife        imLifecycle
 	root          string
 	db, read      *sql.DB
 	lock          *os.File
@@ -109,7 +103,7 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 		}
 	}(s)
 	s.rememberIMSecrets(cfg)
-	s.imFactory = newIMChannel
+	s.imLife.factory = newIMChannel
 	s.im.Store(&imRuntime{&s.cfg, newIMChannel(s, &s.cfg)})
 	s.convert = s.runConverter
 	s.life, s.endLife = context.WithCancel(context.Background())
@@ -212,7 +206,7 @@ func (s *Service) Start(parent context.Context) {
 	s.started = true
 	ctx, cancel := context.WithCancel(parent)
 	s.cancel = cancel
-	s.imContext = ctx
+	s.imLife.ctx = ctx
 	s.startIM(nil)
 	loops := []func(context.Context){s.workerLoop, s.timerLoop, s.outboxLoop}
 	for _, f := range loops {
@@ -236,7 +230,7 @@ func (s *Service) Close() error {
 	}
 	s.mu.Unlock()
 	s.imConfigMu.Lock()
-	s.stopIMLoop()
+	s.stopIM()
 	s.imConfigMu.Unlock()
 	s.wg.Wait()
 	var e error
@@ -252,6 +246,11 @@ func (s *Service) Close() error {
 	return e
 }
 func (s *Service) Token() string { return s.token }
+
+// halted reports whether new work waits: the owner paused the service or the
+// IM channel is being replaced. Caller holds s.mu.
+func (s *Service) halted() bool { return s.paused || s.imLife.holding }
+
 func (s *Service) notify() {
 	select {
 	case s.wake <- struct{}{}:

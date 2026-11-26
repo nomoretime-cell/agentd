@@ -218,7 +218,7 @@ func (s *Service) imSettings(ctx context.Context) (imSettings, error) {
 	v := imSettings{Revision: rev, Selected: cfg.selectedIM(), Running: live.cfg.selectedIM(), Connected: live.channel.connected(), Writable: s.writableIMConfig()}
 	v.RunningDiscovery = v.Running == "wecom" && live.cfg.WeCom.DiscoveryOnly || v.Running == "dingtalk" && live.cfg.DingTalk.DiscoveryOnly
 	v.Restart = !live.cfg.sameActiveIM(&cfg)
-	if attempt := s.imAttempt.Load(); attempt != nil && (attempt.Error == "" || attempt.request.Revision == rev) {
+	if attempt := s.imLife.attempt.Load(); attempt != nil && (attempt.Error == "" || attempt.request.Revision == rev) {
 		v.Attempt = attempt
 	}
 	for _, p := range []string{"wecom", "dingtalk"} {
@@ -333,11 +333,9 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 		return ErrConflict
 	}
 	if req.Operation == "retry" {
-		prior := s.imAttempt.Load()
-		if prior == nil || prior.Error == "" || prior.ID != req.AttemptID || prior.Provider != req.Provider || prior.request.Revision != rev {
-			return ErrConflict
+		if req, e = s.retriedIM(req, rev); e != nil {
+			return e
 		}
-		req = prior.request
 	}
 	p := req.Provider
 	if p != "wecom" && p != "dingtalk" && !(p == "none" && req.Operation == "select") {
@@ -348,123 +346,8 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 	if documents.Decode(&doc) != nil || documents.Decode(new(yaml.Node)) != io.EOF || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
 		return s.imFail("decode", errIMInvalid, errIMRead)
 	}
-	root := doc.Content[0]
-	id, owner := cfg.imIdentity(p)
-	originalID, originalOwner := id, owner
-	prior, e := s.removedIdentity(p, cfg)
-	if e != nil {
-		return s.imFail("read identity", e, errIMRead)
-	}
-	if id != "" {
-		prior = stableID(id + "\x00" + owner)
-	}
-	switch req.Operation {
-	case "save":
-		if v := strings.TrimSpace(req.ID); v != "" {
-			id = v
-		}
-		if v := strings.TrimSpace(req.Owner); v != "" {
-			owner = v
-		}
-		identity := stableID(id + "\x00" + owner)
-		if prior != "" && prior != identity {
-			// Discovery has not accepted tasks. Allow completing the owner identity
-			// for this bot before turning discovery off.
-			addingFirstOwner := originalID == id && originalOwner == "" && ((p == "wecom" && s.imConfig().WeCom.DiscoveryOnly) || (p == "dingtalk" && s.imConfig().DingTalk.DiscoveryOnly))
-			if s.imConfig().selectedIM() == p && !addingFirstOwner {
-				return errors.New("请先停用或切换当前渠道，再更换机器人或所有者身份")
-			}
-			impact, err := s.imImpact(ctx, p)
-			if err != nil {
-				return err
-			}
-			if impact != (imImpact{}) {
-				return errors.New("该渠道还有未结事件、动作或投递，请先用原身份完成核对")
-			}
-		}
-		if strings.TrimSpace(req.Secret) == "" {
-			req.Secret = ""
-		}
-		if p == "wecom" {
-			c := &cfg.WeCom
-			c.BotID = id
-			c.Owner = owner
-			if req.Secret != "" {
-				c.Secret = req.Secret
-			}
-			c.DiscoveryOnly = req.Discovery
-			c.AllowedGroups = req.Groups
-			c.AllowAllGroups = req.AllowAllGroups
-			if c.validate() != nil {
-				return errIMIncomplete
-			}
-			e = setIMField(root, p, c)
-		} else {
-			c := &cfg.DingTalk
-			c.ClientID = id
-			c.AllowedSender = owner
-			if req.Secret != "" {
-				c.ClientSecret = req.Secret
-			}
-			c.DiscoveryOnly = req.Discovery
-			c.AllowedConversations = req.Groups
-			c.AllowAllGroups = req.AllowAllGroups
-			check := *c
-			check.Enabled = true
-			if check.validate() != nil {
-				return errIMIncomplete
-			}
-			e = setIMField(root, p, c)
-		}
-		if e != nil {
-			return errIMWrite
-		}
-		if !req.Apply {
-			break
-		}
-		fallthrough
-	case "select":
-		if p == "dingtalk" {
-			cfg.DingTalk.Enabled = true
-			if cfg.DingTalk.validate() != nil {
-				return errIMIncomplete
-			}
-			if e = setIMField(root, p, cfg.DingTalk); e != nil {
-				return errIMWrite
-			}
-		}
-		if p == "wecom" && cfg.WeCom.validate() != nil {
-			return errIMIncomplete
-		}
-		cfg.IM.Provider = p
-		e = setIMField(root, "im", cfg.IM)
-	case "remove":
-		if cfg.selectedIM() == p || s.imConfig().selectedIM() == p {
-			if !req.Apply {
-				return errors.New("请先切换或停用该渠道，再删除配置")
-			}
-			// Keep the actual other channel when deleting a legacy next-start selection.
-			cfg.IM.Provider = s.imConfig().selectedIM()
-			if cfg.IM.Provider == p {
-				cfg.IM.Provider = "none"
-			}
-			if e = setIMField(root, "im", cfg.IM); e != nil {
-				return errIMWrite
-			}
-		}
-		// A future add may restore parked work only to its original identity.
-		// Record it under the state root before the config loses the identity.
-		if prior != "" {
-			if e = s.recordRemovedIdentity(p, prior); e != nil {
-				return s.imFail("write identity", e, errIMWrite)
-			}
-		}
-		e = setIMField(root, p, nil)
-	default:
-		return errors.New("未知的渠道操作")
-	}
-	if e != nil {
-		return errIMWrite
+	if e = s.editIM(ctx, doc.Content[0], &cfg, req); e != nil {
+		return e
 	}
 	next, e := encodeConfig(&doc)
 	if e != nil {
@@ -504,95 +387,258 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 		e = write()
 	}
 	if e == nil {
-		s.imAttempt.Store(nil)
+		s.imLife.attempt.Store(nil)
 	}
 	return e
 }
 
-// Authenticate before committing the next startup selection. On failure or a
-// crash before that commit the previous selection remains authoritative.
-func (s *Service) applyIM(req imChange, cfg *Config, persist func() error) (err error) {
-	if s.imContext == nil || s.imContext.Err() != nil {
+// retriedIM returns the failed request that an explicit retry repeats.
+func (s *Service) retriedIM(req imChange, rev string) (imChange, error) {
+	prior := s.imLife.attempt.Load()
+	if prior == nil || prior.Error == "" || prior.ID != req.AttemptID || prior.Provider != req.Provider || prior.request.Revision != rev {
+		return imChange{}, ErrConflict
+	}
+	return prior.request, nil
+}
+
+// editIM applies one owner operation to the config and its YAML document.
+// prior is the identity that unfinished work of the channel belongs to.
+func (s *Service) editIM(ctx context.Context, root *yaml.Node, cfg *Config, req imChange) error {
+	p := req.Provider
+	prior, e := s.removedIdentity(p, *cfg)
+	if e != nil {
+		return s.imFail("read identity", e, errIMRead)
+	}
+	if id, owner := cfg.imIdentity(p); id != "" {
+		prior = stableID(id + "\x00" + owner)
+	}
+	switch req.Operation {
+	case "save":
+		if e = s.saveIMSlot(ctx, root, cfg, req, prior); e != nil || !req.Apply {
+			return e
+		}
+		return selectIM(root, cfg, p)
+	case "select":
+		return selectIM(root, cfg, p)
+	case "remove":
+		return s.removeIMSlot(root, cfg, p, req.Apply, prior)
+	}
+	return errors.New("未知的渠道操作")
+}
+
+// saveIMSlot updates one platform's settings. Its identity can change only
+// when no unfinished work still belongs to the previous one.
+func (s *Service) saveIMSlot(ctx context.Context, root *yaml.Node, cfg *Config, req imChange, prior string) error {
+	p := req.Provider
+	originalID, originalOwner := cfg.imIdentity(p)
+	id, owner := originalID, originalOwner
+	if v := strings.TrimSpace(req.ID); v != "" {
+		id = v
+	}
+	if v := strings.TrimSpace(req.Owner); v != "" {
+		owner = v
+	}
+	if prior != "" && prior != stableID(id+"\x00"+owner) {
+		running := s.imConfig()
+		// Discovery has not accepted tasks. Allow completing the owner identity
+		// for this bot before turning discovery off.
+		addingFirstOwner := originalID == id && originalOwner == "" && ((p == "wecom" && running.WeCom.DiscoveryOnly) || (p == "dingtalk" && running.DingTalk.DiscoveryOnly))
+		if running.selectedIM() == p && !addingFirstOwner {
+			return errors.New("请先停用或切换当前渠道，再更换机器人或所有者身份")
+		}
+		impact, err := s.imImpact(ctx, p)
+		if err != nil {
+			return err
+		}
+		if impact != (imImpact{}) {
+			return errors.New("该渠道还有未结事件、动作或投递，请先用原身份完成核对")
+		}
+	}
+	secret := req.Secret
+	if strings.TrimSpace(secret) == "" {
+		secret = ""
+	}
+	var section any
+	if p == "wecom" {
+		c := &cfg.WeCom
+		c.BotID, c.Owner = id, owner
+		if secret != "" {
+			c.Secret = secret
+		}
+		c.DiscoveryOnly, c.AllowedGroups, c.AllowAllGroups = req.Discovery, req.Groups, req.AllowAllGroups
+		if c.validate() != nil {
+			return errIMIncomplete
+		}
+		section = c
+	} else {
+		c := &cfg.DingTalk
+		c.ClientID, c.AllowedSender = id, owner
+		if secret != "" {
+			c.ClientSecret = secret
+		}
+		c.DiscoveryOnly, c.AllowedConversations, c.AllowAllGroups = req.Discovery, req.Groups, req.AllowAllGroups
+		check := *c
+		check.Enabled = true
+		if check.validate() != nil {
+			return errIMIncomplete
+		}
+		section = c
+	}
+	if setIMField(root, p, section) != nil {
+		return errIMWrite
+	}
+	return nil
+}
+
+// selectIM makes p the channel the next start uses.
+func selectIM(root *yaml.Node, cfg *Config, p string) error {
+	if p == "dingtalk" {
+		cfg.DingTalk.Enabled = true
+		if cfg.DingTalk.validate() != nil {
+			return errIMIncomplete
+		}
+		if setIMField(root, p, cfg.DingTalk) != nil {
+			return errIMWrite
+		}
+	}
+	if p == "wecom" && cfg.WeCom.validate() != nil {
+		return errIMIncomplete
+	}
+	cfg.IM.Provider = p
+	if setIMField(root, "im", cfg.IM) != nil {
+		return errIMWrite
+	}
+	return nil
+}
+
+// removeIMSlot deletes one platform's settings. A selected channel is
+// deselected only together with an immediate apply. The removed identity is
+// recorded first, so only it can later resume the channel's parked work.
+func (s *Service) removeIMSlot(root *yaml.Node, cfg *Config, p string, apply bool, prior string) error {
+	running := s.imConfig().selectedIM()
+	if cfg.selectedIM() == p || running == p {
+		if !apply {
+			return errors.New("请先切换或停用该渠道，再删除配置")
+		}
+		// Keep the actual other channel when deleting a legacy next-start selection.
+		cfg.IM.Provider = running
+		if running == p {
+			cfg.IM.Provider = "none"
+		}
+		if setIMField(root, "im", cfg.IM) != nil {
+			return errIMWrite
+		}
+	}
+	if prior != "" {
+		if e := s.recordRemovedIdentity(p, prior); e != nil {
+			return s.imFail("write identity", e, errIMWrite)
+		}
+	}
+	if setIMField(root, p, nil) != nil {
+		return errIMWrite
+	}
+	return nil
+}
+
+// applyIM authenticates the new channel before persist commits the next
+// startup selection, so a failure or a crash keeps the previous one. The
+// latest attempt stays readable for a page refresh and an explicit retry.
+func (s *Service) applyIM(req imChange, cfg *Config, persist func() error) error {
+	if s.imLife.ctx == nil || s.imLife.ctx.Err() != nil {
 		return errors.New("渠道服务尚未运行")
 	}
 	live := s.im.Load()
 	if live.cfg.sameActiveIM(cfg) && (cfg.selectedIM() == "none" || live.channel.connected()) {
 		return persist()
 	}
-	candidate := s.imFactory(s, cfg)
-	provider := req.Provider
-	if provider == "none" {
-		provider = s.imConfig().selectedIM()
+	attempt := imAttempt{ID: randomID(), request: req, Provider: req.Provider}
+	if attempt.Provider == "none" {
+		attempt.Provider = live.cfg.selectedIM()
 	}
-	id := randomID()
-	s.imAttempt.Store(&imAttempt{ID: id, request: req, Provider: provider})
-	defer func() {
-		if err != nil {
-			s.imAttempt.Store(&imAttempt{ID: id, request: req, Provider: provider, Error: err.Error()})
-		}
-	}()
-	// A second subscription for the same bot can evict the original socket.
-	// Drain it before authenticating its replacement. Different platforms can
-	// authenticate independently, keeping the old connection live during probing.
-	stopped := false
-	stopCurrent := func() error {
-		s.mu.Lock()
-		if s.activeCancel != nil || s.imSending {
-			s.mu.Unlock()
-			return errors.New("当前任务或投递正在执行，请稍后重试")
-		}
-		s.imChanging = true
-		s.mu.Unlock()
-		s.stopIMLoop()
-		stopped = true
-		return nil
+	s.imLife.attempt.Store(&attempt)
+	err := s.handoverIM(live, cfg, persist)
+	if err != nil {
+		failed := attempt
+		failed.Error = err.Error()
+		s.imLife.attempt.Store(&failed)
 	}
-	defer func() {
-		if !stopped {
-			return
+	return err
+}
+
+// handoverIM replaces the running channel with one built from cfg. A second
+// subscription for the same bot can evict the first, so the running channel
+// is stopped before probing it again; another platform is probed while the
+// current one keeps working. On failure whatever was stopped runs again.
+func (s *Service) handoverIM(live *imRuntime, cfg *Config, persist func() error) error {
+	candidate := s.imLife.factory(s, cfg)
+	held := false
+	if live.cfg.selectedIM() == cfg.selectedIM() {
+		if e := s.holdIM(); e != nil {
+			return e
 		}
-		if err != nil && s.imContext.Err() == nil {
+		held = true
+	}
+	session, err := s.probeIM(candidate)
+	if err == nil && !held {
+		err = s.holdIM()
+		held = err == nil
+	}
+	if err == nil && s.imLife.ctx.Err() != nil {
+		err = errors.New("服务正在退出，配置未应用")
+	}
+	if err == nil {
+		err = persist()
+	}
+	if err == nil {
+		s.im.Store(&imRuntime{cfg, candidate})
+		s.startIM(session)
+	} else {
+		if session != nil {
+			session.Close()
+		}
+		if held && s.imLife.ctx.Err() == nil {
 			s.startIM(nil)
 		}
-		s.mu.Lock()
-		s.imChanging = false
+	}
+	if held {
+		s.releaseIM()
+	}
+	return err
+}
+
+// holdIM stops the running channel once no task or IM delivery is in flight.
+// Inbox, Timers and Outbox start no new work until releaseIM.
+func (s *Service) holdIM() error {
+	s.mu.Lock()
+	if s.activeCancel != nil || s.imLife.sending {
 		s.mu.Unlock()
-		s.notify()
-	}()
-	if live.cfg.selectedIM() == cfg.selectedIM() {
-		if e := stopCurrent(); e != nil {
-			return e
-		}
+		return errors.New("当前任务或投递正在执行，请稍后重试")
 	}
-	ctx, cancel := context.WithTimeout(s.imContext, 12*time.Second)
-	defer cancel()
-	conn, e := candidate.connect(ctx)
-	if e != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return errors.New("连接平台超时，请检查网络后重试")
-		}
-		return fmt.Errorf("连接失败：%w", e)
-	}
-	// A staged socket receives no callbacks and dispatches no work until published.
-	defer func() {
-		if err != nil && conn != nil {
-			conn.Close()
-		}
-	}()
-	if !stopped {
-		if e := stopCurrent(); e != nil {
-			return e
-		}
-	}
-	if s.imContext.Err() != nil {
-		return errors.New("服务正在退出，配置未应用")
-	}
-	if e := persist(); e != nil {
-		return e
-	}
-	s.im.Store(&imRuntime{cfg, candidate})
-	s.startIM(conn)
+	s.imLife.holding = true
+	s.mu.Unlock()
+	s.stopIM()
 	return nil
+}
+
+func (s *Service) releaseIM() {
+	s.mu.Lock()
+	s.imLife.holding = false
+	s.mu.Unlock()
+	s.notify()
+}
+
+// probeIM authenticates a channel within a bounded time.
+func (s *Service) probeIM(channel imChannel) (imSession, error) {
+	ctx, cancel := context.WithTimeout(s.imLife.ctx, 12*time.Second)
+	defer cancel()
+	session, e := channel.connect(ctx)
+	if e == nil {
+		return session, nil
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, errors.New("连接平台超时，请检查网络后重试")
+	}
+	return nil, fmt.Errorf("连接失败：%w", e)
 }
 
 func (s *Service) registerIMManagement(m *http.ServeMux) {

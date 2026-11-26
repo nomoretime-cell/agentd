@@ -88,6 +88,16 @@ function errorMessage(body: unknown) {
     : result.data.error
 }
 
+// A request the page sends; retry repeats the failed immediate apply.
+type Change = Omit<Action, "type"> & { type: Action["type"] | "retry" }
+
+function slotStatus(slot: Slot, data: Settings) {
+  if (data.running === slot.provider)
+    return data.connected ? "已连接" : "未连接"
+  if (!slot.configured) return "未配置"
+  return slot.discovery ? "仅发现模式" : "备用"
+}
+
 export default function IMChannels() {
   const query = useQuery({
     queryKey: ["im-channels"],
@@ -102,11 +112,10 @@ export default function IMChannels() {
     provider: Provider
     connecting: boolean
   }>()
-  const submitting = !!pending
   const [notice, setNotice] = useState("")
   const [error, setError] = useState("")
   const data = query.data
-  const busy = submitting || (!!data?.attempt && !data.attempt.error)
+  const busy = !!pending || (!!data?.attempt && !data.attempt.error)
   function open(
     type: Action["type"],
     slot: Slot,
@@ -117,40 +126,15 @@ export default function IMChannels() {
     setError("")
     setAction({ type, slot, target, revision: data.revision })
   }
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!action || !data || busy) return
-    const form = new FormData(event.currentTarget)
-    const button = (event.nativeEvent as SubmitEvent).submitter
-    const apply =
-      button instanceof HTMLButtonElement
-        ? button.value === "apply"
-        : submitChoices(action, data)[0].apply
-    const saved = action.type === "save"
-    const fields = saved
-      ? {
-          id: form.get("id"),
-          owner: form.get("owner"),
-          secret: form.get("secret"),
-          discovery: form.has("discovery"),
-          allow_all_groups: form.has("all"),
-          groups: String(form.get("groups") ?? "")
-            .split(/\r?\n/)
-            .map((x) => x.trim())
-            .filter(Boolean),
-        }
-      : {}
-    await change(action, apply, fields)
+  function cancel() {
+    setAction(undefined)
+    setError("")
   }
-  async function change(
-    action: Omit<Action, "type"> & { type: Action["type"] | "retry" },
-    apply: boolean,
-    fields = {}
-  ) {
+  async function change(req: Change, apply: boolean, fields = {}) {
     if (busy) return
     setPending({
-      provider: action.slot.provider,
-      connecting: apply && action.type !== "remove" && action.target !== "none",
+      provider: req.slot.provider,
+      connecting: apply && req.type !== "remove" && req.target !== "none",
     })
     setError("")
     setNotice("")
@@ -161,9 +145,9 @@ export default function IMChannels() {
         {
           method: "POST",
           body: JSON.stringify({
-            revision: action.revision,
-            operation: action.type,
-            provider: action.target,
+            revision: req.revision,
+            operation: req.type,
+            provider: req.target,
             apply,
             ...fields,
           }),
@@ -172,9 +156,9 @@ export default function IMChannels() {
       )
       setAction(undefined)
       setNotice(
-        action.type === "remove"
+        req.type === "remove"
           ? "已删除本地渠道配置。"
-          : action.target === "none"
+          : req.target === "none"
             ? "已停用渠道。"
             : apply
               ? "已应用配置，请查看渠道连接状态。"
@@ -231,200 +215,269 @@ export default function IMChannels() {
       ) : (
         notice && <p role="status">{notice}</p>
       )}
-      {data.channels.map((slot) => {
-        const current = data.running === slot.provider
-        const idle = data.running === "none"
-        const name = names[slot.provider]
-        const attempt =
-          data.attempt?.provider === slot.provider ? data.attempt : undefined
-        const currentSlot = data.channels.find(
-          (c) => c.provider === data.running
-        )
-        const enable = idle ? "启用" + name : "切换到" + name
-        return (
-          <section
-            className="panel im-card"
-            key={slot.provider}
-            aria-label={names[slot.provider]}
-          >
-            <header>
-              <h2>{names[slot.provider]}</h2>
-              <span className="pill">
-                {current
-                  ? data.connected
-                    ? "已连接"
-                    : "未连接"
-                  : slot.configured
-                    ? slot.discovery
-                      ? "仅发现模式"
-                      : "备用"
-                    : "未配置"}
-              </span>
-            </header>
-            {slot.configured && (
-              <dl>
-                <div>
-                  <dt>{slot.provider === "wecom" ? "Bot ID" : "Client ID"}</dt>
-                  <dd>{slot.id || "未填写"}</dd>
-                </div>
-                <div>
-                  <dt>密钥</dt>
-                  <dd>{slot.has_secret ? "已设置" : "未设置"}</dd>
-                </div>
-                <div>
-                  <dt>所有者 ID</dt>
-                  <dd>{slot.owner || "未填写"}</dd>
-                </div>
-              </dl>
-            )}
-            <div className="im-controls">
-              <button
-                className="outline-btn"
-                disabled={!data.writable || busy}
-                onClick={() => open("save", slot)}
-              >
-                {slot.configured ? "编辑配置" : "添加" + name}
-              </button>
-              {slot.configured && !current && (
-                <button
-                  className="outline-btn"
-                  disabled={!data.writable || busy}
-                  onClick={() =>
-                    idle
-                      ? void change(
-                          {
-                            type: "select",
-                            target: slot.provider,
-                            slot,
-                            revision: data.revision,
-                          },
-                          true
-                        )
-                      : open("select", slot)
-                  }
-                >
-                  {enable}
-                </button>
-              )}
-              {current && (
-                <button
-                  className="outline-btn"
-                  disabled={!data.writable || busy}
-                  onClick={() => open("select", slot, "none")}
-                >
-                  停用渠道
-                </button>
-              )}
-              {slot.configured && (
-                <button
-                  className="outline-btn"
-                  disabled={!data.writable || busy}
-                  onClick={() => open("remove", slot)}
-                >
-                  {current ? "停用并删除" : "删除配置"}
-                </button>
-              )}
-            </div>
-            {pending?.provider === slot.provider && pending.connecting ? (
-              <p role="status">正在连接{name}…</p>
-            ) : (
-              attempt &&
-              (attempt.error ? (
-                <div>
-                  <p role="alert">{attempt.error}</p>
-                  <button
-                    className="outline-btn"
-                    disabled={!data.writable || busy}
-                    onClick={() =>
-                      void change(
-                        {
-                          type: "retry",
-                          target: slot.provider,
-                          slot,
-                          revision: data.revision,
-                        },
-                        true,
-                        { attempt_id: attempt.id }
-                      )
-                    }
-                  >
-                    重试连接
-                  </button>
-                </div>
-              ) : (
-                <p role="status">正在连接{name}…</p>
-              ))
-            )}
-            {action?.slot.provider === slot.provider && (
-              <form key={action.type + action.target} onSubmit={submit}>
-                <fieldset disabled={busy}>
-                  <legend>
-                    {action.type === "save"
-                      ? "配置" + names[slot.provider]
-                      : action.type === "remove"
-                        ? "删除" + names[slot.provider] + "配置"
-                        : "更改运行渠道"}
-                  </legend>
-                  {action.type === "save" ? (
-                    <EditFields slot={action.slot} />
-                  ) : (
-                    <Confirmation action={action} data={data} />
-                  )}
-                  {action.type === "save" &&
-                    slot.impact.events +
-                      slot.impact.actions +
-                      slot.impact.deliveries >
-                      0 && (
-                      <p>
-                        {impactText(slot)}。更换身份前可
-                        <a href="#queue">查看待办</a>或
-                        <a href="#runs?view=deliveries">核对投递</a>。
-                      </p>
-                    )}
-                  {action.type === "save" &&
-                    (current ? (
-                      <p>应用时会重新连接{name}。</p>
-                    ) : (
-                      currentSlot && (
-                        <p>
-                          若同时切换，将停止{names[currentSlot.provider]}收发。
-                          {impactText(currentSlot)}，未结任务保留在原渠道。
-                        </p>
-                      )
-                    ))}
-                  <div className="im-controls">
-                    {submitChoices(action, data).map(({ label, apply }) => (
-                      <button
-                        key={label}
-                        className="outline-btn"
-                        type="submit"
-                        value={apply ? "apply" : "save"}
-                        disabled={action.revision !== data.revision}
-                      >
-                        {submitting ? "正在提交…" : label}
-                      </button>
-                    ))}
-                    <button
-                      className="outline-btn"
-                      type="button"
-                      onClick={() => {
-                        setAction(undefined)
-                        setError("")
-                      }}
-                    >
-                      取消
-                    </button>
-                  </div>
-                  {action.revision !== data.revision && (
-                    <p role="alert">配置已变化，请取消后重新打开。</p>
-                  )}
-                </fieldset>
-              </form>
-            )}
-          </section>
-        )
-      })}
+      {data.channels.map((slot) => (
+        <ChannelCard
+          key={slot.provider}
+          slot={slot}
+          data={data}
+          busy={busy}
+          connecting={pending?.provider === slot.provider && pending.connecting}
+          action={action?.slot.provider === slot.provider ? action : undefined}
+          submitting={!!pending}
+          open={open}
+          change={change}
+          cancel={cancel}
+        />
+      ))}
     </div>
+  )
+}
+
+function ChannelCard({
+  slot,
+  data,
+  busy,
+  connecting,
+  action,
+  submitting,
+  open,
+  change,
+  cancel,
+}: {
+  slot: Slot
+  data: Settings
+  busy: boolean
+  connecting: boolean
+  action?: Action
+  submitting: boolean
+  open: (type: Action["type"], slot: Slot, target?: Action["target"]) => void
+  change: (change: Change, apply: boolean, fields?: object) => Promise<void>
+  cancel: () => void
+}) {
+  const current = data.running === slot.provider
+  const idle = data.running === "none"
+  const name = names[slot.provider]
+  const locked = !data.writable || busy
+  const request = (type: Change["type"]): Change => ({
+    type,
+    target: slot.provider,
+    slot,
+    revision: data.revision,
+  })
+  return (
+    <section className="panel im-card" aria-label={name}>
+      <header>
+        <h2>{name}</h2>
+        <span className="pill">{slotStatus(slot, data)}</span>
+      </header>
+      {slot.configured && (
+        <dl>
+          <div>
+            <dt>{slot.provider === "wecom" ? "Bot ID" : "Client ID"}</dt>
+            <dd>{slot.id || "未填写"}</dd>
+          </div>
+          <div>
+            <dt>密钥</dt>
+            <dd>{slot.has_secret ? "已设置" : "未设置"}</dd>
+          </div>
+          <div>
+            <dt>所有者 ID</dt>
+            <dd>{slot.owner || "未填写"}</dd>
+          </div>
+        </dl>
+      )}
+      <div className="im-controls">
+        <button
+          className="outline-btn"
+          disabled={locked}
+          onClick={() => open("save", slot)}
+        >
+          {slot.configured ? "编辑配置" : "添加" + name}
+        </button>
+        {slot.configured && !current && (
+          <button
+            className="outline-btn"
+            disabled={locked}
+            onClick={() =>
+              // With nothing running there is no work to interrupt.
+              idle ? void change(request("select"), true) : open("select", slot)
+            }
+          >
+            {(idle ? "启用" : "切换到") + name}
+          </button>
+        )}
+        {current && (
+          <button
+            className="outline-btn"
+            disabled={locked}
+            onClick={() => open("select", slot, "none")}
+          >
+            停用渠道
+          </button>
+        )}
+        {slot.configured && (
+          <button
+            className="outline-btn"
+            disabled={locked}
+            onClick={() => open("remove", slot)}
+          >
+            {current ? "停用并删除" : "删除配置"}
+          </button>
+        )}
+      </div>
+      <AttemptStatus
+        name={name}
+        connecting={connecting}
+        attempt={
+          data.attempt?.provider === slot.provider ? data.attempt : undefined
+        }
+        locked={locked}
+        retry={(id) => void change(request("retry"), true, { attempt_id: id })}
+      />
+      {action && (
+        <ChannelForm
+          action={action}
+          data={data}
+          busy={busy}
+          submitting={submitting}
+          change={change}
+          cancel={cancel}
+        />
+      )}
+    </section>
+  )
+}
+
+function AttemptStatus({
+  name,
+  connecting,
+  attempt,
+  locked,
+  retry,
+}: {
+  name: string
+  connecting: boolean
+  attempt?: Settings["attempt"]
+  locked: boolean
+  retry: (id: string) => void
+}) {
+  if (connecting || (attempt && !attempt.error))
+    return <p role="status">正在连接{name}…</p>
+  if (!attempt?.error) return null
+  return (
+    <div>
+      <p role="alert">{attempt.error}</p>
+      <button
+        className="outline-btn"
+        disabled={locked}
+        onClick={() => retry(attempt.id)}
+      >
+        重试连接
+      </button>
+    </div>
+  )
+}
+
+function ChannelForm({
+  action,
+  data,
+  busy,
+  submitting,
+  change,
+  cancel,
+}: {
+  action: Action
+  data: Settings
+  busy: boolean
+  submitting: boolean
+  change: (change: Change, apply: boolean, fields?: object) => Promise<void>
+  cancel: () => void
+}) {
+  const slot = action.slot
+  const name = names[slot.provider]
+  const current = data.running === slot.provider
+  const currentSlot = data.channels.find((c) => c.provider === data.running)
+  const stale = action.revision !== data.revision
+  const choices = submitChoices(action, data)
+  const { events, actions, deliveries } = slot.impact
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (busy) return
+    const button = (event.nativeEvent as SubmitEvent).submitter
+    const apply =
+      button instanceof HTMLButtonElement
+        ? button.value === "apply"
+        : choices[0].apply
+    const form = new FormData(event.currentTarget)
+    const fields =
+      action.type === "save"
+        ? {
+            id: form.get("id"),
+            owner: form.get("owner"),
+            secret: form.get("secret"),
+            discovery: form.has("discovery"),
+            allow_all_groups: form.has("all"),
+            groups: String(form.get("groups") ?? "")
+              .split(/\r?\n/)
+              .map((x) => x.trim())
+              .filter(Boolean),
+          }
+        : {}
+    await change(action, apply, fields)
+  }
+  return (
+    <form key={action.type + action.target} onSubmit={submit}>
+      <fieldset disabled={busy}>
+        <legend>
+          {action.type === "save"
+            ? "配置" + name
+            : action.type === "remove"
+              ? "删除" + name + "配置"
+              : "更改运行渠道"}
+        </legend>
+        {action.type === "save" ? (
+          <>
+            <EditFields slot={slot} />
+            {events + actions + deliveries > 0 && (
+              <p>
+                {impactText(slot)}。更换身份前可
+                <a href="#queue">查看待办</a>或
+                <a href="#runs?view=deliveries">核对投递</a>。
+              </p>
+            )}
+            {current ? (
+              <p>应用时会重新连接{name}。</p>
+            ) : (
+              currentSlot && (
+                <p>
+                  若同时切换，将停止{names[currentSlot.provider]}收发。
+                  {impactText(currentSlot)}，未结任务保留在原渠道。
+                </p>
+              )
+            )}
+          </>
+        ) : (
+          <Confirmation action={action} data={data} />
+        )}
+        <div className="im-controls">
+          {choices.map(({ label, apply }) => (
+            <button
+              key={label}
+              className="outline-btn"
+              type="submit"
+              value={apply ? "apply" : "save"}
+              disabled={stale}
+            >
+              {submitting ? "正在提交…" : label}
+            </button>
+          ))}
+          <button className="outline-btn" type="button" onClick={cancel}>
+            取消
+          </button>
+        </div>
+        {stale && <p role="alert">配置已变化，请取消后重新打开。</p>}
+      </fieldset>
+    </form>
   )
 }
 

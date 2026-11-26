@@ -3,18 +3,18 @@ package agent
 import (
 	"bytes"
 	"context"
-	"net/http"
-	"net/http/httptest"
-	"sync/atomic"
-	"time"
-
 	"encoding/json"
 	"errors"
-	"github.com/gorilla/websocket"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestIMSettingsLifecycle(t *testing.T) {
@@ -236,15 +236,19 @@ func TestDisabledDingTalkParksNews(t *testing.T) {
 }
 
 // The real DingTalk adapter serves the socket and tracks connectivity. Only
-// the platform's ticket exchange is replaced by a loopback handshake.
+// the platform's ticket exchange is replaced by a loopback handshake; the
+// shared reconnect loop calls this connect too, so no retry leaves loopback.
 type localDingTalk struct {
 	*dingTalkChannel
 	url string
 }
 
-func (c localDingTalk) connect(ctx context.Context) (*websocket.Conn, error) {
+func (c localDingTalk) connect(ctx context.Context) (imSession, error) {
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, nil)
-	return conn, err
+	if err != nil {
+		return nil, err
+	}
+	return dingTalkSession{c.dingTalkChannel, conn}, nil
 }
 
 func TestIMImmediateHandover(t *testing.T) {
@@ -305,7 +309,7 @@ func TestIMImmediateHandover(t *testing.T) {
 		}
 		return ch
 	}
-	s.imFactory = factory
+	s.imLife.factory = factory
 	s.Start(t.Context())
 	defer func() { s.Close() }()
 	view := func() imSettings {
@@ -401,7 +405,7 @@ func TestIMImmediateHandover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.imFactory = factory
+	s.imLife.factory = factory
 	s.im.Store(&imRuntime{&s.cfg, factory(s, &s.cfg)})
 	s.Start(t.Context())
 	check("wecom", true)

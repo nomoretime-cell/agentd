@@ -55,7 +55,7 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Admission and insertion must agree on the owner when a channel changes.
-	if business && (s.imChanging || admittedBy != s.im.Load()) {
+	if business && (s.imLife.holding || admittedBy != s.im.Load()) {
 		return 0, false, ErrConflict
 	}
 	err = transaction(ctx, s.db, func(tx *sql.Tx) error {
@@ -172,7 +172,7 @@ func (s *Service) workerLoop(ctx context.Context) {
 		}
 		var batch []Event
 		var err error
-		if !s.imChanging && !s.paused && len(s.starts) < s.cfg.Limits.MaxRunsPerHour {
+		if !s.halted() && len(s.starts) < s.cfg.Limits.MaxRunsPerHour {
 			batch, err = s.claim(ctx)
 		}
 		var runCtx context.Context

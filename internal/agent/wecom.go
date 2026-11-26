@@ -237,7 +237,9 @@ func writeWeCom(conn *websocket.Conn, cmd, id string, body any) error {
 	}
 	return conn.WriteJSON(frame)
 }
-func (c *weComChannel) connect(ctx context.Context) (*websocket.Conn, error) {
+
+// connect opens the long connection and subscribes with the bot credentials.
+func (c *weComChannel) connect(ctx context.Context) (imSession, error) {
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, nil)
 	if err != nil {
 		return nil, errors.New("无法连接企业微信，请检查服务器网络")
@@ -248,8 +250,16 @@ func (c *weComChannel) connect(ctx context.Context) (*websocket.Conn, error) {
 		conn.Close()
 		return nil, err
 	}
-	return conn, nil
+	return weComSession{c, conn}, nil
 }
+
+type weComSession struct {
+	c    *weComChannel
+	conn *websocket.Conn
+}
+
+func (w weComSession) serve(ctx context.Context) error { return w.c.serve(ctx, w.conn) }
+func (w weComSession) Close() error                    { return w.conn.Close() }
 func (c *weComChannel) subscribe(conn *websocket.Conn) error {
 	conn.SetReadLimit(1 << 20)
 	sub := randomID()
@@ -267,36 +277,6 @@ func (c *weComChannel) subscribe(conn *websocket.Conn) error {
 	conn.SetReadDeadline(time.Time{})
 	return nil
 }
-func (c *weComChannel) run(ctx context.Context, first *websocket.Conn) {
-	s := c.s
-	backoff := time.Second
-	for ctx.Err() == nil {
-		conn := first
-		first = nil
-		var err error
-		if conn == nil {
-			conn, err = c.connect(ctx)
-		}
-		if err == nil {
-			start := time.Now()
-			err = c.serve(ctx, conn)
-			if time.Since(start) > time.Minute {
-				backoff = time.Second
-			}
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		s.log.Warn("wecom disconnected", "retry_in", backoff, "error", err)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoff):
-		}
-		backoff = min(30*time.Second, backoff*2)
-	}
-}
-
 func (c *weComChannel) serve(ctx context.Context, conn *websocket.Conn) error {
 	s := c.s
 	stopClose := context.AfterFunc(ctx, func() { conn.Close() })

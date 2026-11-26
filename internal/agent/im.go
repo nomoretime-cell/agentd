@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/gorilla/websocket"
+	"sync/atomic"
+	"time"
 )
 
 type IMRoute struct {
@@ -33,11 +33,34 @@ type imChannel interface {
 	// owner returns the target for proactive messages to the owner and
 	// whether the platform is configured to send them.
 	owner() (target string, enabled bool)
-	// run keeps the platform connection open until ctx ends.
-	run(ctx context.Context, first *websocket.Conn)
-	connect(context.Context) (*websocket.Conn, error)
+	// connect opens and authenticates one platform connection. The session
+	// receives no callbacks until it is served, so a failed switch can drop it.
+	connect(ctx context.Context) (imSession, error)
 	// connected reports whether the platform connection is open now.
 	connected() bool
+}
+
+// imSession is one authenticated platform connection. serve handles its
+// callbacks until ctx ends or the connection fails, then releases it. Close
+// releases a session that is never served.
+type imSession interface {
+	serve(ctx context.Context) error
+	Close() error
+}
+
+// imLifecycle runs and replaces the IM connection. ctx and stop are used
+// under imConfigMu; holding and sending under Service.mu.
+type imLifecycle struct {
+	factory func(*Service, *Config) imChannel // tests substitute local platforms
+	ctx     context.Context                   // set by Start
+	stop    func()
+	// holding keeps Inbox, Timers and Outbox from starting work while the
+	// channel is replaced.
+	holding bool
+	// sending marks an IM delivery in flight; the channel is not replaced under it.
+	sending bool
+	attempt atomic.Pointer[imAttempt] // latest immediate apply, shown on the workbench
+	secrets atomic.Pointer[[]string]  // every IM credential this process has used
 }
 
 type imRuntime struct {
@@ -66,25 +89,52 @@ type imRoutes struct {
 
 func (r imRoutes) fromIM() bool { return r.DingTalk != nil || r.WeCom != nil }
 
-// startIM and stopIMLoop own a single connection loop. stop waits for callbacks
-// to finish before the active identity can change.
-func (s *Service) startIM(first *websocket.Conn) {
-	ctx, cancel := context.WithCancel(s.imContext)
+// startIM serves the current channel, beginning with first when a handover
+// has already authenticated it. stopIM waits for its callbacks to finish
+// before the active identity can change.
+func (s *Service) startIM(first imSession) {
+	ctx, cancel := context.WithCancel(s.imLife.ctx)
 	done := make(chan struct{})
-	s.stopIM = func() { cancel(); <-done }
-	channel := s.im.Load().channel
-	go func() {
-		defer close(done)
-		if first != nil {
-			defer first.Close()
-		}
-		channel.run(ctx, first)
-	}()
+	s.imLife.stop = func() { cancel(); <-done }
+	live := s.im.Load()
+	go func() { defer close(done); s.keepIM(ctx, live.cfg.provider(), live.channel, first) }()
 }
-func (s *Service) stopIMLoop() {
-	if s.stopIM != nil {
-		s.stopIM()
-		s.stopIM = nil
+func (s *Service) stopIM() {
+	if s.imLife.stop != nil {
+		s.imLife.stop()
+		s.imLife.stop = nil
+	}
+}
+
+// keepIM serves the channel until ctx ends and reconnects with backoff. A
+// connection that stayed up for a minute resets the backoff.
+func (s *Service) keepIM(ctx context.Context, provider string, channel imChannel, session imSession) {
+	delay := time.Second
+	for {
+		var err error
+		if session == nil {
+			session, err = channel.connect(ctx)
+		}
+		if err == nil {
+			since := time.Now()
+			err = session.serve(ctx)
+			session = nil
+			if time.Since(since) > time.Minute {
+				delay = time.Second
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		s.log.Warn("IM disconnected; reconnect scheduled", "provider", provider, "delay", delay, "error", err)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		delay = min(delay*2, 30*time.Second)
 	}
 }
 func (s *Service) teamPrompt() string {
@@ -94,7 +144,7 @@ func (s *Service) teamPrompt() string {
 // Credentials replaced during this process can still occur in historical text.
 func (s *Service) rememberIMSecrets(cfg Config) {
 	var values []string
-	if old := s.imSecrets.Load(); old != nil {
+	if old := s.imLife.secrets.Load(); old != nil {
 		values = slices.Clone(*old)
 	}
 	for _, secret := range []string{cfg.DingTalk.ClientSecret, cfg.WeCom.Secret} {
@@ -102,7 +152,7 @@ func (s *Service) rememberIMSecrets(cfg Config) {
 			values = append(values, secret)
 		}
 	}
-	s.imSecrets.Store(&values)
+	s.imLife.secrets.Store(&values)
 }
 
 // redactIM removes IM credentials and session webhooks from text leaving the host.
@@ -112,7 +162,7 @@ func (s *Service) redactIM(v string, mask func(value, label string) string) stri
 		return prefix + mask(field[len(prefix):len(field)-1], "[redacted]") + `"`
 	})
 	v = dingTalkSecretURL.ReplaceAllStringFunc(v, func(url string) string { return mask(url, "[dingtalk-webhook-redacted]") })
-	for _, secret := range *s.imSecrets.Load() {
+	for _, secret := range *s.imLife.secrets.Load() {
 		for _, spelling := range secretSpellings(secret) {
 			v = strings.ReplaceAll(v, spelling, mask(spelling, "[redacted]"))
 		}
@@ -134,11 +184,16 @@ func imOwnerTarget(target string) bool {
 
 type disabledIM struct{}
 
-func (disabledIM) connect(context.Context) (*websocket.Conn, error) { return nil, nil }
-func (disabledIM) run(context.Context, *websocket.Conn)             {}
-func (disabledIM) connected() bool                                  { return false }
-func (disabledIM) owner() (string, bool)                            { return "", false }
-func (disabledIM) deliver(context.Context, Notification) string     { return "offline" }
+func (disabledIM) connect(context.Context) (imSession, error)   { return idleIM{}, nil }
+func (disabledIM) connected() bool                              { return false }
+func (disabledIM) owner() (string, bool)                        { return "", false }
+func (disabledIM) deliver(context.Context, Notification) string { return "offline" }
+
+// idleIM is the session of a channel with nothing to serve.
+type idleIM struct{}
+
+func (idleIM) serve(ctx context.Context) error { <-ctx.Done(); return nil }
+func (idleIM) Close() error                    { return nil }
 
 // Disabled providers keep their work in the ordinary queues for a later restart.
 func (c Config) parkedProviders() (string, string) {

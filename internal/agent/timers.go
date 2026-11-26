@@ -63,7 +63,7 @@ func (s *Service) UpsertTimer(ctx context.Context, t Timer) error {
 func (s *Service) fireTimers(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.paused || s.imChanging {
+	if s.halted() {
 		return nil
 	}
 	return transaction(ctx, s.db, func(tx *sql.Tx) error {

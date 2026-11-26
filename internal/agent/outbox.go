@@ -79,7 +79,7 @@ func (s *Service) quietUntil(now time.Time) time.Time {
 func (s *Service) deliverOne(ctx context.Context) error {
 	s.mu.Lock()
 	now := time.Now()
-	if s.imChanging || s.paused || ctx.Err() != nil || now.Before(s.lastSend.Add(time.Duration(s.cfg.DeliveryIntervalMS)*time.Millisecond)) {
+	if s.halted() || ctx.Err() != nil || now.Before(s.lastSend.Add(time.Duration(s.cfg.DeliveryIntervalMS)*time.Millisecond)) {
 		s.mu.Unlock()
 		return nil
 	}
@@ -127,10 +127,8 @@ func (s *Service) deliverOne(ctx context.Context) error {
 		}
 	}
 	_, e = s.db.ExecContext(ctx, "UPDATE outbox SET status='sending' WHERE id=? AND status='pending'", n.ID)
-	if e == nil && target.Kind == "im" {
-		s.imSending = true
-		defer func() { s.mu.Lock(); s.imSending = false; s.mu.Unlock() }()
-	}
+	// The IM channel stays in place until this delivery records its result.
+	s.imLife.sending = e == nil && target.Kind == "im"
 	s.lastSend = now
 	s.mu.Unlock()
 	if e != nil {
@@ -189,6 +187,7 @@ func (s *Service) deliverOne(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.imLife.sending = false
 	saveCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, e = s.db.ExecContext(saveCtx, "UPDATE outbox SET status=?,retries=?,deliver_at=? WHERE id=? AND status='sending'", status, retries, due, n.ID)

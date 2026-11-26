@@ -275,7 +275,12 @@ func (c *dingTalkChannel) deliverReply(ctx context.Context, n Notification) stri
 	return "sent"
 }
 
-func (c *dingTalkChannel) connect(ctx context.Context) (*websocket.Conn, error) {
+// connect exchanges the app credentials for a stream ticket and opens the
+// stream. A disabled app has nothing to serve.
+func (c *dingTalkChannel) connect(ctx context.Context) (imSession, error) {
+	if !c.cfg.Enabled {
+		return idleIM{}, nil
+	}
 	s := c.s
 	body, _ := json.Marshal(map[string]any{"clientId": c.cfg.ClientID, "clientSecret": c.cfg.ClientSecret, "ua": "agentd/1.0", "subscriptions": []map[string]string{{"type": "CALLBACK", "topic": dingTalkTopic}}})
 	req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.dingtalk.com/v1.0/gateway/connections/open", bytes.NewReader(body))
@@ -310,7 +315,29 @@ func (c *dingTalkChannel) connect(ctx context.Context) (*websocket.Conn, error) 
 		}
 		return nil, errors.New("钉钉消息通道握手失败")
 	}
-	return conn, nil
+	return dingTalkSession{c, conn}, nil
+}
+
+type dingTalkSession struct {
+	c    *dingTalkChannel
+	conn *websocket.Conn
+}
+
+func (d dingTalkSession) Close() error { return d.conn.Close() }
+
+// serve marks the stream online while it runs. Transport errors can carry the
+// secret ticket, so none is returned for logging.
+func (d dingTalkSession) serve(ctx context.Context) error {
+	s := d.c.s
+	s.mu.Lock()
+	d.c.online = true
+	s.mu.Unlock()
+	s.log.Info("dingtalk stream connected", "discovery_only", d.c.cfg.DiscoveryOnly)
+	_ = s.serveDingTalk(ctx, d.conn)
+	s.mu.Lock()
+	d.c.online = false
+	s.mu.Unlock()
+	return nil
 }
 func (s *Service) serveDingTalk(ctx context.Context, conn *websocket.Conn) error {
 	defer conn.Close()
@@ -359,50 +386,6 @@ func (c *dingTalkChannel) connected() bool {
 	c.s.mu.Lock()
 	defer c.s.mu.Unlock()
 	return c.online
-}
-
-func (c *dingTalkChannel) run(ctx context.Context, first *websocket.Conn) {
-	s := c.s
-	if !c.cfg.Enabled {
-		return
-	}
-	delay := time.Second
-	for ctx.Err() == nil {
-		conn := first
-		first = nil
-		var e error
-		if conn == nil {
-			conn, e = c.connect(ctx)
-		}
-		if e == nil {
-			s.mu.Lock()
-			c.online = true
-			s.mu.Unlock()
-			s.log.Info("dingtalk stream connected", "discovery_only", c.cfg.DiscoveryOnly)
-			since := time.Now()
-			_ = s.serveDingTalk(ctx, conn) // Don't log transport errors containing secret tickets.
-			s.mu.Lock()
-			c.online = false
-			s.mu.Unlock()
-			if time.Since(since) > time.Minute {
-				delay = time.Second
-			}
-		} else if ctx.Err() == nil {
-			s.logErr("dingtalk connect", e)
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		s.log.Warn("dingtalk stream disconnected; reconnect scheduled", "delay", delay)
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-		delay = min(delay*2, 30*time.Second)
-	}
 }
 
 func (ch *dingTalkChannel) deliverOwner(ctx context.Context, n Notification) string {
