@@ -150,7 +150,7 @@ func (s *Service) executeOpenCode(ctx context.Context, ev Event, route *IMRoute,
 		key = ev.Payload.WebChat
 	}
 	if route != nil && route.BotID == "" {
-		key = "dingtalk\x00" + s.cfg.DingTalk.ClientID + "\x00" + route.ConversationID + "\x00" + route.Sender
+		key = "dingtalk\x00" + s.imConfig().DingTalk.ClientID + "\x00" + route.ConversationID + "\x00" + route.Sender
 	}
 	if route != nil && route.BotID != "" {
 		key = strings.Join([]string{"wecom", route.BotID, route.ConversationType, route.ConversationID, route.Sender}, "\x00")

@@ -38,7 +38,7 @@
    └───────────────┘   └──────────────────┘   └──────────────────┘   └────────────────────┘
 ```
 
-后台循环在 `service.go` 的 `Start` 中启动：`workerLoop`（Inbox）、`timerLoop`、`outboxLoop`、`im.run`（当前 IM 渠道的长连接）。
+后台循环在 `service.go` 的 `Start` 中启动：`workerLoop`（Inbox）、`timerLoop`、`outboxLoop`、`startIM` 管理的当前 IM 长连接。
 
 ## 二、模块与文件
 
@@ -70,7 +70,7 @@
 | | `web_chat.go` | 网页对话：会话、消息提交（`chat:` 去重键）、提交回执与历史 |
 | | `knowledge_upload.go` | 浏览器上传与服务器 `incoming/` 导入，批次回执与重启恢复；入库复用 `knowledge.go` |
 | | `memory_workbench.go` / `memory_revision.go` / `dreaming.go` | 记忆与技能浏览、所有者修订（写入复用 Memory）、手动触发整理 |
-| | `im_management.go` | IM 渠道查看、保存、切换与删除：改写 `-config` 文件，修订号防并发覆盖，重启后生效 |
+| | `im_management.go` | IM 渠道查看、保存、切换与删除：改写 `-config` 文件，按修订号更新配置；即时应用时先认证、等待旧回调退出，再启用新连接 |
 | | `config.go` | 配置结构、默认值、校验 |
 | 渠道 | `im.go` | `imChannel` 接口、IM 路由、群聊判定、团队提示、渠道脱敏 |
 | | `dingtalk.go` / `wecom.go` / `im_phrases.go` | 钉钉 Stream、企微长连接的具体实现 |

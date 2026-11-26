@@ -228,9 +228,10 @@ func (s *Service) Handler() http.Handler {
 		paused := s.paused
 		active := s.activeCancel != nil
 		s.mu.Unlock()
-		online := s.im.connected()
-		wcConnected := s.cfg.provider() == "wecom" && online
-		dtConnected := s.cfg.provider() == "dingtalk" && online
+		live := s.im.Load()
+		online := live.channel.connected()
+		wcConnected := live.cfg.provider() == "wecom" && online
+		dtConnected := live.cfg.provider() == "dingtalk" && online
 		counts := map[string]int{}
 		for _, table := range []string{"inbox", "timers", "actions", "outbox"} {
 			var n int
@@ -244,7 +245,7 @@ func (s *Service) Handler() http.Handler {
 		if s.cfg.OpenCodeBinary != "" {
 			executor = "opencode"
 		}
-		respond(w, map[string]any{"memory": s.memoryStatus(), "executor": executor, "paused": paused, "active": active, "counts": counts, "model": s.cfg.Model.Name, "im_provider": s.cfg.provider(), "wecom": map[string]any{"enabled": s.cfg.provider() == "wecom", "connected": wcConnected, "discovery_only": s.cfg.WeCom.DiscoveryOnly, "allow_all_groups": s.cfg.WeCom.AllowAllGroups, "group_owner_tools": s.cfg.WeCom.GroupOwnerTools}, "dingtalk": map[string]any{"enabled": s.cfg.provider() == "dingtalk" && s.cfg.DingTalk.Enabled, "connected": dtConnected, "discovery_only": s.cfg.DingTalk.DiscoveryOnly}}, nil)
+		respond(w, map[string]any{"memory": s.memoryStatus(), "executor": executor, "paused": paused, "active": active, "counts": counts, "model": s.cfg.Model.Name, "im_provider": live.cfg.provider(), "wecom": map[string]any{"enabled": live.cfg.provider() == "wecom", "connected": wcConnected, "discovery_only": live.cfg.WeCom.DiscoveryOnly, "allow_all_groups": live.cfg.WeCom.AllowAllGroups, "group_owner_tools": live.cfg.WeCom.GroupOwnerTools}, "dingtalk": map[string]any{"enabled": live.cfg.provider() == "dingtalk" && live.cfg.DingTalk.Enabled, "connected": dtConnected, "discovery_only": live.cfg.DingTalk.DiscoveryOnly}}, nil)
 	})
 	for _, table := range []string{"inbox", "timers", "actions", "outbox"} {
 		mux.HandleFunc("GET /v1/"+table, func(w http.ResponseWriter, r *http.Request) {

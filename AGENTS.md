@@ -27,7 +27,7 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 
 1. **规模预算**：1 个 Go 进程，1 个业务包 `internal/agent`，5 个核心组件，4 张 SQLite 业务表，7 个基础工具（2026-11-23 起加入 `search`，见[开发路线](docs/design/91-convention-roadmap.md) D2）。
 2. **核心不认识具体渠道和业务。** 核心文件（`inbox.go`、`timers.go`、`outbox.go`、`permissions.go`、`sandbox.go`、`memory.go`、`loop.go`、`store.go`、`service.go`）里不出现具体 IM 平台名或具体业务名，由 `boundary_test.go` 检查。
-   - **渠道**：只负责平台协议、身份校验和一次发送。核心通过 `im.go` 的 `imChannel` 接口（`deliver`、`owner`、`run`、`connected`）调用，钉钉和企微各一个实现。渠道专属的路由、准入、群聊策略和脱敏也放在 `im.go`。所有者的网页对话不是 IM 渠道：它和本机 `message` 一样是核心自带的所有者入口，回复直接存入 Inbox 供页面读取，不经过 `imChannel`。
+   - **渠道**：只负责平台协议、身份校验和一次发送。核心通过 `im.go` 的 `imChannel` 接口（`deliver`、`owner`、`connect`、`run`、`connected`）调用，钉钉和企微各一个实现。渠道专属的路由、准入、群聊策略和脱敏也放在 `im.go`。所有者的网页对话不是 IM 渠道：它和本机 `message` 一样是核心自带的所有者入口，回复直接存入 Inbox 供页面读取，不经过 `imChannel`。
    - **业务**：核心只通过三个入口接入：执行循环调 `runBusiness`，`Append` 调 `admitBusiness`，定时器调 `timerEvent`。目前只有新闻一个业务，入口都在 `news.go`，不设计通用的业务结构；出现第二个业务时再抽象。
    - **数据格式**：已存数据保持不变，包括 inbox 载荷字段、投递目标字符串、去重键，以保证重放和重启恢复。`insertEvent` 按字节比较载荷，`TestPayloadEncodingIsStable` 固定了序列化格式。
 3. **路径相对状态根目录。** 运行时路径一律由 `s.root` 拼接，不写死仓库路径、`.agentd` 或 `/var/lib/agentd`；模型可见路径只经宿主函数映射；新增运行时路径先更新 [docs/design/90-convention-storage-layout.md](docs/design/90-convention-storage-layout.md)。
@@ -84,6 +84,7 @@ agentd 是最小系统：用最少的模块完成五个原语，每个模块的�
 
 ### 界面与验收
 
+- **让常用任务用尽可能少的操作完成。** 在用户处理对象的位置提供入口，主按钮写明提交后的结果。同一任务中复用已经提供的信息，校验失败保留可安全复用的输入。普通保存直接反馈结果；会中断当前工作或难以撤回的操作，在最终提交前说明影响，让用户确认一次。验收时从用户入口走到结果，检查是否还需重复填写、确认或跨页收尾。[GOV.UK 按钮指南](https://design-system.service.gov.uk/components/button/) · [W3C 重复输入指南](https://www.w3.org/WAI/WCAG22/Understanding/redundant-entry.html)
 - **面向所有者的文案默认使用简体中文。** 按钮、状态、表单校验和错误说明遵循同一用语，排查所需的动作 ID 和原始错误保留原值。日期按简体中文习惯显示，涉及定时计划时标明所用时区。
 - **用主题变量表达语义。** 在样式入口定义背景、前景、边框、焦点和危险操作等 CSS 变量，通过 Tailwind 的主题映射使用。优先使用原生按钮、链接和带标签的输入框；弹窗、菜单等复杂控件复用 shadcn/ui 的键盘和焦点行为。状态同时提供文字。自动刷新列表时保持当前选中项、焦点和阅读位置；这一条目前没有自动化断言，改动相关列表时须手动确认。[shadcn/ui 主题](https://ui.shadcn.com/docs/theming) · [WAI 弹窗交互](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)
 - **从用户入口验证。** 前端改动交付前运行类型检查、ESLint 和浏览器测试，命令及顺序以 [web/README.md](web/README.md) 的「验证」一节为准。功能测试覆盖加载、空结果、请求失败及恢复。用 Playwright 在临时 Go 实例上走通审批：直接打开页面、提交决定、刷新并读回该动作的服务端状态。另测仅供管理客户端使用的接口需要 Bearer、非可信来源即使携带有效测试凭证也不能提交。按角色和可访问名称定位控件，验证键盘操作及窄屏布局，外部执行器使用本地替身。[Playwright 测试指南](https://playwright.dev/docs/best-practices)

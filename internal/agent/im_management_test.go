@@ -2,8 +2,15 @@ package agent
 
 import (
 	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"time"
+
 	"encoding/json"
 	"errors"
+	"github.com/gorilla/websocket"
 	"os"
 	"path/filepath"
 	"strings"
@@ -226,4 +233,196 @@ func TestDisabledDingTalkParksNews(t *testing.T) {
 	if e != nil || impact.Events != 1 {
 		t.Fatal("parked news not counted", impact, e)
 	}
+}
+
+// The real DingTalk adapter serves the socket and tracks connectivity. Only
+// the platform's ticket exchange is replaced by a loopback handshake.
+type localDingTalk struct {
+	*dingTalkChannel
+	url string
+}
+
+func (c localDingTalk) connect(ctx context.Context) (*websocket.Conn, error) {
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, nil)
+	return conn, err
+}
+
+func TestIMImmediateHandover(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "private.yaml")
+	if err := os.WriteFile(path, []byte("timezone: UTC\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(root, cfg, finalModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reject atomic.Bool
+	var hold atomic.Bool
+	entered, release := make(chan struct{}), make(chan struct{})
+	wx := fakeWeCom{alternateSecret: "rotated-secret", ready: make(chan *websocket.Conn, 8), posted: make(chan postedWeCom, 1)}
+	wxServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hold.CompareAndSwap(true, false) {
+			close(entered)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		if reject.Load() {
+			http.Error(w, "test platform offline", 503)
+			return
+		}
+		wx.serve(w, r)
+	}))
+	defer wxServer.Close()
+	dingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{}
+		conn, e := up.Upgrade(w, r, nil)
+		if e != nil {
+			return
+		}
+		defer conn.Close()
+		for {
+			if _, _, e := conn.ReadMessage(); e != nil {
+				return
+			}
+		}
+	}))
+	defer dingServer.Close()
+	factory := func(s *Service, cfg *Config) imChannel {
+		ch := newIMChannel(s, cfg)
+		switch c := ch.(type) {
+		case *weComChannel:
+			c.url = strings.Replace(wxServer.URL, "http", "ws", 1)
+		case *dingTalkChannel:
+			return localDingTalk{c, strings.Replace(dingServer.URL, "http", "ws", 1)}
+		}
+		return ch
+	}
+	s.imFactory = factory
+	s.Start(t.Context())
+	defer func() { s.Close() }()
+	view := func() imSettings {
+		t.Helper()
+		v, e := s.imSettings(t.Context())
+		if e != nil {
+			t.Fatal(e)
+		}
+		return v
+	}
+	save := func(req imChange) error { req.Revision = view().Revision; return s.saveIM(t.Context(), req) }
+	success := func(req imChange) {
+		t.Helper()
+		if e := save(req); e != nil {
+			t.Fatal(e)
+		}
+	}
+	check := func(name string, connected bool) {
+		t.Helper()
+		waitFor(t, time.Second, func() bool {
+			v := view()
+			return v.Selected == name && v.Running == name && v.Connected == connected && !v.Restart
+		})
+		disk, e := LoadConfig(path)
+		if e != nil || disk.selectedIM() != name {
+			t.Fatalf("unexpected startup selection: %s, %v", disk.selectedIM(), e)
+		}
+	}
+	ding := imChange{Operation: "save", Apply: true, Provider: "dingtalk", ID: "app", Owner: "alice", Secret: "test-ding"}
+	success(ding)
+	check("dingtalk", true)
+	if s.ownerTarget() != "dingtalk-owner:alice" {
+		t.Fatal("new owner is not used")
+	}
+	add := imChange{Operation: "save", Provider: "wecom", ID: "bot", Owner: "owner", Secret: "secret-wc"}
+	success(add)
+	check("dingtalk", true)
+	rev := view().Revision
+	req := imChange{Operation: "select", Apply: true, Revision: rev, Provider: "wecom"}
+	reject.Store(true)
+	hold.Store(true)
+	done := make(chan error, 1)
+	go func() { done <- s.saveIM(t.Context(), req) }()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handshake did not start")
+	}
+	pending := view()
+	if pending.Attempt == nil || pending.Attempt.Error != "" || pending.Running != "dingtalk" || !pending.Connected {
+		t.Error("missing handover status on refresh")
+	}
+	if e := s.saveIM(t.Context(), req); !errors.Is(e, ErrConflict) {
+		t.Error("concurrent update accepted")
+	}
+	close(release)
+	if e := <-done; e == nil {
+		t.Fatal("invalid handshake accepted")
+	}
+	check("dingtalk", true)
+	if v := view(); v.Attempt == nil || v.Attempt.Error == "" || v.Revision != rev {
+		t.Fatal("missing retry or failed change committed")
+	}
+	reject.Store(false)
+	success(imChange{Operation: "retry", Provider: "wecom", AttemptID: view().Attempt.ID})
+	check("wecom", true)
+	originalTarget := s.ownerTarget()
+	if originalTarget != "wecom-owner:"+stableID("bot")+":owner" {
+		t.Fatal("old owner still active")
+	}
+	success(imChange{Operation: "save", Apply: true, Provider: "wecom", Secret: "rotated-secret", Groups: []string{"new-room"}})
+	if !s.imConfig().WeCom.allowsGroup("new-room") {
+		t.Fatal("admission did not change")
+	}
+	// A rejected credential rotation must preserve the working credentials across restart.
+	if e := save(imChange{Operation: "save", Apply: true, Provider: "wecom", Secret: "rejected-secret"}); e == nil {
+		t.Fatal("invalid credential saved")
+	}
+	check("wecom", true)
+	disk, e := LoadConfig(path)
+	if e != nil || disk.WeCom.Secret != "rotated-secret" {
+		t.Fatal("failed credential became startup credential")
+	}
+	b, _ := json.Marshal(view())
+	if bytes.Contains(b, []byte("rejected-secret")) {
+		t.Fatal("draft secret exposed")
+	}
+	// Restart from the actual saved file with the same local platform endpoints.
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(root, disk, finalModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.imFactory = factory
+	s.im.Store(&imRuntime{&s.cfg, factory(s, &s.cfg)})
+	s.Start(t.Context())
+	check("wecom", true)
+	if view().Attempt != nil {
+		t.Fatal("failed draft survived restart")
+	}
+	if _, e := s.db.Exec("INSERT INTO outbox(dedup_key,target,content,deliver_at) VALUES('test',?,'test',9999999999999)", originalTarget); e != nil {
+		t.Fatal(e)
+	}
+	success(imChange{Operation: "remove", Apply: true, Provider: "wecom"})
+	check("none", false)
+	if v := view(); v.Channels[0].Configured || v.Channels[0].Impact.Deliveries != 1 {
+		t.Fatal("removal lost pending delivery")
+	}
+	add.ID = "another-bot"
+	add.Apply = true
+	if e := save(add); e == nil {
+		t.Fatal("old delivery rebound to another bot")
+	}
+	success(imChange{Operation: "select", Apply: true, Provider: "dingtalk"})
+	check("dingtalk", true)
+	success(imChange{Operation: "select", Apply: true, Provider: "none"})
+	check("none", false)
 }

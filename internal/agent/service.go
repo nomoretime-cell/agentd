@@ -23,7 +23,14 @@ import (
 type Service struct {
 	metricsSince  time.Time
 	cfg           Config
-	im            imChannel
+	im            atomic.Pointer[imRuntime]
+	imFactory     func(*Service, *Config) imChannel
+	imContext     context.Context // channel lifecycle serialized by imConfigMu
+	stopIM        func()
+	imChanging    bool // guarded by mu, coordinates the handover with Inbox and Outbox
+	imSending     bool
+	imAttempt     atomic.Pointer[imAttempt]
+	imSecrets     atomic.Pointer[[]string]
 	root          string
 	db, read      *sql.DB
 	lock          *os.File
@@ -101,7 +108,9 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 			opened.Close()
 		}
 	}(s)
-	s.im = newIMChannel(s)
+	s.rememberIMSecrets(cfg)
+	s.imFactory = newIMChannel
+	s.im.Store(&imRuntime{&s.cfg, newIMChannel(s, &s.cfg)})
 	s.convert = s.runConverter
 	s.life, s.endLife = context.WithCancel(context.Background())
 	s.db, s.read, err = openDB(root)
@@ -193,6 +202,8 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 	return s, nil
 }
 func (s *Service) Start(parent context.Context) {
+	s.imConfigMu.Lock()
+	defer s.imConfigMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.started {
@@ -201,7 +212,9 @@ func (s *Service) Start(parent context.Context) {
 	s.started = true
 	ctx, cancel := context.WithCancel(parent)
 	s.cancel = cancel
-	loops := []func(context.Context){s.workerLoop, s.timerLoop, s.outboxLoop, s.im.run}
+	s.imContext = ctx
+	s.startIM(nil)
+	loops := []func(context.Context){s.workerLoop, s.timerLoop, s.outboxLoop}
 	for _, f := range loops {
 		s.wg.Add(1)
 		go func(fn func(context.Context)) { defer s.wg.Done(); fn(ctx) }(f)
@@ -222,6 +235,9 @@ func (s *Service) Close() error {
 		s.activeCancel()
 	}
 	s.mu.Unlock()
+	s.imConfigMu.Lock()
+	s.stopIMLoop()
+	s.imConfigMu.Unlock()
 	s.wg.Wait()
 	var e error
 	if s.read != nil {

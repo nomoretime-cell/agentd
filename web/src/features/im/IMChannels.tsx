@@ -30,6 +30,9 @@ const settings = z.object({
   restart: z.boolean(),
   writable: z.boolean(),
   channels: z.array(slotSchema),
+  attempt: z
+    .object({ id: z.string(), provider: choice, error: z.string().optional() })
+    .optional(),
 })
 const names = { wecom: "企业微信", dingtalk: "钉钉", none: "全部停用" }
 type Slot = z.infer<typeof slotSchema>
@@ -40,6 +43,37 @@ type Action = {
   slot: Slot
   target: z.infer<typeof choice>
   revision: string
+}
+
+function submitChoices(action: Action, data: Settings) {
+  const slot = action.slot
+  const current = data.running === slot.provider
+  const idle = data.running === "none"
+  const name = names[slot.provider]
+  if (action.type === "remove")
+    return [
+      {
+        label: current ? "确认停用并删除" : "确认删除",
+        apply: current || data.selected === slot.provider,
+      },
+    ]
+  if (action.type === "select")
+    return [
+      {
+        label: action.target === "none" ? "确认停用" : "切换到" + name,
+        apply: true,
+      },
+    ]
+  if (current) return [{ label: "保存并应用", apply: true }]
+  const enable = {
+    label: idle ? "保存并启用" : "保存并切换到" + name,
+    apply: true,
+  }
+  const backup = {
+    label: idle && !slot.configured ? "仅保存" : "保存为备用",
+    apply: false,
+  }
+  return idle && !slot.configured ? [enable, backup] : [backup, enable]
 }
 
 function impactText(slot: Slot) {
@@ -58,13 +92,21 @@ export default function IMChannels() {
   const query = useQuery({
     queryKey: ["im-channels"],
     queryFn: ({ signal }) => request("im", settings, { signal }),
-    refetchInterval: 10000,
+    refetchInterval: (query) =>
+      query.state.data?.attempt && !query.state.data.attempt.error
+        ? 1000
+        : 5000,
   })
   const [action, setAction] = useState<Action>()
-  const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<{
+    provider: Provider
+    connecting: boolean
+  }>()
+  const submitting = !!pending
   const [notice, setNotice] = useState("")
   const [error, setError] = useState("")
   const data = query.data
+  const busy = submitting || (!!data?.attempt && !data.attempt.error)
   function open(
     type: Action["type"],
     slot: Slot,
@@ -77,8 +119,13 @@ export default function IMChannels() {
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!action || busy) return
+    if (!action || !data || busy) return
     const form = new FormData(event.currentTarget)
+    const button = (event.nativeEvent as SubmitEvent).submitter
+    const apply =
+      button instanceof HTMLButtonElement
+        ? button.value === "apply"
+        : submitChoices(action, data)[0].apply
     const saved = action.type === "save"
     const fields = saved
       ? {
@@ -93,8 +140,20 @@ export default function IMChannels() {
             .filter(Boolean),
         }
       : {}
-    setBusy(true)
+    await change(action, apply, fields)
+  }
+  async function change(
+    action: Omit<Action, "type"> & { type: Action["type"] | "retry" },
+    apply: boolean,
+    fields = {}
+  ) {
+    if (busy) return
+    setPending({
+      provider: action.slot.provider,
+      connecting: apply && action.type !== "remove" && action.target !== "none",
+    })
     setError("")
+    setNotice("")
     try {
       await request(
         "im",
@@ -105,6 +164,7 @@ export default function IMChannels() {
             revision: action.revision,
             operation: action.type,
             provider: action.target,
+            apply,
             ...fields,
           }),
         },
@@ -112,17 +172,19 @@ export default function IMChannels() {
       )
       setAction(undefined)
       setNotice(
-        saved
-          ? "渠道配置已保存。"
-          : action.type === "remove"
-            ? "已删除本地渠道配置。"
-            : "已保存下次启动使用的渠道。"
+        action.type === "remove"
+          ? "已删除本地渠道配置。"
+          : action.target === "none"
+            ? "已停用渠道。"
+            : apply
+              ? "已应用配置，请查看渠道连接状态。"
+              : "已保存为备用。"
       )
     } catch (e) {
       setError(e instanceof Error ? e.message : "未能保存，请核对最新状态。")
     } finally {
       await query.refetch()
-      setBusy(false)
+      setPending(undefined)
     }
   }
   if (!data)
@@ -152,146 +214,216 @@ export default function IMChannels() {
             </span>
           )}
         </div>
-        <div>
-          <small>下次启动使用</small>
-          <strong>{names[data.selected]}</strong>
-          {data.restart && <span className="pill">待重启生效</span>}
-        </div>
+        {data.restart && (
+          <p role="status">
+            已保存的启动配置与当前运行状态不同。下次启动使用：
+            {names[data.selected]}。
+          </p>
+        )}
       </section>
-      {data.restart && (
-        <p role="status">在服务器上重启 agentd 后，新配置生效。</p>
-      )}
       {!data.writable && (
         <p>当前使用示例或临时配置。请使用私有配置文件启动 agentd 后编辑。</p>
       )}
       {query.error ? (
         <p role="alert">{query.error.message}</p>
+      ) : error && error !== data.attempt?.error ? (
+        <p role="alert">{error}</p>
       ) : (
         notice && <p role="status">{notice}</p>
       )}
-      {data.channels.map((slot) => (
-        <section
-          className="panel im-card"
-          key={slot.provider}
-          aria-label={names[slot.provider]}
-        >
-          <header>
-            <h2>{names[slot.provider]}</h2>
-            <span className="pill">
-              {slot.configured
-                ? slot.discovery
-                  ? "仅发现模式"
-                  : "已配置"
-                : "未配置"}
-            </span>
-          </header>
-          {slot.configured && (
-            <dl>
-              <div>
-                <dt>{slot.provider === "wecom" ? "Bot ID" : "Client ID"}</dt>
-                <dd>{slot.id || "未填写"}</dd>
-              </div>
-              <div>
-                <dt>密钥</dt>
-                <dd>{slot.has_secret ? "已设置" : "未设置"}</dd>
-              </div>
-              <div>
-                <dt>所有者 ID</dt>
-                <dd>{slot.owner || "未填写"}</dd>
-              </div>
-            </dl>
-          )}
-          <div className="im-controls">
-            <button
-              className="outline-btn"
-              disabled={!data.writable || busy}
-              onClick={() => open("save", slot)}
-            >
-              {slot.configured ? "编辑配置" : "添加配置"}
-            </button>
-            {slot.configured && data.selected !== slot.provider && (
-              <button
-                className="outline-btn"
-                disabled={!data.writable || busy}
-                onClick={() => open("select", slot)}
-              >
-                下次启动使用
-              </button>
-            )}
-            {data.selected === slot.provider && (
-              <button
-                className="outline-btn"
-                disabled={!data.writable || busy}
-                onClick={() => open("select", slot, "none")}
-              >
-                停用渠道
-              </button>
-            )}
+      {data.channels.map((slot) => {
+        const current = data.running === slot.provider
+        const idle = data.running === "none"
+        const name = names[slot.provider]
+        const attempt =
+          data.attempt?.provider === slot.provider ? data.attempt : undefined
+        const currentSlot = data.channels.find(
+          (c) => c.provider === data.running
+        )
+        const enable = idle ? "启用" + name : "切换到" + name
+        return (
+          <section
+            className="panel im-card"
+            key={slot.provider}
+            aria-label={names[slot.provider]}
+          >
+            <header>
+              <h2>{names[slot.provider]}</h2>
+              <span className="pill">
+                {current
+                  ? data.connected
+                    ? "已连接"
+                    : "未连接"
+                  : slot.configured
+                    ? slot.discovery
+                      ? "仅发现模式"
+                      : "备用"
+                    : "未配置"}
+              </span>
+            </header>
             {slot.configured && (
+              <dl>
+                <div>
+                  <dt>{slot.provider === "wecom" ? "Bot ID" : "Client ID"}</dt>
+                  <dd>{slot.id || "未填写"}</dd>
+                </div>
+                <div>
+                  <dt>密钥</dt>
+                  <dd>{slot.has_secret ? "已设置" : "未设置"}</dd>
+                </div>
+                <div>
+                  <dt>所有者 ID</dt>
+                  <dd>{slot.owner || "未填写"}</dd>
+                </div>
+              </dl>
+            )}
+            <div className="im-controls">
               <button
                 className="outline-btn"
-                disabled={
-                  !data.writable ||
-                  busy ||
-                  data.running === slot.provider ||
-                  data.selected === slot.provider
-                }
-                title="运行中或已选中的渠道须先切换或停用并重启"
-                onClick={() => open("remove", slot)}
+                disabled={!data.writable || busy}
+                onClick={() => open("save", slot)}
               >
-                删除配置
+                {slot.configured ? "编辑配置" : "添加" + name}
               </button>
-            )}
-          </div>
-          {action?.slot.provider === slot.provider && (
-            <form key={action.type + action.target} onSubmit={submit}>
-              <fieldset disabled={busy}>
-                <legend>
-                  {action.type === "save"
-                    ? "配置" + names[slot.provider]
-                    : action.type === "remove"
-                      ? "删除" + names[slot.provider] + "配置"
-                      : "确认更改启动渠道"}
-                </legend>
-                {action.type === "save" ? (
-                  <EditFields slot={action.slot} />
-                ) : (
-                  <Confirmation action={action} data={data} />
-                )}
-                {error && <p role="alert">{error}</p>}
-                <div className="im-controls">
+              {slot.configured && !current && (
+                <button
+                  className="outline-btn"
+                  disabled={!data.writable || busy}
+                  onClick={() =>
+                    idle
+                      ? void change(
+                          {
+                            type: "select",
+                            target: slot.provider,
+                            slot,
+                            revision: data.revision,
+                          },
+                          true
+                        )
+                      : open("select", slot)
+                  }
+                >
+                  {enable}
+                </button>
+              )}
+              {current && (
+                <button
+                  className="outline-btn"
+                  disabled={!data.writable || busy}
+                  onClick={() => open("select", slot, "none")}
+                >
+                  停用渠道
+                </button>
+              )}
+              {slot.configured && (
+                <button
+                  className="outline-btn"
+                  disabled={!data.writable || busy}
+                  onClick={() => open("remove", slot)}
+                >
+                  {current ? "停用并删除" : "删除配置"}
+                </button>
+              )}
+            </div>
+            {pending?.provider === slot.provider && pending.connecting ? (
+              <p role="status">正在连接{name}…</p>
+            ) : (
+              attempt &&
+              (attempt.error ? (
+                <div>
+                  <p role="alert">{attempt.error}</p>
                   <button
                     className="outline-btn"
-                    type="submit"
-                    disabled={action.revision !== data.revision}
+                    disabled={!data.writable || busy}
+                    onClick={() =>
+                      void change(
+                        {
+                          type: "retry",
+                          target: slot.provider,
+                          slot,
+                          revision: data.revision,
+                        },
+                        true,
+                        { attempt_id: attempt.id }
+                      )
+                    }
                   >
-                    {busy
-                      ? "正在保存…"
-                      : action.type === "save"
-                        ? "保存配置"
-                        : action.type === "remove"
-                          ? "确认删除"
-                          : "确认更改"}
-                  </button>
-                  <button
-                    className="outline-btn"
-                    type="button"
-                    onClick={() => {
-                      setAction(undefined)
-                      setError("")
-                    }}
-                  >
-                    取消
+                    重试连接
                   </button>
                 </div>
-                {action.revision !== data.revision && (
-                  <p role="alert">配置已变化，请取消后重新打开。</p>
-                )}
-              </fieldset>
-            </form>
-          )}
-        </section>
-      ))}
+              ) : (
+                <p role="status">正在连接{name}…</p>
+              ))
+            )}
+            {action?.slot.provider === slot.provider && (
+              <form key={action.type + action.target} onSubmit={submit}>
+                <fieldset disabled={busy}>
+                  <legend>
+                    {action.type === "save"
+                      ? "配置" + names[slot.provider]
+                      : action.type === "remove"
+                        ? "删除" + names[slot.provider] + "配置"
+                        : "更改运行渠道"}
+                  </legend>
+                  {action.type === "save" ? (
+                    <EditFields slot={action.slot} />
+                  ) : (
+                    <Confirmation action={action} data={data} />
+                  )}
+                  {action.type === "save" &&
+                    slot.impact.events +
+                      slot.impact.actions +
+                      slot.impact.deliveries >
+                      0 && (
+                      <p>
+                        {impactText(slot)}。更换身份前可
+                        <a href="#queue">查看待办</a>或
+                        <a href="#runs?view=deliveries">核对投递</a>。
+                      </p>
+                    )}
+                  {action.type === "save" &&
+                    (current ? (
+                      <p>应用时会重新连接{name}。</p>
+                    ) : (
+                      currentSlot && (
+                        <p>
+                          若同时切换，将停止{names[currentSlot.provider]}收发。
+                          {impactText(currentSlot)}，未结任务保留在原渠道。
+                        </p>
+                      )
+                    ))}
+                  <div className="im-controls">
+                    {submitChoices(action, data).map(({ label, apply }) => (
+                      <button
+                        key={label}
+                        className="outline-btn"
+                        type="submit"
+                        value={apply ? "apply" : "save"}
+                        disabled={action.revision !== data.revision}
+                      >
+                        {submitting ? "正在提交…" : label}
+                      </button>
+                    ))}
+                    <button
+                      className="outline-btn"
+                      type="button"
+                      onClick={() => {
+                        setAction(undefined)
+                        setError("")
+                      }}
+                    >
+                      取消
+                    </button>
+                  </div>
+                  {action.revision !== data.revision && (
+                    <p role="alert">配置已变化，请取消后重新打开。</p>
+                  )}
+                </fieldset>
+              </form>
+            )}
+          </section>
+        )
+      })}
     </div>
   )
 }
@@ -368,6 +500,7 @@ function Confirmation({ action, data }: { action: Action; data: Settings }) {
     return (
       <>
         <p>
+          {action.slot.provider === data.running && "将先停止该渠道收发。"}
           将移除本地身份、密钥和渠道设置。会话、审批和投递记录将保留；如需撤销密钥，请在平台后台操作。
         </p>
         <p>{impactText(action.slot)}</p>
@@ -377,7 +510,9 @@ function Confirmation({ action, data }: { action: Action; data: Settings }) {
   return (
     <>
       <p>
-        下次启动将使用「{names[action.target]}」。
+        {action.target === "none"
+          ? "将停用当前渠道。"
+          : "将启用" + names[action.target] + "。"}
         {current && "当前渠道的未结任务保留在原渠道。"}
       </p>
       {current && (

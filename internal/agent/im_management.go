@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -35,17 +37,29 @@ type imSlot struct {
 	Groups         []string `json:"groups"`
 	Impact         imImpact `json:"impact"`
 }
+
+// Only the projected status is sent back to the browser. A failed draft may
+// contain a new secret; it stays in process memory for an explicit retry.
+type imAttempt struct {
+	ID       string `json:"id"`
+	request  imChange
+	Provider string `json:"provider"`
+	Error    string `json:"error,omitempty"`
+}
 type imSettings struct {
-	Revision         string   `json:"revision"`
-	Selected         string   `json:"selected"`
-	Running          string   `json:"running"`
-	Connected        bool     `json:"connected"`
-	RunningDiscovery bool     `json:"running_discovery"`
-	Restart          bool     `json:"restart"`
-	Writable         bool     `json:"writable"`
-	Channels         []imSlot `json:"channels"`
+	Attempt          *imAttempt `json:"attempt,omitempty"`
+	Revision         string     `json:"revision"`
+	Selected         string     `json:"selected"`
+	Running          string     `json:"running"`
+	Connected        bool       `json:"connected"`
+	RunningDiscovery bool       `json:"running_discovery"`
+	Restart          bool       `json:"restart"`
+	Writable         bool       `json:"writable"`
+	Channels         []imSlot   `json:"channels"`
 }
 type imChange struct {
+	AttemptID      string   `json:"attempt_id,omitempty"`
+	Apply          bool     `json:"apply,omitempty"`
 	Revision       string   `json:"revision"`
 	Operation      string   `json:"operation"`
 	Provider       string   `json:"provider"`
@@ -179,16 +193,34 @@ func (s *Service) writableIMConfig() bool {
 	return err == nil && path != "" && !(filepath.Base(path) == "config.yaml" && fileExists(filepath.Join(filepath.Dir(path), ".git")))
 }
 
+// Only the selected platform affects the running channel. Other slots can
+// be saved independently without interrupting its connection.
+func (cfg *Config) sameActiveIM(other *Config) bool {
+	if cfg.selectedIM() != other.selectedIM() {
+		return false
+	}
+	switch cfg.selectedIM() {
+	case "wecom":
+		return reflect.DeepEqual(cfg.WeCom, other.WeCom)
+	case "dingtalk":
+		return reflect.DeepEqual(cfg.DingTalk, other.DingTalk)
+	default:
+		return true
+	}
+}
+
 func (s *Service) imSettings(ctx context.Context) (imSettings, error) {
-	s.imConfigMu.Lock()
-	defer s.imConfigMu.Unlock()
 	cfg, _, rev, e := s.imSnapshot()
 	if e != nil {
 		return imSettings{}, e
 	}
-	v := imSettings{Revision: rev, Selected: cfg.selectedIM(), Running: s.cfg.selectedIM(), Connected: s.im.connected(), Writable: s.writableIMConfig()}
-	v.RunningDiscovery = v.Running == "wecom" && s.cfg.WeCom.DiscoveryOnly || v.Running == "dingtalk" && s.cfg.DingTalk.DiscoveryOnly
-	v.Restart = v.Selected != v.Running || (v.Running == "wecom" && !reflect.DeepEqual(cfg.WeCom, s.cfg.WeCom)) || (v.Running == "dingtalk" && !reflect.DeepEqual(cfg.DingTalk, s.cfg.DingTalk))
+	live := s.im.Load()
+	v := imSettings{Revision: rev, Selected: cfg.selectedIM(), Running: live.cfg.selectedIM(), Connected: live.channel.connected(), Writable: s.writableIMConfig()}
+	v.RunningDiscovery = v.Running == "wecom" && live.cfg.WeCom.DiscoveryOnly || v.Running == "dingtalk" && live.cfg.DingTalk.DiscoveryOnly
+	v.Restart = !live.cfg.sameActiveIM(&cfg)
+	if attempt := s.imAttempt.Load(); attempt != nil && (attempt.Error == "" || attempt.request.Revision == rev) {
+		v.Attempt = attempt
+	}
 	for _, p := range []string{"wecom", "dingtalk"} {
 		id, owner := cfg.imIdentity(p)
 		slot := imSlot{Provider: p, ID: maskedIMID(id), Owner: maskedIMID(owner)}
@@ -286,7 +318,9 @@ func encodeConfig(doc *yaml.Node) ([]byte, error) {
 }
 
 func (s *Service) saveIM(ctx context.Context, req imChange) error {
-	s.imConfigMu.Lock()
+	if !s.imConfigMu.TryLock() {
+		return ErrConflict
+	}
 	defer s.imConfigMu.Unlock()
 	if !s.writableIMConfig() {
 		return errors.New("请使用私有配置文件（例如 config.local.yaml）启动服务后编辑")
@@ -297,6 +331,13 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 	}
 	if req.Revision != rev {
 		return ErrConflict
+	}
+	if req.Operation == "retry" {
+		prior := s.imAttempt.Load()
+		if prior == nil || prior.Error == "" || prior.ID != req.AttemptID || prior.Provider != req.Provider || prior.request.Revision != rev {
+			return ErrConflict
+		}
+		req = prior.request
 	}
 	p := req.Provider
 	if p != "wecom" && p != "dingtalk" && !(p == "none" && req.Operation == "select") {
@@ -329,9 +370,9 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 		if prior != "" && prior != identity {
 			// Discovery has not accepted tasks. Allow completing the owner identity
 			// for this bot before turning discovery off.
-			addingFirstOwner := originalID == id && originalOwner == "" && ((p == "wecom" && s.cfg.WeCom.DiscoveryOnly) || (p == "dingtalk" && s.cfg.DingTalk.DiscoveryOnly))
-			if s.cfg.selectedIM() == p && !addingFirstOwner {
-				return errors.New("请先停用或切换当前渠道并重启，再更换身份")
+			addingFirstOwner := originalID == id && originalOwner == "" && ((p == "wecom" && s.imConfig().WeCom.DiscoveryOnly) || (p == "dingtalk" && s.imConfig().DingTalk.DiscoveryOnly))
+			if s.imConfig().selectedIM() == p && !addingFirstOwner {
+				return errors.New("请先停用或切换当前渠道，再更换机器人或所有者身份")
 			}
 			impact, err := s.imImpact(ctx, p)
 			if err != nil {
@@ -375,6 +416,13 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 			}
 			e = setIMField(root, p, c)
 		}
+		if e != nil {
+			return errIMWrite
+		}
+		if !req.Apply {
+			break
+		}
+		fallthrough
 	case "select":
 		if p == "dingtalk" {
 			cfg.DingTalk.Enabled = true
@@ -391,8 +439,18 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 		cfg.IM.Provider = p
 		e = setIMField(root, "im", cfg.IM)
 	case "remove":
-		if cfg.selectedIM() == p || s.cfg.selectedIM() == p {
-			return errors.New("请先切换或停用该渠道，重启生效后再删除")
+		if cfg.selectedIM() == p || s.imConfig().selectedIM() == p {
+			if !req.Apply {
+				return errors.New("请先切换或停用该渠道，再删除配置")
+			}
+			// Keep the actual other channel when deleting a legacy next-start selection.
+			cfg.IM.Provider = s.imConfig().selectedIM()
+			if cfg.IM.Provider == p {
+				cfg.IM.Provider = "none"
+			}
+			if e = setIMField(root, "im", cfg.IM); e != nil {
+				return errIMWrite
+			}
 		}
 		// A future add may restore parked work only to its original identity.
 		// Record it under the state root before the config loses the identity.
@@ -422,20 +480,118 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 			return errors.New("不能删除继承自其他 YAML 段的渠道配置，请在服务器处理")
 		}
 	}
-	path, e := filepath.EvalSymlinks(s.cfg.sourcePath)
+	write := func() error {
+		path, e := filepath.EvalSymlinks(s.cfg.sourcePath)
+		if e != nil {
+			return s.imFail("resolve", e, errIMRead)
+		}
+		current, e := os.ReadFile(path)
+		if e != nil {
+			return s.imFail("read", e, errIMRead)
+		}
+		if !bytes.Equal(current, raw) {
+			return ErrConflict
+		}
+		if e = atomicWrite(path, next, 0600); e != nil {
+			return s.imFail("write", e, errIMWrite)
+		}
+		s.rememberIMSecrets(persisted)
+		return nil
+	}
+	if req.Apply {
+		e = s.applyIM(req, &persisted, write)
+	} else {
+		e = write()
+	}
+	if e == nil {
+		s.imAttempt.Store(nil)
+	}
+	return e
+}
+
+// Authenticate before committing the next startup selection. On failure or a
+// crash before that commit the previous selection remains authoritative.
+func (s *Service) applyIM(req imChange, cfg *Config, persist func() error) (err error) {
+	if s.imContext == nil || s.imContext.Err() != nil {
+		return errors.New("渠道服务尚未运行")
+	}
+	live := s.im.Load()
+	if live.cfg.sameActiveIM(cfg) && (cfg.selectedIM() == "none" || live.channel.connected()) {
+		return persist()
+	}
+	candidate := s.imFactory(s, cfg)
+	provider := req.Provider
+	if provider == "none" {
+		provider = s.imConfig().selectedIM()
+	}
+	id := randomID()
+	s.imAttempt.Store(&imAttempt{ID: id, request: req, Provider: provider})
+	defer func() {
+		if err != nil {
+			s.imAttempt.Store(&imAttempt{ID: id, request: req, Provider: provider, Error: err.Error()})
+		}
+	}()
+	// A second subscription for the same bot can evict the original socket.
+	// Drain it before authenticating its replacement. Different platforms can
+	// authenticate independently, keeping the old connection live during probing.
+	stopped := false
+	stopCurrent := func() error {
+		s.mu.Lock()
+		if s.activeCancel != nil || s.imSending {
+			s.mu.Unlock()
+			return errors.New("当前任务或投递正在执行，请稍后重试")
+		}
+		s.imChanging = true
+		s.mu.Unlock()
+		s.stopIMLoop()
+		stopped = true
+		return nil
+	}
+	defer func() {
+		if !stopped {
+			return
+		}
+		if err != nil && s.imContext.Err() == nil {
+			s.startIM(nil)
+		}
+		s.mu.Lock()
+		s.imChanging = false
+		s.mu.Unlock()
+		s.notify()
+	}()
+	if live.cfg.selectedIM() == cfg.selectedIM() {
+		if e := stopCurrent(); e != nil {
+			return e
+		}
+	}
+	ctx, cancel := context.WithTimeout(s.imContext, 12*time.Second)
+	defer cancel()
+	conn, e := candidate.connect(ctx)
 	if e != nil {
-		return s.imFail("resolve", e, errIMRead)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return errors.New("连接平台超时，请检查网络后重试")
+		}
+		return fmt.Errorf("连接失败：%w", e)
 	}
-	current, e := os.ReadFile(path)
-	if e != nil {
-		return s.imFail("read", e, errIMRead)
+	// A staged socket receives no callbacks and dispatches no work until published.
+	defer func() {
+		if err != nil && conn != nil {
+			conn.Close()
+		}
+	}()
+	if !stopped {
+		if e := stopCurrent(); e != nil {
+			return e
+		}
 	}
-	if !bytes.Equal(current, raw) {
-		return ErrConflict
+	if s.imContext.Err() != nil {
+		return errors.New("服务正在退出，配置未应用")
 	}
-	if e = atomicWrite(path, next, 0600); e != nil {
-		return s.imFail("write", e, errIMWrite)
+	if e := persist(); e != nil {
+		return e
 	}
+	s.im.Store(&imRuntime{cfg, candidate})
+	s.startIM(conn)
 	return nil
 }
 
