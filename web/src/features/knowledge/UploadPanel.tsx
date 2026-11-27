@@ -100,7 +100,9 @@ export function UploadPanel({
       const receipt = await transmit(id, rows, controller.signal, setPercent)
       client.setQueryData(["knowledge", "receipt", id], receipt)
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "上传未成功，请核对上传结果。")
+      setMessage(
+        e instanceof Error ? e.message : "上传未成功，请核对上传结果。"
+      )
     } finally {
       flight.current = null
       setPercent(null)

@@ -237,7 +237,9 @@ export function MemoryDocument({
           )
       )}
       <h3>近 30 天使用记录</h3>
-      {!uses.data?.length && <p className="muted">暂无可关联的任务处理记录。</p>}
+      {!uses.data?.length && (
+        <p className="muted">暂无可关联的任务处理记录。</p>
+      )}
       {uses.data?.map((u) => (
         <p key={u.run + u.kind + u.version}>
           <a href={"#runs?run=" + encodeURIComponent(u.run)}>

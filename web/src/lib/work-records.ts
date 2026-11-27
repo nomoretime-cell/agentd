@@ -5,7 +5,8 @@ export const recordViews = {
 } as const
 
 const scopes: Record<string, string> = {
-  local: "本地对话",
+  // localScope in memory.go: API events, timers and their businesses.
+  local: "本地任务",
   unknown: "来源未知",
   maintenance: "记忆整理",
 }

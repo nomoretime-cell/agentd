@@ -93,7 +93,9 @@ test("所有者审批、回执与刷新后直接读回", async ({ page, request 
     await page.getByRole("button", { name: /发送异常/ }).click()
     await page.getByRole("link", { name: /当前待办/ }).click()
     await expect(page).toHaveURL(/#queue\?/)
-    await expect(page.getByRole("heading", { name: "发送异常" })).toBeInViewport()
+    await expect(
+      page.getByRole("heading", { name: "发送异常" })
+    ).toBeInViewport()
     await page.reload()
     await expect(page.getByLabel("统计范围")).toHaveValue("30")
     await expect(
@@ -224,7 +226,10 @@ test("单一服务直接进入工作台，刷新可继续查看", async ({ page,
   }
 })
 
-test("任务处理记录可筛选、深链接、刷新并返回原列表", async ({ page, request }) => {
+test("任务处理记录可筛选、深链接、刷新并返回原列表", async ({
+  page,
+  request,
+}) => {
   const demo = await startInstance()
   try {
     const prompt = "请记录本次交接结果"
@@ -341,8 +346,10 @@ test("会话、历史版本和投递回执可双向追溯", async ({ page, reque
     await page.goto(demo.url + "/#runs?view=conversations&status=done")
     await page.getByRole("link", { name: "清除筛选" }).click()
     await expect(page).toHaveURL(/#runs\?view=conversations$/)
-    await expect(page.getByRole("heading", { name: "按对话查看" })).toBeVisible()
-    await page.getByRole("link", { name: /本地对话/ }).click()
+    await expect(
+      page.getByRole("heading", { name: "按对话查看" })
+    ).toBeVisible()
+    await page.getByRole("link", { name: /本地任务/ }).click()
     await page.getByRole("link", { name: /已记录处理结果/ }).click()
     const run = page.getByRole("dialog", { name: "任务处理详情" })
     await expect(run.getByRole("heading", { name: "处理依据" })).toBeVisible()
@@ -356,7 +363,9 @@ test("会话、历史版本和投递回执可双向追溯", async ({ page, reque
     await expect(msg.getByText(/本地已提交/)).toBeVisible()
     await page.reload()
     await msg.getByRole("link", { name: "查看这条消息的任务处理记录" }).click()
-    await expect(run.getByRole("heading", { name: "本次处理的输入" })).toBeVisible()
+    await expect(
+      run.getByRole("heading", { name: "本次处理的输入" })
+    ).toBeVisible()
     await page.keyboard.press("Escape")
     await page.getByRole("link", { name: "消息发送记录", exact: true }).click()
     await page
@@ -428,9 +437,9 @@ test("对话跨会话、刷新与审批后继续处理", async ({ page, request 
     await expect(thread.getByText(/数字员工正在处理/)).toHaveCount(0)
     const first = page.url()
     await thread.getByRole("link", { name: /^处理依据 #\d+$/ }).click()
-    await expect(page.getByRole("dialog", { name: "任务处理详情" })).toContainText(
-      "蓝鲸计划"
-    )
+    await expect(
+      page.getByRole("dialog", { name: "任务处理详情" })
+    ).toContainText("蓝鲸计划")
     await page.goBack()
     await expect(page).toHaveURL(first)
     await page.getByRole("button", { name: "新建对话" }).click()
@@ -577,7 +586,9 @@ test("发送回执中断后，刷新可恢复且不会重复入队", async ({ pa
     })
     await page.getByLabel("消息内容").fill("只创建一次")
     await page.getByRole("button", { name: "发送", exact: true }).click()
-    await expect(page.getByRole("button", { name: "核对提交结果" })).toBeVisible()
+    await expect(
+      page.getByRole("button", { name: "核对提交结果" })
+    ).toBeVisible()
     await page.reload()
     // The unconfirmed text survives the reload with its key.
     await expect(page.getByLabel("消息内容")).toHaveValue("只创建一次")
@@ -805,9 +816,9 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
     })
     await expect(selectedDraft).toBeFocused()
     await page.goBack()
-    await expect(page.getByRole("button", { name: /待审草稿/ })).toHaveAttribute(
-      "aria-pressed", "true"
-    )
+    await expect(
+      page.getByRole("button", { name: /待审草稿/ })
+    ).toHaveAttribute("aria-pressed", "true")
     await page.goForward()
     await expect(selectedDraft).toBeFocused()
     await page.reload()
@@ -818,7 +829,9 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
     second.once("dialog", (d) => d.accept())
     await second.getByRole("button", { name: "批准发布" }).click()
     await expect(
-      page.getByText("当前待审草稿中没有「memory-consolidation」。")
+      page.getByText(
+        "草稿「memory-consolidation」已不在待审列表中，可能已在其他窗口处理。"
+      )
     ).toBeVisible()
     await expect(model).toBeFocused()
     await page
@@ -868,9 +881,43 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
       .getByRole("link", { name: "查看处理依据", exact: true })
       .first()
       .click()
-    await expect(page.getByRole("dialog", { name: "任务处理详情" })).toBeVisible()
+    await expect(
+      page.getByRole("dialog", { name: "任务处理详情" })
+    ).toBeVisible()
   } finally {
     await context.close()
+    await instance.stop()
+  }
+})
+
+test("从首页打开的草稿在本页处理后，链接不再提示草稿缺失", async ({ page }) => {
+  const instance = await startInstance()
+  try {
+    await page.goto(
+      instance.url +
+        "/#evolution?path=" +
+        encodeURIComponent("skills/memory-consolidation/SKILL.md")
+    )
+    await page.getByRole("button", { name: "起草技能修订" }).click()
+    const body = page.getByLabel("修订正文")
+    await body.fill((await body.inputValue()) + "\n待驳回的修订")
+    await page.getByRole("button", { name: "保存待审草稿" }).click()
+    const linked = page.getByRole("heading", {
+      name: "待审草稿 · memory-consolidation",
+    })
+    await expect(linked).toBeVisible()
+    await page.getByRole("link", { name: "工作概览" }).click()
+    await page.getByRole("button", { name: /待审草稿/ }).click()
+    await page.getByRole("link", { name: /memory-consolidation/ }).click()
+    await expect(page).toHaveURL(/#evolution\?draft=memory-consolidation$/)
+
+    await page.getByLabel("驳回理由").fill("测试驳回")
+    page.once("dialog", (d) => d.accept())
+    await page.getByRole("button", { name: "驳回草稿" }).click()
+    await expect(linked).toHaveCount(0)
+    await expect(page).toHaveURL(/#evolution$/)
+    await expect(page.getByText(/已不在待审列表中/)).toHaveCount(0)
+  } finally {
     await instance.stop()
   }
 })

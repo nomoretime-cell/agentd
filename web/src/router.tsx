@@ -156,6 +156,12 @@ function EvolutionPage() {
     <Evolution
       path={path ?? ""}
       draft={draft}
+      onDraftDecided={() =>
+        void navigate({
+          search: (prev) => ({ ...prev, draft: undefined }),
+          replace: true,
+        })
+      }
       filters={{
         source: source ?? "",
         group: group ?? "",

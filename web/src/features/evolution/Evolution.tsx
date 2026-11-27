@@ -9,6 +9,9 @@ import { MemoryDocument } from "./MemoryDocument"
 import { VersionDiff } from "./VersionDiff"
 import "./evolution.css"
 
+// Group values stay as stored in bookmarked URLs; only their wording changes.
+const groupLabels: Record<string, string> = { 需核对: "待核对" }
+
 const reviewActions = {
   promote: "采用候选版本",
   discard: "丢弃候选版本",
@@ -25,7 +28,15 @@ function Changes({ changes }: { changes: Delta[] }) {
     </details>
   ))
 }
-function Review({ data, draft }: { data: Board; draft?: string }) {
+function Review({
+  data,
+  draft,
+  onDraftDecided,
+}: {
+  data: Board
+  draft?: string
+  onDraftDecided: () => void
+}) {
   // Follow the link once. A later poll may remove the draft while the owner is editing elsewhere.
   useEffect(() => {
     if (draft) document.getElementById("linked-draft")?.focus()
@@ -52,12 +63,18 @@ function Review({ data, draft }: { data: Board; draft?: string }) {
           req.decision === "approve"
             ? entryLink("skills/" + req.name + "/SKILL.md")
             : "#evolution"
+      // The linked draft is settled here; keep the link from reporting it missing.
+      else if (req.name && req.name === draft) onDraftDecided()
     },
     onSettled: () => {
       void client.invalidateQueries({ queryKey: ["evolution"] })
     },
   })
-  function decide(name: string, decision: keyof typeof reviewActions, token: string) {
+  function decide(
+    name: string,
+    decision: keyof typeof reviewActions,
+    token: string
+  ) {
     if (window.confirm("确认" + reviewActions[decision] + "？"))
       action.mutate({ name, decision, token, reason: reason[name] || "" })
   }
@@ -106,7 +123,7 @@ function Review({ data, draft }: { data: Board; draft?: string }) {
       </div>
       {draft && !data.drafts.some((d) => d.name === draft) && (
         <p role="status" tabIndex={-1} id="linked-draft">
-          当前待审草稿中没有「{draft}」。
+          草稿「{draft}」已不在待审列表中，可能已在其他窗口处理。
         </p>
       )}
       {data.drafts.map((d) => (
@@ -265,11 +282,13 @@ export function Evolution({
   draft,
   filters,
   onFilter,
+  onDraftDecided,
 }: {
   path: string
   draft?: string
   filters: EvolutionFilters
   onFilter: (next: Partial<EvolutionFilters>) => void
+  onDraftDecided: () => void
 }) {
   const q = useQuery({
     queryKey: ["evolution", "board"],
@@ -389,7 +408,7 @@ export function Evolution({
       </section>
       {path && <MemoryDocument key={path} path={path} edits={data.edits} />}
       <Dreaming data={data} />
-      <Review data={data} draft={draft} />
+      <Review data={data} draft={draft} onDraftDecided={onDraftDecided} />
       <section className="panel">
         <h2>变化记录</h2>
         <label>
@@ -412,7 +431,7 @@ export function Evolution({
               aria-pressed={g === group}
               onClick={() => onFilter({ group: g === "全部" ? "" : g })}
             >
-              {g === "需核对" ? "待核对" : g} ·{" "}
+              {groupLabels[g] ?? g} ·{" "}
               {history.filter((r) => g === "全部" || r.group === g).length}
             </Button>
           ))}

@@ -343,7 +343,7 @@ function ActivityDetails({
                   ? confirmationSource(it.status)
                   : metric === "tokens"
                     ? it.status
-                    : deliveryStatus[it.status || "committed"] ?? it.status}
+                    : (deliveryStatus[it.status || "committed"] ?? it.status)}
               </small>
               {metric === "tokens" ? (
                 <p>

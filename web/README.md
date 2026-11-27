@@ -58,6 +58,7 @@ W1 提供服务和 IM 状态、四类待办、冻结参数审批与回执。动�
 ./scripts/bootstrap-web
 ./scripts/pnpm --dir web typecheck
 ./scripts/pnpm --dir web lint
+./scripts/pnpm --dir web exec prettier --check src tests
 make release
 ./scripts/pnpm --dir web exec playwright install chromium
 ./scripts/pnpm --dir web test:e2e

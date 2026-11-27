@@ -116,7 +116,8 @@ export function ConversationList({ filter }: { filter: string }) {
         <div>
           <h2>{recordViews.conversations}</h2>
           <p className="muted">
-            {day && day.from + " 至 " + day.to + " · "}按对话汇总已读取的任务处理记录
+            {day && day.from + " 至 " + day.to + " · "}
+            按对话汇总已读取的任务处理记录
           </p>
         </div>
       </div>
@@ -146,9 +147,7 @@ export function ConversationList({ filter }: { filter: string }) {
               })}
             >
               <span className="history-copy">
-                <strong>
-                  {conversationLabel(row.conversation)}
-                </strong>
+                <strong>{conversationLabel(row.conversation)}</strong>
                 <small>
                   {row.role || "角色未记录"} ·{" "}
                   {row.principal || "服务对象未记录"} ·{" "}
@@ -213,7 +212,9 @@ export function DeliveryList() {
                     {kinds[m.kind] ?? m.kind} · {m.target}
                   </small>
                 </span>
-                <span className="pill">{deliveryStatus[m.status] || m.status}</span>
+                <span className="pill">
+                  {deliveryStatus[m.status] || m.status}
+                </span>
               </a>
             </li>
           ))}

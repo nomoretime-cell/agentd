@@ -220,7 +220,11 @@ export async function startInstance(webOrigin, dreaming = false, localZone) {
     })
     if (!message.ok) throw new Error("无法建立本地运行示例")
     return {
-      url, tokenPath, token, executions: () => executions, stop,
+      url,
+      tokenPath,
+      token,
+      executions: () => executions,
+      stop,
       holdChatRepliesUntil(ready) {
         chatRepliesReady = ready
       },
