@@ -52,6 +52,10 @@ func (s *Service) Handler() http.Handler {
 	s.registerWebChats(workbench)
 	s.registerKnowledgeUploads(workbench)
 	s.registerMemoryWorkbench(workbench)
+	// Restarting interrupts the running task; the page confirms the impact first.
+	workbench.HandleFunc("POST /v1/restart", func(w http.ResponseWriter, r *http.Request) {
+		respond(w, map[string]bool{"restarting": true}, s.requestRestart())
+	})
 	mux.Handle("/", workbench)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Second)

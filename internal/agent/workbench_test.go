@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"errors"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -100,5 +103,63 @@ func TestDirectWorkbenchAccess(t *testing.T) {
 		if rec.Code != tc.want {
 			t.Errorf("proxy credentials %s %s workbench=%v: got %d want %d", tc.method, tc.path, tc.workbench, rec.Code, tc.want)
 		}
+	}
+}
+
+// A workbench restart is signalled to the process owner only from a trusted
+// origin and only while the config file still loads, so a restart cannot leave
+// the owner without a running service.
+func TestWorkbenchRestartChecksConfig(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "private.yaml")
+	if err := os.WriteFile(path, []byte("timezone: Asia/Shanghai\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := openTest(t, cfg, nil)
+	handler := s.Handler()
+	post := func(origin string) int {
+		req := httptest.NewRequest("POST", "/v1/restart", nil)
+		req.Host = cfg.Listen
+		req.Header.Set("Origin", origin)
+		req.Header.Set("X-Agentd-Workbench", "1")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	requested := func() bool {
+		select {
+		case <-s.Restarts():
+			return true
+		default:
+			return false
+		}
+	}
+	if code := post("http://192.0.2.11"); code != 403 || requested() {
+		t.Fatalf("untrusted origin: got %d", code)
+	}
+	if err := os.WriteFile(path, []byte("timezone: [unclosed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code := post("http://" + cfg.Listen); code != 400 || requested() {
+		t.Fatalf("broken config: got %d", code)
+	}
+	if err := os.WriteFile(path, []byte("timezone: UTC\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code := post("http://" + cfg.Listen); code != 200 || !requested() {
+		t.Fatalf("valid config: got %d", code)
+	}
+	post("http://" + cfg.Listen)
+	post("http://" + cfg.Listen)
+	if !requested() || requested() {
+		t.Fatal("repeated requests must coalesce into one pending restart")
+	}
+	plain := openTest(t, testConfig(), nil)
+	if e := plain.requestRestart(); !errors.Is(e, errRestartFile) || requested() {
+		t.Fatalf("instance without a config file: %v", e)
 	}
 }

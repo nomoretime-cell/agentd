@@ -46,7 +46,7 @@
 
 | 层 | 文件 | 职责 |
 | --- | --- | --- |
-| 入口 | `cmd/agentd/main.go` | 读配置、`Open`、启动 HTTP 和后台循环、优雅退出 |
+| 入口 | `cmd/agentd/main.go` | 读配置、`Open`、启动 HTTP 和后台循环、优雅退出；收到所有者的重启请求（`Service.Restarts`）后正常关闭并原地重新执行同一命令 |
 | 核心：五原语 | `inbox.go` | 事件写入（去重键）、按顺序 claim、执行、提交或退回重试、死信 |
 | | `timers.go` | cron / 一次性定时器，到点把 prompt 写成 Inbox 事件 |
 | | `memory.go` | 系统提示组装（稳定前缀）、`MEMORY.md` 上限、运行记录 `data/sessions/`、工作区读写 |

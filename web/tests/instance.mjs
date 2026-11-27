@@ -100,6 +100,11 @@ export async function startInstance(webOrigin, dreaming = false, localZone) {
       res.end("{}")
     }
   })
+  // Restarted demo instances connect configured IM platforms. Keep every
+  // platform handshake on loopback, including WebSocket CONNECT requests.
+  stub.on("connect", (_req, socket) => {
+    socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
+  })
   const stubURL = await listen(stub)
   const reservation = createServer()
   const url = await listen(reservation)
@@ -139,7 +144,12 @@ export async function startInstance(webOrigin, dreaming = false, localZone) {
     ["-root", root, "-config", cfg],
     {
       stdio: ["ignore", "ignore", "pipe"],
-      env: localZone ? { ...process.env, TZ: localZone } : process.env,
+      env: {
+        ...process.env,
+        HTTPS_PROXY: stubURL,
+        NO_PROXY: "localhost,127.0.0.1,::1",
+        ...(localZone && { TZ: localZone }),
+      },
     }
   )
   // Keep the tail of the server log for startup failures.

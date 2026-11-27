@@ -18,10 +18,29 @@ import (
 )
 
 func main() {
-	if e := run(); e != nil {
+	restart, e := run()
+	if restart {
+		if e != nil {
+			slog.Warn("shutdown before restart was incomplete", "error", e)
+		}
+		e = reexec()
+	}
+	if e != nil {
 		slog.Error("agentd stopped", "error", e)
 		os.Exit(1)
 	}
+}
+
+// reexec replaces this process with the same command after run has released
+// the listener, the state lock and the database. The PID stays, so a terminal,
+// systemd or a container keeps supervising it; other descriptors are
+// close-on-exec.
+func reexec() error {
+	exe, e := os.Executable()
+	if e != nil {
+		return e
+	}
+	return syscall.Exec(exe, os.Args, os.Environ())
 }
 
 // checkLegacyLayout stops a default start next to state from before .agentd/
@@ -39,27 +58,28 @@ func checkLegacyLayout(explicitRoot bool) error {
 	return errors.New("found state from an older layout in ./data but no ./.agentd; move it with `mkdir .agentd && mv data workspace .agentd/`, or keep the old layout with -root .")
 }
 
-func run() error {
+// run serves until a signal or an owner restart request; restart reports the latter.
+func run() (bool, error) {
 	config := flag.String("config", "config.yaml", "YAML configuration file")
 	root := flag.String("root", ".agentd", "state root directory holding data/ and workspace/")
 	flag.Parse()
 	explicit := false
 	flag.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "root" })
 	if e := checkLegacyLayout(explicit); e != nil {
-		return e
+		return false, e
 	}
 	cfg, e := agent.LoadConfig(*config)
 	if e != nil {
-		return e
+		return false, e
 	}
 	s, e := agent.Open(*root, cfg, nil)
 	if e != nil {
-		return e
+		return false, e
 	}
 	defer s.Close()
 	listener, e := net.Listen("tcp", cfg.Listen)
 	if e != nil {
-		return e
+		return false, e
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -69,15 +89,19 @@ func run() error {
 	s.Start(ctx)
 	abs, _ := filepath.Abs(*root)
 	slog.Info("agentd ready", "listen", listener.Addr().String(), "token_file", filepath.Join(abs, "data/api-token"), "database", filepath.Join(abs, "data/state.db"))
+	restart := false
 	select {
 	case <-ctx.Done():
+	case <-s.Restarts():
+		slog.Info("agentd restarting at the owner's request")
+		restart = true
 	case e = <-errorsCh:
 		if e != http.ErrServerClosed {
 			cancel()
-			return fmt.Errorf("HTTP server: %w", e)
+			return false, fmt.Errorf("HTTP server: %w", e)
 		}
 	}
 	shutdown, c := context.WithTimeout(context.Background(), 10*time.Second)
 	defer c()
-	return server.Shutdown(shutdown)
+	return restart, server.Shutdown(shutdown)
 }

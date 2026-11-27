@@ -775,6 +775,42 @@ test("IM 管理可添加、轮换、选择、撤回选择及删除配置", async
   }
 })
 
+test("IM 新配置可在网页重启 agentd 后生效", async ({ page }) => {
+  const instance = await startInstance()
+  try {
+    await page.goto(instance.url + "/#im")
+    const wx = page.getByRole("region", { name: "企业微信" })
+    await wx.getByRole("button", { name: "添加配置" }).click()
+    await wx.getByLabel("Bot ID").fill("test-robot-1234")
+    await wx.getByLabel("应用密钥").fill("test-only-secret")
+    await wx.getByLabel("所有者 ID").fill("test-owner-1234")
+    await wx.getByRole("button", { name: "保存配置" }).click()
+    await wx.getByRole("button", { name: "下次启动使用" }).click()
+    await wx.getByRole("button", { name: "确认更改" }).click()
+    await expect(page.getByText("待重启生效", { exact: true })).toBeVisible()
+
+    const panel = page.getByRole("region", { name: "重启 agentd" })
+    await panel.getByRole("button", { name: "重启 agentd 使配置生效" }).click()
+    await expect(panel).toContainText("正在执行的任务会中止")
+    await panel.getByRole("button", { name: "取消" }).click()
+    await expect(panel).not.toContainText("正在执行的任务会中止")
+    await panel.getByRole("button", { name: "重启 agentd 使配置生效" }).click()
+    await panel.getByRole("button", { name: "确认重启" }).click()
+
+    await expect(page.getByText("agentd 已重启，正在使用新配置。")).toBeVisible(
+      { timeout: 30000 }
+    )
+    const state = page.getByRole("region", { name: "渠道运行状态" })
+    await expect(state.getByText("企业微信", { exact: true })).toHaveCount(2)
+    await expect(page.getByText("待重启生效", { exact: true })).toHaveCount(0)
+    // The restarted process serves the same page; a reload needs no login.
+    await page.reload()
+    await expect(state.getByText("企业微信", { exact: true })).toHaveCount(2)
+  } finally {
+    await instance.stop()
+  }
+})
+
 test("IM 删除确认打开期间，未结工作数量随刷新更新", async ({ page }) => {
   const instance = await startInstance()
   try {

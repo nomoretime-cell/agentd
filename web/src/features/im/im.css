@@ -77,3 +77,10 @@
 .im-card [role="alert"] {
   color: var(--destructive);
 }
+.im-restart {
+  display: grid;
+  gap: 0.75rem;
+}
+.im-restart p {
+  margin: 0;
+}

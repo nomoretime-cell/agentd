@@ -55,10 +55,12 @@ function errorMessage(body: unknown) {
 }
 
 export default function IMChannels() {
+  // When the owner restarted agentd; polling speeds up until it is back.
+  const [restartAt, setRestartAt] = useState<number>()
   const query = useQuery({
     queryKey: ["im-channels"],
     queryFn: ({ signal }) => request("im", settings, { signal }),
-    refetchInterval: 10000,
+    refetchInterval: restartAt ? 1000 : 10000,
   })
   const [action, setAction] = useState<Action>()
   const [busy, setBusy] = useState(false)
@@ -73,6 +75,7 @@ export default function IMChannels() {
     if (!data) return
     setNotice("")
     setError("")
+    setRestartAt(undefined)
     setAction({ type, slot, target, revision: data.revision })
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -125,6 +128,15 @@ export default function IMChannels() {
       setBusy(false)
     }
   }
+  // Running config matches the file only once the new process answers.
+  const restarted =
+    restartAt !== undefined &&
+    query.dataUpdatedAt > restartAt &&
+    data?.restart === false
+  const restarting = restartAt !== undefined && !restarted
+  const stalled =
+    restarting &&
+    Math.max(query.dataUpdatedAt, query.errorUpdatedAt) - restartAt > 60000
   if (!data)
     return query.error ? (
       <p role="alert">
@@ -158,13 +170,28 @@ export default function IMChannels() {
           {data.restart && <span className="pill">待重启生效</span>}
         </div>
       </section>
-      {data.restart && (
-        <p role="status">在服务器上重启 agentd 后，新配置生效。</p>
+      {restarting ? (
+        <p role={stalled ? "alert" : "status"}>
+          {stalled
+            ? "60 秒内未能确认重启完成，请在服务器检查 agentd 是否运行及其日志。"
+            : "正在重启 agentd，完成后自动刷新…"}
+        </p>
+      ) : (
+        data.restart && (
+          <Restart
+            disabled={busy}
+            onRestarting={() => {
+              setNotice("")
+              setRestartAt(Date.now())
+            }}
+          />
+        )
       )}
+      {restarted && <p role="status">agentd 已重启，正在使用新配置。</p>}
       {!data.writable && (
         <p>当前使用示例或临时配置。请使用私有配置文件启动 agentd 后编辑。</p>
       )}
-      {query.error ? (
+      {query.error && !restarting ? (
         <p role="alert">{query.error.message}</p>
       ) : (
         notice && <p role="status">{notice}</p>
@@ -293,6 +320,77 @@ export default function IMChannels() {
         </section>
       ))}
     </div>
+  )
+}
+
+// Restart re-executes agentd in place, so the saved file takes effect without
+// a server login. The impact is stated once before the interruption.
+function Restart({
+  disabled,
+  onRestarting,
+}: {
+  disabled: boolean
+  onRestarting: () => void
+}) {
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  async function restart() {
+    setBusy(true)
+    setError("")
+    try {
+      await request(
+        "restart",
+        z.object({ restarting: z.literal(true) }),
+        { method: "POST" },
+        errorMessage
+      )
+      onRestarting()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "未能重启，请核对最新状态。")
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="panel im-restart" aria-label="重启 agentd">
+      <p>新配置已保存，重启 agentd 后生效。</p>
+      {confirming && (
+        <p>
+          重启约需几秒，期间网页和 IM
+          暂时无法使用。正在执行的任务会中止，重启后重新执行；待发送的消息和待审批的动作都会保留。
+        </p>
+      )}
+      {error && <p role="alert">{error}</p>}
+      <div className="im-controls">
+        {confirming ? (
+          <>
+            <button
+              className="outline-btn"
+              disabled={disabled || busy}
+              onClick={() => void restart()}
+            >
+              {busy ? "正在请求重启…" : "确认重启"}
+            </button>
+            <button
+              className="outline-btn"
+              disabled={busy}
+              onClick={() => setConfirming(false)}
+            >
+              取消
+            </button>
+          </>
+        ) : (
+          <button
+            className="outline-btn"
+            disabled={disabled}
+            onClick={() => setConfirming(true)}
+          >
+            重启 agentd 使配置生效
+          </button>
+        )}
+      </div>
+    </section>
   )
 }
 

@@ -37,6 +37,7 @@ type Service struct {
 	activeCancel  context.CancelFunc
 	activeAborted bool
 	wake          chan struct{}
+	restart       chan struct{} // owner restart requests, read by cmd/agentd
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
 	imConfigMu    sync.Mutex
@@ -95,7 +96,7 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 		lock.Close()
 		return nil, errors.New("another agentd instance owns this data directory")
 	}
-	s = &Service{cfg: cfg, root: root, lock: lock, model: model, wake: make(chan struct{}, 1), log: slog.Default(), client: &http.Client{Timeout: time.Duration(cfg.Limits.ToolSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	s = &Service{cfg: cfg, root: root, lock: lock, model: model, wake: make(chan struct{}, 1), restart: make(chan struct{}, 1), log: slog.Default(), client: &http.Client{Timeout: time.Duration(cfg.Limits.ToolSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	defer func(opened *Service) {
 		if err != nil {
 			opened.Close()
@@ -236,6 +237,32 @@ func (s *Service) Close() error {
 	return e
 }
 func (s *Service) Token() string { return s.token }
+
+// Restarts receives a value when the owner asks the process to restart so
+// that it loads the config file again. The caller owns the process: it shuts
+// down and starts the same command anew.
+func (s *Service) Restarts() <-chan struct{} { return s.restart }
+
+var errRestartFile = errors.New("当前实例未从配置文件启动，无法重启加载配置")
+var errRestartConfig = errors.New("配置文件无法加载，重启后服务将无法启动；请在服务器检查配置文件")
+
+// requestRestart asks for a restart only when the config file still loads,
+// so a broken file cannot turn a restart into an outage.
+func (s *Service) requestRestart() error {
+	if s.cfg.sourcePath == "" {
+		return errRestartFile
+	}
+	if _, e := LoadConfig(s.cfg.sourcePath); e != nil {
+		// Decode errors can quote values, including secrets; log a fixed cause.
+		s.logErr("restart", errors.New("config file does not decode or validate; start agentd with it to see the cause"))
+		return errRestartConfig
+	}
+	select {
+	case s.restart <- struct{}{}:
+	default: // a restart is already pending
+	}
+	return nil
+}
 func (s *Service) notify() {
 	select {
 	case s.wake <- struct{}{}:
