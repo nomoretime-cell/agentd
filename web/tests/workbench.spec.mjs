@@ -157,12 +157,115 @@ test("保存的主题在首屏前生效，CSP 只放行页面自带的脚本", a
       if (/Content Security Policy/i.test(m.text())) blocked.push(m.text())
     })
     await page.goto(demo.url)
-    await page.evaluate(() => localStorage.setItem("agentd-theme", "light"))
-    // Without the app bundle only the inline script can apply the theme.
+    const html = page.locator("html")
+    const trigger = page.getByRole("button", { name: "切换主题" })
+    const choice = (name) =>
+      page.getByRole("menuitemradio", { name, exact: true })
+    await trigger.click()
+    await expect(choice("深色")).toBeChecked()
+    const darkBackground = await page
+      .locator("body")
+      .evaluate((el) => getComputedStyle(el).backgroundColor)
+    await expect(page.getByRole("menuitemradio")).toHaveCount(5)
+    await choice("浅色").click()
+    const lightBackground = await page
+      .locator("body")
+      .evaluate((el) => getComputedStyle(el).backgroundColor)
+    await trigger.click()
+    for (const [name, theme, scheme] of [
+      ["赛博朋克（深色）", "cyberpunk", "dark"],
+      ["赛博朋克（浅色）", "cyberpunk-light", "light"],
+    ]) {
+      await choice(name).click()
+      await expect(page.locator("body")).not.toHaveCSS(
+        "background-color",
+        scheme === "light" ? lightBackground : darkBackground
+      )
+      const refresh = page.getByRole("button", { name: "刷新", exact: true })
+      await expect(refresh).toHaveCSS(
+        "background-color",
+        /oklch\(0\.6726 0\.2904 341\./
+      )
+      await expect(refresh).toHaveCSS("color", /oklch\(0\.1649 0\.0352 281\./)
+      // Without the app bundle only the inline script can apply the theme.
+      await page.route("**/assets/*.js", (route) => route.abort())
+      await page.reload()
+      await expect(html).toHaveAttribute("data-theme", theme)
+      await expect(html).toHaveCSS("color-scheme", scheme)
+      await page.unroute("**/assets/*.js")
+      await page.reload()
+      await trigger.click()
+      await expect(choice(name)).toBeChecked()
+    }
+    for (const retired of ["aurora", "tech-blue"]) {
+      await page.evaluate(
+        (id) => localStorage.setItem("agentd-theme", id),
+        retired
+      )
+      await page.reload()
+      await trigger.click()
+      await expect(choice("深色")).toBeChecked()
+      await expect(page.locator("body")).toHaveCSS(
+        "background-color",
+        darkBackground
+      )
+    }
+    await choice("跟随系统").click()
+    await page.emulateMedia({ colorScheme: "dark" })
+    await expect(page.locator("body")).toHaveCSS(
+      "background-color",
+      darkBackground
+    )
+    await page.emulateMedia({ colorScheme: "light" })
+    await expect(html).toHaveCSS("color-scheme", "light")
+    await trigger.click()
+    await choice("浅色").click()
+    await page.emulateMedia({ colorScheme: "dark" })
     await page.route("**/assets/*.js", (route) => route.abort())
     await page.reload()
-    await expect(page.locator("html")).not.toHaveClass(/dark/)
+    await expect(html).toHaveCSS("color-scheme", "light")
     expect(blocked).toEqual([])
+  } finally {
+    await demo.stop()
+  }
+})
+
+test("浅色主题的状态错误提示有足够的文字对比度", async ({ page }) => {
+  const demo = await startInstance()
+  try {
+    await page.route("**/v1/status", (route) =>
+      route.fulfill({ status: 503, json: { error: "状态暂时不可用" } })
+    )
+    await page.goto(demo.url)
+    const alert = page.getByRole("alert").filter({ hasText: "状态暂时不可用" })
+    for (const name of ["浅色", "赛博朋克（浅色）"]) {
+      await page.getByRole("button", { name: "切换主题" }).click()
+      await page.getByRole("menuitemradio", { name, exact: true }).click()
+      await expect(alert).toBeVisible()
+      const contrast = await alert.evaluate((el) => {
+        const ctx = document
+          .createElement("canvas")
+          .getContext("2d", { willReadFrequently: true })
+        // Rasterize CSS colors (including OKLCH and color-mix) to sRGB.
+        function luminance(color) {
+          ctx.fillStyle = color
+          ctx.fillRect(0, 0, 1, 1)
+          const [r, g, b] = Array.from(
+            ctx.getImageData(0, 0, 1, 1).data,
+            (byte) => {
+              const s = byte / 255
+              return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+            }
+          )
+          return 0.2126 * r + 0.7152 * g + 0.0722 * b
+        }
+        const style = getComputedStyle(el)
+        const fg = luminance(style.color)
+        const bg = luminance(style.backgroundColor)
+        return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05)
+      })
+      expect(contrast, name).toBeGreaterThanOrEqual(4.5)
+    }
   } finally {
     await demo.stop()
   }

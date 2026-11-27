@@ -9,7 +9,8 @@
     <script>
       try {
         var theme = localStorage.getItem("agentd-theme")
-        if (theme === "light" || (theme === "system" && !matchMedia("(prefers-color-scheme: dark)").matches))
+        if (theme) document.documentElement.dataset.theme = theme
+        if (theme === "light" || theme === "cyberpunk-light" || (theme === "system" && !matchMedia("(prefers-color-scheme: dark)").matches))
           document.documentElement.classList.remove("dark")
       } catch (e) {}
     </script>

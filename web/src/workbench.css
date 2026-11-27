@@ -47,6 +47,9 @@ pre {
   font-family: ui-monospace, monospace;
   overflow-wrap: anywhere;
 }
+:is([data-theme="cyberpunk"], [data-theme="cyberpunk-light"]) :is(code, pre) {
+  font-family: var(--font-mono);
+}
 .workspace {
   min-height: 100svh;
   display: grid;
@@ -107,12 +110,12 @@ small,
   font-size: 0.89rem;
   border-radius: 8px;
 }
-.sidebar nav a:hover {
-  background: var(--sidebar-accent);
-}
+.sidebar nav a:hover,
 .sidebar nav a[aria-current="page"] {
   background: var(--sidebar-accent);
-  color: var(--sidebar-foreground);
+  color: var(--sidebar-accent-foreground);
+}
+.sidebar nav a[aria-current="page"] {
   font-weight: 650;
 }
 .nav-label {
@@ -158,6 +161,7 @@ small,
 .theme-trigger:hover,
 .theme-trigger[data-state="open"] {
   background: var(--accent);
+  color: var(--accent-foreground);
 }
 .theme-menu {
   min-width: 124px;
@@ -180,6 +184,7 @@ small,
 }
 .theme-choice[data-highlighted] {
   background: var(--accent);
+  color: var(--accent-foreground);
   outline: none;
 }
 .content {
@@ -271,7 +276,7 @@ small,
 .counter,
 .pill {
   font-size: 0.73rem;
-  color: var(--brand);
+  color: var(--brand-ink, var(--brand));
   background: var(--tint);
   padding: 3px 8px;
   border-radius: 5px;

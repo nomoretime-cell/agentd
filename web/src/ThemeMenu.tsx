@@ -2,14 +2,24 @@ import { useLayoutEffect, useState } from "react"
 import { Check, Moon, Sun } from "lucide-react"
 import { DropdownMenu } from "radix-ui"
 
-const themes = { dark: "深色", light: "浅色", system: "跟随系统" } as const
+const themes = {
+  dark: "深色",
+  light: "浅色",
+  cyberpunk: "赛博朋克（深色）",
+  "cyberpunk-light": "赛博朋克（浅色）",
+  system: "跟随系统",
+} as const
 type Theme = keyof typeof themes
 const storageKey = "agentd-theme"
+
+function isTheme(value: string | null): value is Theme {
+  return value !== null && Object.hasOwn(themes, value)
+}
 
 function readTheme(): Theme {
   try {
     const saved = localStorage.getItem(storageKey)
-    if (saved === "light" || saved === "system") return saved
+    if (isTheme(saved)) return saved
   } catch {
     // The preference still works for this page when storage is unavailable.
   }
@@ -20,11 +30,15 @@ export function ThemeMenu() {
   const [theme, setTheme] = useState<Theme>(readTheme)
   useLayoutEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)")
-    const apply = () =>
-      document.documentElement.classList.toggle(
-        "dark",
-        theme === "dark" || (theme === "system" && media.matches)
-      )
+    const classes = document.documentElement.classList
+    document.documentElement.dataset.theme = theme
+    const apply = () => {
+      const light =
+        theme === "light" ||
+        theme === "cyberpunk-light" ||
+        (theme === "system" && !media.matches)
+      classes.toggle("dark", !light)
+    }
     apply()
     if (theme !== "system") return
     media.addEventListener("change", apply)
@@ -47,8 +61,7 @@ export function ThemeMenu() {
           <DropdownMenu.RadioGroup
             value={theme}
             onValueChange={(next) => {
-              if (next !== "light" && next !== "dark" && next !== "system")
-                return
+              if (!isTheme(next)) return
               setTheme(next)
               try {
                 localStorage.setItem(storageKey, next)
