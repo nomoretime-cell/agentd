@@ -18,6 +18,7 @@ export async function startInstance(webOrigin, dreaming = false, localZone) {
   await mkdir(cache, { recursive: true })
   const root = await mkdtemp(join(cache, "web-preview-"))
   const tokenPath = join(root, "data/api-token")
+  let chatRepliesReady = Promise.resolve()
   let executions = 0
   const stub = createServer(async (req, res) => {
     res.setHeader("content-type", "application/json")
@@ -35,6 +36,7 @@ export async function startInstance(webOrigin, dreaming = false, localZone) {
           .at(-1)
           .content.trim()
           .replace(/^Event \d+ \(message\): /, "")
+        await chatRepliesReady
         if (current.includes("Host receipt:"))
           message.content = "工单处理已结束，请查看审批回执。"
         else if (current.includes("创建工单")) {
@@ -217,7 +219,12 @@ export async function startInstance(webOrigin, dreaming = false, localZone) {
       }),
     })
     if (!message.ok) throw new Error("无法建立本地运行示例")
-    return { url, tokenPath, token, executions: () => executions, stop }
+    return {
+      url, tokenPath, token, executions: () => executions, stop,
+      holdChatRepliesUntil(ready) {
+        chatRepliesReady = ready
+      },
+    }
   } catch (error) {
     await stop()
     throw error

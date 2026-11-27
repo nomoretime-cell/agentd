@@ -5,7 +5,14 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query"
-import { ArrowUp, MessageSquare, MessagesSquare, Plus } from "lucide-react"
+import {
+  ArrowUp,
+  Clock,
+  LoaderCircle,
+  MessageSquare,
+  MessagesSquare,
+  Plus,
+} from "lucide-react"
 import { z } from "zod"
 import { requestKey, pendingKey } from "@/lib/request-key"
 import { request } from "@/api"
@@ -33,8 +40,8 @@ const events = z.object({
 })
 const receipt = z.object({ id: z.number() })
 const stateNames: Record<string, string> = {
-  pending: "已排队",
-  running: "处理中",
+  pending: "消息已排队",
+  running: "数字员工正在处理…",
   dead: "处理失败",
   done: "已完成",
 }
@@ -112,7 +119,6 @@ export function OwnerChat({ id, paused }: { id: string; paused: boolean }) {
       {id ? (
         <Thread
           key={id}
-
           id={id}
           title={selected?.title || "新对话"}
           paused={paused}
@@ -298,13 +304,27 @@ function Thread({
                 <p>{e.text}</p>
               </div>
             )}
-            <div className="chat-meta">
+            <div className="chat-meta" data-state={e.state}>
+              {e.state === "running" && (
+                <LoaderCircle className="spin" size={15} aria-hidden="true" />
+              )}
+              {e.state === "pending" && <Clock size={15} aria-hidden="true" />}
               {e.kind === "approval" ? "审批后继续处理 · " : ""}
               {e.state === "done" && e.action_status === "pending_approval"
                 ? "等待审批决定"
                 : stateNames[e.state] || e.state}
-              {e.state === "pending" && e.retries > 0 ? " · 等待重试" : ""} · #
-              {e.id}
+              {e.state === "pending" && e.retries > 0 ? " · 等待重试" : ""}
+              {" · "}
+              {e.run ? (
+                <a
+                  className="history-link"
+                  href={"#runs?" + new URLSearchParams({ run: e.run })}
+                >
+                  处理依据 #{e.id}
+                </a>
+              ) : (
+                "#" + e.id
+              )}
               {e.action && (
                 <>
                   {" "}
@@ -325,14 +345,6 @@ function Thread({
               </div>
             )}
             {e.error && <p className="history-note">{e.error}</p>}
-            {e.run && (
-              <a
-                className="history-link"
-                href={"#runs?" + new URLSearchParams({ run: e.run })}
-              >
-                查看处理依据
-              </a>
-            )}
           </article>
         ))}
       </div>

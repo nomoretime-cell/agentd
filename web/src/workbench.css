@@ -959,6 +959,17 @@ small,
   color: var(--muted-ink);
   font-size: 0.75rem;
 }
+.chat-meta[data-state="pending"],
+.chat-meta[data-state="running"] {
+  align-self: flex-start;
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+.chat-meta svg {
+  display: inline-block;
+  vertical-align: -0.15em;
+  margin-right: 0.35em;
+}
 .chat-compose {
   padding: 12px 16px;
   border-top: 1px solid var(--line);

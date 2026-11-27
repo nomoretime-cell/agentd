@@ -381,6 +381,8 @@ test("会话、历史版本和投递回执可双向追溯", async ({ page, reque
 
 test("对话跨会话、刷新与审批后继续处理", async ({ page, request }) => {
   const instance = await startInstance()
+  const reply = Promise.withResolvers()
+  instance.holdChatRepliesUntil(reply.promise)
   try {
     const { url, token } = instance
     expect((await request.get(url + "/v1/chats")).status()).toBe(401)
@@ -405,11 +407,32 @@ test("对话跨会话、刷新与审批后继续处理", async ({ page, request 
     }
     const thread = page.getByRole("region", { name: "对话内容" })
     await page.getByRole("button", { name: "新建对话" }).click()
+    async function control(command) {
+      const res = await request.post(url + "/v1/control", {
+        headers: { Authorization: "Bearer " + token },
+        data: { command },
+      })
+      expect(res.ok()).toBe(true)
+    }
+    await control("pause")
     await send("蓝鲸计划")
+    await expect(thread.getByText(/消息已排队/)).toBeVisible()
+    await page.reload()
+    await expect(thread.getByText(/消息已排队/)).toBeVisible()
+    await control("resume")
+    await expect(thread.getByText(/数字员工正在处理/)).toBeVisible()
+    reply.resolve()
     await expect(
       thread.getByText("收到，蓝鲸计划", { exact: true })
     ).toBeVisible({ timeout: 10000 })
+    await expect(thread.getByText(/数字员工正在处理/)).toHaveCount(0)
     const first = page.url()
+    await thread.getByRole("link", { name: /^处理依据 #\d+$/ }).click()
+    await expect(page.getByRole("dialog", { name: "任务处理详情" })).toContainText(
+      "蓝鲸计划"
+    )
+    await page.goBack()
+    await expect(page).toHaveURL(first)
     await page.getByRole("button", { name: "新建对话" }).click()
     await expect(page).not.toHaveURL(first)
     await send("金鱼计划")
@@ -446,6 +469,7 @@ test("对话跨会话、刷新与审批后继续处理", async ({ page, request 
       )
     ).toBe(true)
   } finally {
+    reply.resolve()
     await instance.stop()
   }
 })
