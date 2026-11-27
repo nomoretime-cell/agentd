@@ -42,6 +42,20 @@ test("所有者审批、回执与刷新后直接读回", async ({ page, request 
       page.getByRole("navigation", { name: "当前位置" })
     ).toContainText("运行状态")
     await expect(page.getByText("当前模型", { exact: true })).toBeVisible()
+    const { git_commit: commit, git_modified: modified } = await (
+      await request.get(url + "/v1/status", { headers: webHeaders })
+    ).json()
+    if (commit) {
+      const version = page.getByLabel("查看完整 Git 提交号")
+      await expect(version).toHaveText(commit.slice(0, 12))
+      await version.click()
+      await expect(page.getByText(commit, { exact: true })).toBeVisible()
+      await expect(page.getByText("含未提交更改", { exact: true })).toHaveCount(
+        modified ? 1 : 0
+      )
+    } else {
+      await expect(page.getByText("构建未记录")).toBeVisible()
+    }
     await page.reload()
     await expect(page.getByRole("heading", { name: "账本概览" })).toBeVisible()
     await nav.getByRole("link", { name: "工作概览" }).click()

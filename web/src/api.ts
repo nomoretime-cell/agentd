@@ -50,6 +50,8 @@ const channel = z.object({
   discovery_only: z.boolean(),
 })
 const statusSchema = z.object({
+  git_commit: z.string().optional(),
+  git_modified: z.boolean().optional(),
   active: z.boolean(),
   paused: z.boolean(),
   executor: z.string(),

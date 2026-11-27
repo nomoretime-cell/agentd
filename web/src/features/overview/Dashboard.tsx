@@ -284,6 +284,22 @@ export function Dashboard({
                 </dd>
               </div>
               <div>
+                <dt>Git 提交</dt>
+                <dd>
+                  {service.git_commit ? (
+                    <details>
+                      <summary aria-label="查看完整 Git 提交号">
+                        <code>{service.git_commit.slice(0, 12)}</code>
+                      </summary>
+                      <code>{service.git_commit}</code>
+                    </details>
+                  ) : (
+                    "构建未记录"
+                  )}
+                  {service.git_modified && <span>含未提交更改</span>}
+                </dd>
+              </div>
+              <div>
                 <dt>当前模型</dt>
                 <dd>{service.model || "未配置"}</dd>
               </div>

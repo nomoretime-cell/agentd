@@ -14,12 +14,36 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
 	"modernc.org/sqlite"
 )
+
+// gitVersion reads the stamp of the executable, independent of its deployment directory.
+func gitVersion() (commit string, modified bool) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", false
+	}
+	var vcs string
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs":
+			vcs = setting.Value
+		case "vcs.revision":
+			commit = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	if vcs != "git" {
+		return "", false
+	}
+	return commit, modified
+}
 
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -223,6 +247,7 @@ func (s *Service) Handler() http.Handler {
 		a.Name, a.Key = s.redact(a.Name), s.redact(a.Key)
 		respond(w, a, err)
 	})
+	commit, modified := gitVersion()
 	workbench.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		paused := s.paused
@@ -245,7 +270,7 @@ func (s *Service) Handler() http.Handler {
 		if s.cfg.OpenCodeBinary != "" {
 			executor = "opencode"
 		}
-		respond(w, map[string]any{"memory": s.memoryStatus(), "executor": executor, "paused": paused, "active": active, "counts": counts, "model": s.cfg.Model.Name, "im_provider": live.cfg.provider(), "wecom": map[string]any{"enabled": live.cfg.provider() == "wecom", "connected": wcConnected, "discovery_only": live.cfg.WeCom.DiscoveryOnly, "allow_all_groups": live.cfg.WeCom.AllowAllGroups, "group_owner_tools": live.cfg.WeCom.GroupOwnerTools}, "dingtalk": map[string]any{"enabled": live.cfg.provider() == "dingtalk" && live.cfg.DingTalk.Enabled, "connected": dtConnected, "discovery_only": live.cfg.DingTalk.DiscoveryOnly}}, nil)
+		respond(w, map[string]any{"git_commit": commit, "git_modified": modified, "memory": s.memoryStatus(), "executor": executor, "paused": paused, "active": active, "counts": counts, "model": s.cfg.Model.Name, "im_provider": live.cfg.provider(), "wecom": map[string]any{"enabled": live.cfg.provider() == "wecom", "connected": wcConnected, "discovery_only": live.cfg.WeCom.DiscoveryOnly, "allow_all_groups": live.cfg.WeCom.AllowAllGroups, "group_owner_tools": live.cfg.WeCom.GroupOwnerTools}, "dingtalk": map[string]any{"enabled": live.cfg.provider() == "dingtalk" && live.cfg.DingTalk.Enabled, "connected": dtConnected, "discovery_only": live.cfg.DingTalk.DiscoveryOnly}}, nil)
 	})
 	for _, table := range []string{"inbox", "timers", "actions", "outbox"} {
 		mux.HandleFunc("GET /v1/"+table, func(w http.ResponseWriter, r *http.Request) {
