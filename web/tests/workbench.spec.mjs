@@ -946,6 +946,7 @@ test("草稿审批回执晚到时保留已切换的知识库页面", async ({ pa
     const response = await receipt
     expect(response.ok()).toBe(true)
     await response.finished()
+    // Pulled back to evolution, the search button is gone: fail fast, not after 45s.
     await page
       .getByRole("button", { name: "检索", exact: true })
       .click({ timeout: 5000 })

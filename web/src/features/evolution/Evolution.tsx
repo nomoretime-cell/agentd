@@ -31,11 +31,11 @@ function Changes({ changes }: { changes: Delta[] }) {
 function Review({
   data,
   draft,
-  onDraftDecided,
+  onDecided,
 }: {
   data: Board
   draft?: string
-  onDraftDecided: (name: string) => void
+  onDecided: (name: string, decision: string) => void
 }) {
   // Follow the link once. A later poll may remove the draft while the owner is editing elsewhere.
   useEffect(() => {
@@ -54,16 +54,9 @@ function Review({
         method: "POST",
         body: JSON.stringify(body),
       }),
+    // The page owns the URL and may ignore this if the owner has moved on.
     onSuccess: (_, req) => {
-      if (
-        req.name &&
-        location.hash === entryLink("skills-drafts/" + req.name + "/SKILL.md")
-      )
-        location.hash =
-          req.decision === "approve"
-            ? entryLink("skills/" + req.name + "/SKILL.md")
-            : "#evolution"
-      else if (req.name) onDraftDecided(req.name)
+      if (req.name) onDecided(req.name, req.decision)
     },
     onSettled: () => {
       void client.invalidateQueries({ queryKey: ["evolution"] })
@@ -281,13 +274,13 @@ export function Evolution({
   draft,
   filters,
   onFilter,
-  onDraftDecided,
+  onDecided,
 }: {
   path: string
   draft?: string
   filters: EvolutionFilters
   onFilter: (next: Partial<EvolutionFilters>) => void
-  onDraftDecided: (name: string) => void
+  onDecided: (name: string, decision: string) => void
 }) {
   const q = useQuery({
     queryKey: ["evolution", "board"],
@@ -407,7 +400,7 @@ export function Evolution({
       </section>
       {path && <MemoryDocument key={path} path={path} edits={data.edits} />}
       <Dreaming data={data} />
-      <Review data={data} draft={draft} onDraftDecided={onDraftDecided} />
+      <Review data={data} draft={draft} onDecided={onDecided} />
       <section className="panel">
         <h2>变化记录</h2>
         <label>

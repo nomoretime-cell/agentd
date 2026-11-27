@@ -8,6 +8,7 @@ import { z } from "zod"
 import { Workbench } from "./Workbench"
 import { Dashboard } from "./features/overview/Dashboard"
 import { useServiceStatus } from "./api"
+import { afterDecision } from "./features/evolution/data"
 
 const Chat = lazy(() =>
   import("./features/chat/OwnerChat").then((m) => ({ default: m.OwnerChat }))
@@ -156,18 +157,17 @@ function EvolutionPage() {
     <Evolution
       path={path ?? ""}
       draft={draft}
-      onDraftDecided={(name) => {
-        // The owner may have navigated away while the decision was in flight.
-        const current = router.state.location
-        if (
-          current.pathname !== evolution.fullPath ||
-          current.search.draft !== name
-        )
-          return
-        void navigate({
-          search: (prev) => ({ ...prev, draft: undefined }),
-          replace: true,
-        })
+      onDecided={(name, decision) => {
+        // The receipt may arrive after the owner has left this page; this
+        // navigate is bound to evolution and would pull them back.
+        const at = router.state.location
+        if (at.pathname !== evolution.fullPath) return
+        const next = afterDecision(at.search, name, decision)
+        if (next)
+          void navigate({
+            search: (prev) => ({ ...prev, ...next }),
+            replace: true,
+          })
       }}
       filters={{
         source: source ?? "",

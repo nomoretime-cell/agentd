@@ -107,6 +107,20 @@ export const usesSchema = z.array(
 export function entryLink(path: string) {
   return "#evolution?" + new URLSearchParams({ path })
 }
+// Search changes that move the evolution page off a draft once it is decided.
+// An approved draft's document becomes the published skill; a rejected one is gone.
+export function afterDecision(
+  at: { path?: string; draft?: string },
+  name: string,
+  decision: string
+) {
+  const next: { path?: string; draft?: undefined } = {}
+  if (at.path === "skills-drafts/" + name + "/SKILL.md")
+    next.path =
+      decision === "approve" ? "skills/" + name + "/SKILL.md" : undefined
+  if (at.draft === name) next.draft = undefined
+  return Object.keys(next).length ? next : null
+}
 export const labels: Record<string, string> = {
   pending: "已排队",
   running: "整理中",
