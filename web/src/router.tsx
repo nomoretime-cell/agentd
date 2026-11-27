@@ -156,12 +156,19 @@ function EvolutionPage() {
     <Evolution
       path={path ?? ""}
       draft={draft}
-      onDraftDecided={() =>
+      onDraftDecided={(name) => {
+        // The owner may have navigated away while the decision was in flight.
+        const current = router.state.location
+        if (
+          current.pathname !== evolution.fullPath ||
+          current.search.draft !== name
+        )
+          return
         void navigate({
           search: (prev) => ({ ...prev, draft: undefined }),
           replace: true,
         })
-      }
+      }}
       filters={{
         source: source ?? "",
         group: group ?? "",

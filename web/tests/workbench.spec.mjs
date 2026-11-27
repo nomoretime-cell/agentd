@@ -890,33 +890,67 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
   }
 })
 
+async function openDraftForReview(page, url) {
+  await page.goto(
+    url +
+      "/#evolution?path=" +
+      encodeURIComponent("skills/memory-consolidation/SKILL.md")
+  )
+  await page.getByRole("button", { name: "起草技能修订" }).click()
+  const body = page.getByLabel("修订正文")
+  await body.fill((await body.inputValue()) + "\n待驳回的修订")
+  await page.getByRole("button", { name: "保存待审草稿" }).click()
+  const linked = page.getByRole("heading", {
+    name: "待审草稿 · memory-consolidation",
+  })
+  await expect(linked).toBeVisible()
+  await page.getByRole("link", { name: "工作概览" }).click()
+  await page.getByRole("button", { name: /待审草稿/ }).click()
+  await page.getByRole("link", { name: /memory-consolidation/ }).click()
+  await expect(page).toHaveURL(/#evolution\?draft=memory-consolidation$/)
+  return linked
+}
+
 test("从首页打开的草稿在本页处理后，链接不再提示草稿缺失", async ({ page }) => {
   const instance = await startInstance()
   try {
-    await page.goto(
-      instance.url +
-        "/#evolution?path=" +
-        encodeURIComponent("skills/memory-consolidation/SKILL.md")
-    )
-    await page.getByRole("button", { name: "起草技能修订" }).click()
-    const body = page.getByLabel("修订正文")
-    await body.fill((await body.inputValue()) + "\n待驳回的修订")
-    await page.getByRole("button", { name: "保存待审草稿" }).click()
-    const linked = page.getByRole("heading", {
-      name: "待审草稿 · memory-consolidation",
-    })
-    await expect(linked).toBeVisible()
-    await page.getByRole("link", { name: "工作概览" }).click()
-    await page.getByRole("button", { name: /待审草稿/ }).click()
-    await page.getByRole("link", { name: /memory-consolidation/ }).click()
-    await expect(page).toHaveURL(/#evolution\?draft=memory-consolidation$/)
-
+    const linked = await openDraftForReview(page, instance.url)
     await page.getByLabel("驳回理由").fill("测试驳回")
     page.once("dialog", (d) => d.accept())
     await page.getByRole("button", { name: "驳回草稿" }).click()
     await expect(linked).toHaveCount(0)
     await expect(page).toHaveURL(/#evolution$/)
     await expect(page.getByText(/已不在待审列表中/)).toHaveCount(0)
+  } finally {
+    await instance.stop()
+  }
+})
+
+test("草稿审批回执晚到时保留已切换的知识库页面", async ({ page }) => {
+  const instance = await startInstance()
+  try {
+    await openDraftForReview(page, instance.url)
+    await page.getByLabel("驳回理由").fill("测试驳回")
+    page.once("dialog", (d) => d.accept())
+    const endpoint = "**/v1/evolution/review"
+    const receipt = page.waitForResponse(endpoint)
+    await whileSubmitting(
+      page,
+      endpoint,
+      page.getByRole("button", { name: "驳回草稿" }),
+      async () => {
+        await page.getByRole("link", { name: "知识库", exact: true }).click()
+        await page.getByLabel("检索正文").fill("交接")
+      }
+    )
+    const response = await receipt
+    expect(response.ok()).toBe(true)
+    await response.finished()
+    await page
+      .getByRole("button", { name: "检索", exact: true })
+      .click({ timeout: 5000 })
+    await expect(page).toHaveURL(/#knowledge\?q=/)
+    await expect(page.getByLabel("检索正文")).toHaveValue("交接")
   } finally {
     await instance.stop()
   }

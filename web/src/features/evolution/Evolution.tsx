@@ -35,7 +35,7 @@ function Review({
 }: {
   data: Board
   draft?: string
-  onDraftDecided: () => void
+  onDraftDecided: (name: string) => void
 }) {
   // Follow the link once. A later poll may remove the draft while the owner is editing elsewhere.
   useEffect(() => {
@@ -63,8 +63,7 @@ function Review({
           req.decision === "approve"
             ? entryLink("skills/" + req.name + "/SKILL.md")
             : "#evolution"
-      // The linked draft is settled here; keep the link from reporting it missing.
-      else if (req.name && req.name === draft) onDraftDecided()
+      else if (req.name) onDraftDecided(req.name)
     },
     onSettled: () => {
       void client.invalidateQueries({ queryKey: ["evolution"] })
@@ -288,7 +287,7 @@ export function Evolution({
   draft?: string
   filters: EvolutionFilters
   onFilter: (next: Partial<EvolutionFilters>) => void
-  onDraftDecided: () => void
+  onDraftDecided: (name: string) => void
 }) {
   const q = useQuery({
     queryKey: ["evolution", "board"],
