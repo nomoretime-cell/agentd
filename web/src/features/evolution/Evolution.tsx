@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { z } from "zod"
 import { requestKey, pendingKey } from "@/lib/request-key"
@@ -25,7 +25,11 @@ function Changes({ changes }: { changes: Delta[] }) {
     </details>
   ))
 }
-function Review({ data }: { data: Board }) {
+function Review({ data, draft }: { data: Board; draft?: string }) {
+  // Follow the link once. A later poll may remove the draft while the owner is editing elsewhere.
+  useEffect(() => {
+    if (draft) document.getElementById("linked-draft")?.focus()
+  }, [draft])
   const client = useQueryClient(),
     [reason, setReason] = useState<Record<string, string>>({})
   const action = useMutation({
@@ -100,9 +104,16 @@ function Review({ data }: { data: Board }) {
           </Button>
         )}
       </div>
+      {draft && !data.drafts.some((d) => d.name === draft) && (
+        <p role="status" tabIndex={-1} id="linked-draft">
+          当前待审草稿中没有「{draft}」。
+        </p>
+      )}
       {data.drafts.map((d) => (
         <div className="evo-draft" key={d.name}>
-          <h3>待审草稿 · {d.name}</h3>
+          <h3 id={draft === d.name ? "linked-draft" : undefined} tabIndex={-1}>
+            待审草稿 · {d.name}
+          </h3>
           <Changes changes={d.changes} />
           {d.problem && <p role="alert">{d.problem}</p>}
           <label>
@@ -251,10 +262,12 @@ export type EvolutionFilters = { source: string; group: string; days: 7 | 30 }
 
 export function Evolution({
   path,
+  draft,
   filters,
   onFilter,
 }: {
   path: string
+  draft?: string
   filters: EvolutionFilters
   onFilter: (next: Partial<EvolutionFilters>) => void
 }) {
@@ -376,7 +389,7 @@ export function Evolution({
       </section>
       {path && <MemoryDocument key={path} path={path} edits={data.edits} />}
       <Dreaming data={data} />
-      <Review data={data} />
+      <Review data={data} draft={draft} />
       <section className="panel">
         <h2>变化记录</h2>
         <label>

@@ -1,5 +1,6 @@
 import { useRef, useState, type ReactNode } from "react"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
+import { useLocation } from "@tanstack/react-router"
 import { Dialog } from "radix-ui"
 import { Activity, Inbox, MessageSquare, Newspaper, X } from "lucide-react"
 import { z } from "zod"
@@ -83,6 +84,7 @@ export function DailyActivity({
   pending?: number
   children: ReactNode
 }) {
+  const search = useLocation({ select: (location) => location.searchStr })
   const [metric, setMetric] = useState<Metric>("replies")
   const [selection, setSelection] = useState<Selection | null>(null)
   const origin = useRef<HTMLButtonElement | null>(null)
@@ -136,7 +138,7 @@ export function DailyActivity({
             </button>
           )
         })}
-        <a className="stat" href="#queue">
+        <a className="stat" href={"#queue" + search}>
           <span className="stat-label">
             当前待办
             <Inbox size={16} />

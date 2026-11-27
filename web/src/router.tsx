@@ -141,6 +141,7 @@ const evolution = createRoute({
   path: "evolution",
   validateSearch: z.object({
     path: z.string().optional(),
+    draft: z.string().optional(),
     // Entry source names come from the server; unknown ones show nothing.
     source: z.string().optional().catch(undefined),
     group: z.enum(historyGroups).optional().catch(undefined),
@@ -149,11 +150,12 @@ const evolution = createRoute({
   component: EvolutionPage,
 })
 function EvolutionPage() {
-  const { path, source, group, days } = evolution.useSearch()
+  const { path, draft, source, group, days } = evolution.useSearch()
   const navigate = evolution.useNavigate()
   return (
     <Evolution
       path={path ?? ""}
+      draft={draft}
       filters={{
         source: source ?? "",
         group: group ?? "",
@@ -248,10 +250,8 @@ export const router = createRouter({
       return url
     },
     output: ({ url }) => {
-      const page = url.pathname.slice(1)
-      const hash = page
-        ? page + url.search
-        : url.search.slice(1) || url.hash.slice(1)
+      const destination = url.pathname.slice(1) || url.hash.slice(1)
+      const hash = destination ? destination + url.search : url.search.slice(1)
       url.pathname = "/"
       url.search = ""
       url.hash = hash

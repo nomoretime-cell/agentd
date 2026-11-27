@@ -94,7 +94,6 @@ export function Dashboard({
       return
     }
     const link = new URLSearchParams({ action: item.id })
-    if (kind !== defaults.type) link.set("type", kind)
     if (offset) link.set("offset", String(offset))
     if (filters.days !== defaults.days) link.set("days", String(filters.days))
     location.assign("#" + link.toString())
@@ -104,9 +103,6 @@ export function Dashboard({
       <div className="page-head">
         <h1>{runtime ? "运行状态" : "工作概览"}</h1>
         <div className="head-actions">
-          <a className="outline-btn" href="#knowledge">
-            上传文件
-          </a>
           {!runtime && service && (
             <a href="#im" className="outline-btn" aria-label="管理消息渠道">
               {channel?.enabled
@@ -191,9 +187,9 @@ export function Dashboard({
               </div>
             )}
             <ul className="queue-list">
-              {work.data?.items.map((item) => (
-                <li key={item.id}>
-                  <button onClick={() => inspect(item)} className="item">
+              {work.data?.items.map((item) => {
+                const summary = (
+                  <>
                     <div className="item-icon">
                       <Boxes size={17} />
                     </div>
@@ -213,18 +209,34 @@ export function Dashboard({
                       {itemStatus(kind, item.status)}
                     </span>
                     <ArrowUpRight size={15} />
-                  </button>
-                  {expanded === item.id && (
-                    <div className="inline-detail">
-                      <code>{item.id}</code>
-                      <p>{item.detail || "无补充说明"}</p>
-                      {kind === "drafts" && (
-                        <a href="#evolution">审阅草稿差异</a>
-                      )}
-                    </div>
-                  )}
-                </li>
-              ))}
+                  </>
+                )
+                return (
+                  <li key={item.id}>
+                    {kind === "drafts" ? (
+                      <a
+                        className="item"
+                        href={
+                          "#evolution?" +
+                          new URLSearchParams({ draft: item.id })
+                        }
+                      >
+                        {summary}
+                      </a>
+                    ) : (
+                      <button onClick={() => inspect(item)} className="item">
+                        {summary}
+                      </button>
+                    )}
+                    {expanded === item.id && kind !== "drafts" && (
+                      <div className="inline-detail">
+                        <code>{item.id}</code>
+                        <p>{item.detail || "无补充说明"}</p>
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
             {work.data && offset > 0 && offset >= selectedCount && (
               <p role="status">

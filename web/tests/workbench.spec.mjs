@@ -37,6 +37,9 @@ test("所有者审批、回执与刷新后直接读回", async ({ page, request 
     await expect(page).toHaveURL(/#runtime$/)
     await expect(runtime).toHaveAttribute("aria-current", "page")
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("运行状态")
+    await expect(
+      page.getByRole("main").getByRole("link", { name: "上传文件" })
+    ).toHaveCount(0)
     await expect(page).toHaveTitle(/^运行状态 · /)
     await expect(
       page.getByRole("navigation", { name: "当前位置" })
@@ -86,7 +89,16 @@ test("所有者审批、回执与刷新后直接读回", async ({ page, request 
     await page.getByRole("link", { name: "消息发送记录", exact: true }).click()
     await expect(runs).toHaveAttribute("aria-current", "page")
     await nav.getByRole("link", { name: "工作概览" }).click()
+    await page.getByLabel("统计范围").selectOption("30")
     await page.getByRole("button", { name: /发送异常/ }).click()
+    await page.getByRole("link", { name: /当前待办/ }).click()
+    await expect(page).toHaveURL(/#queue\?/)
+    await expect(page.getByRole("heading", { name: "发送异常" })).toBeInViewport()
+    await page.reload()
+    await expect(page.getByLabel("统计范围")).toHaveValue("30")
+    await expect(
+      page.getByRole("button", { name: /发送异常/ })
+    ).toHaveAttribute("aria-pressed", "true")
     await expect(page.getByText("当前没有此类待办")).toBeVisible()
     expect(
       await page.evaluate(
@@ -544,7 +556,14 @@ test("从访问电脑上传，另一个浏览器能检索服务器原件的正�
     await writeFile(source, "# 跨机资料\n鹭岛交接编号321")
     await writeFile(invalid, Buffer.from([0, 0, 0]))
     await page.goto(instance.url)
-    await page.getByRole("link", { name: "上传文件" }).click()
+    await expect(page.getByRole("heading", { name: "工作概览" })).toBeVisible()
+    await expect(
+      page.getByRole("main").getByRole("link", { name: "上传文件" })
+    ).toHaveCount(0)
+    await page
+      .getByRole("navigation", { name: "工作台导航" })
+      .getByRole("link", { name: "知识库" })
+      .click()
     await page.getByLabel("选择文件").setInputFiles([source, invalid])
     await page.getByRole("button", { name: "开始上传" }).click()
     await expect(page.getByRole("button", { name: "重试失败项" })).toBeVisible()
@@ -665,8 +684,31 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
     await expect(
       page.getByRole("heading", { name: "待审草稿 · memory-consolidation" })
     ).toBeVisible()
-    page.once("dialog", (d) => d.accept())
-    await page.getByRole("button", { name: "批准发布" }).click()
+    await page.getByRole("link", { name: "工作概览" }).click()
+    await page.getByRole("button", { name: /待审草稿/ }).click()
+    await page.getByRole("link", { name: /memory-consolidation/ }).click()
+    await expect(page).toHaveURL(/#evolution\?draft=memory-consolidation$/)
+    const selectedDraft = page.getByRole("heading", {
+      name: "待审草稿 · memory-consolidation",
+    })
+    await expect(selectedDraft).toBeFocused()
+    await page.goBack()
+    await expect(page.getByRole("button", { name: /待审草稿/ })).toHaveAttribute(
+      "aria-pressed", "true"
+    )
+    await page.goForward()
+    await expect(selectedDraft).toBeFocused()
+    await page.reload()
+    await expect(selectedDraft).toBeFocused()
+    await expect(selectedDraft).toBeInViewport()
+    const model = page.getByLabel("整理模型")
+    await model.focus()
+    second.once("dialog", (d) => d.accept())
+    await second.getByRole("button", { name: "批准发布" }).click()
+    await expect(
+      page.getByText("当前待审草稿中没有「memory-consolidation」。")
+    ).toBeVisible()
+    await expect(model).toBeFocused()
     await page
       .getByRole("link", {
         name: "skills/memory-consolidation/SKILL.md",
