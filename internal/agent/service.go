@@ -23,8 +23,7 @@ import (
 type Service struct {
 	metricsSince  time.Time
 	cfg           Config
-	im            atomic.Pointer[imRuntime]
-	imLife        imLifecycle
+	im            imChannel
 	root          string
 	db, read      *sql.DB
 	lock          *os.File
@@ -102,9 +101,7 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 			opened.Close()
 		}
 	}(s)
-	s.rememberIMSecrets(cfg)
-	s.imLife.factory = newIMChannel
-	s.im.Store(&imRuntime{&s.cfg, newIMChannel(s, &s.cfg)})
+	s.im = newIMChannel(s)
 	s.convert = s.runConverter
 	s.life, s.endLife = context.WithCancel(context.Background())
 	s.db, s.read, err = openDB(root)
@@ -196,8 +193,6 @@ func Open(root string, cfg Config, model Model) (s *Service, err error) {
 	return s, nil
 }
 func (s *Service) Start(parent context.Context) {
-	s.imConfigMu.Lock()
-	defer s.imConfigMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.started {
@@ -206,9 +201,7 @@ func (s *Service) Start(parent context.Context) {
 	s.started = true
 	ctx, cancel := context.WithCancel(parent)
 	s.cancel = cancel
-	s.imLife.ctx = ctx
-	s.startIM(nil)
-	loops := []func(context.Context){s.workerLoop, s.timerLoop, s.outboxLoop}
+	loops := []func(context.Context){s.workerLoop, s.timerLoop, s.outboxLoop, s.im.run}
 	for _, f := range loops {
 		s.wg.Add(1)
 		go func(fn func(context.Context)) { defer s.wg.Done(); fn(ctx) }(f)
@@ -229,9 +222,6 @@ func (s *Service) Close() error {
 		s.activeCancel()
 	}
 	s.mu.Unlock()
-	s.imConfigMu.Lock()
-	s.stopIM()
-	s.imConfigMu.Unlock()
 	s.wg.Wait()
 	var e error
 	if s.read != nil {
@@ -246,11 +236,6 @@ func (s *Service) Close() error {
 	return e
 }
 func (s *Service) Token() string { return s.token }
-
-// halted reports whether new work waits: the owner paused the service or the
-// IM channel is being replaced. Caller holds s.mu.
-func (s *Service) halted() bool { return s.paused || s.imLife.holding }
-
 func (s *Service) notify() {
 	select {
 	case s.wake <- struct{}{}:

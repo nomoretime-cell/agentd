@@ -42,10 +42,9 @@ type postedWeCom struct {
 	} `json:"markdown"`
 }
 type fakeWeCom struct {
-	alternateSecret string
-	ready           chan *websocket.Conn
-	posted          chan postedWeCom
-	mu              sync.Mutex
+	ready  chan *websocket.Conn
+	posted chan postedWeCom
+	mu     sync.Mutex
 }
 
 func (w *fakeWeCom) write(c *websocket.Conn, v any) error {
@@ -70,7 +69,7 @@ func (w *fakeWeCom) serve(rw http.ResponseWriter, r *http.Request) {
 		switch f.Cmd {
 		case "aibot_subscribe":
 			var auth map[string]string
-			if json.Unmarshal(f.Body, &auth) != nil || auth["bot_id"] != "bot" || (auth["secret"] != "secret-wc" && (w.alternateSecret == "" || auth["secret"] != w.alternateSecret)) {
+			if json.Unmarshal(f.Body, &auth) != nil || auth["bot_id"] != "bot" || auth["secret"] != "secret-wc" {
 				code = 1
 			}
 		case "aibot_send_msg":
@@ -156,7 +155,7 @@ func testWeComTeam(t *testing.T, all bool) {
 		body := fmt.Sprintf("<rss><channel><item><title>团队新闻</title><link>https://example.test/news</link><pubDate>%s</pubDate></item></channel></rss>", time.Now().UTC().Format(time.RFC1123Z))
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
-	s.im.Load().channel.(*weComChannel).url = strings.Replace(server.URL, "http", "ws", 1)
+	s.im.(*weComChannel).url = strings.Replace(server.URL, "http", "ws", 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s.Start(ctx)
@@ -379,15 +378,9 @@ func TestWeComUnacknowledgedSendIsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		c := s.im.Load().channel.(*weComChannel)
-		if c.subscribe(conn) == nil {
-			c.serve(ctx, conn)
-		}
-	}()
+	go func() { defer close(stopped); s.im.(*weComChannel).serve(ctx, conn) }()
 	defer func() { cancel(); <-stopped }()
-	waitFor(t, time.Second, func() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.im.Load().channel.(*weComChannel).conn != nil })
+	waitFor(t, time.Second, func() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.im.(*weComChannel).conn != nil })
 	_, err = s.db.Exec("INSERT INTO outbox(dedup_key,target,content,deliver_at) VALUES('ai-news:test:drop',?,'test',0)", s.ownerTarget())
 	if err != nil {
 		t.Fatal(err)

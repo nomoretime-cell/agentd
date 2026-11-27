@@ -88,24 +88,23 @@ func (s *Service) acceptWeCom(ctx context.Context, raw json.RawMessage) error {
 			} `json:"text"`
 		} `json:"quote"`
 	}
-	cfg := s.imConfig()
-	if json.Unmarshal(raw, &m) != nil || m.MsgID == "" || m.BotID != cfg.WeCom.BotID {
+	if json.Unmarshal(raw, &m) != nil || m.MsgID == "" || m.BotID != s.cfg.WeCom.BotID {
 		return nil
 	}
 	if m.Kind == "single" {
 		m.ChatID = m.From.UserID
 	}
 	r := &IMRoute{BotID: m.BotID, ConversationID: m.ChatID, ConversationType: m.Kind, Sender: m.From.UserID}
-	if cfg.WeCom.DiscoveryOnly {
+	if s.cfg.WeCom.DiscoveryOnly {
 		s.log.Info("wecom discovery", "userid", r.Sender, "chatid", r.ConversationID, "type", r.ConversationType)
 		return nil
 	}
 	text := strings.TrimSpace(m.Text.Content)
-	if cfg.provider() != "wecom" {
+	if s.cfg.provider() != "wecom" {
 		return nil
 	}
-	if !cfg.WeCom.permits(r) {
-		if r.team() && r.Sender == cfg.WeCom.Owner && r.ConversationID != "" {
+	if !s.cfg.WeCom.permits(r) {
+		if r.team() && r.Sender == s.cfg.WeCom.Owner && r.ConversationID != "" {
 			s.log.Info("wecom owner mention in unlisted group", "chatid", r.ConversationID)
 		}
 		return nil
@@ -114,7 +113,7 @@ func (s *Service) acceptWeCom(ctx context.Context, raw json.RawMessage) error {
 		return nil
 	}
 	// Only the authenticated owner can select a different lead for this task.
-	if r.team() && r.Sender == cfg.WeCom.Owner && strings.HasPrefix(text, "/提醒 ") {
+	if r.team() && r.Sender == s.cfg.WeCom.Owner && strings.HasPrefix(text, "/提醒 ") {
 		fields := strings.Fields(text)
 		if len(fields) >= 3 && validMention(fields[1]) {
 			r.NotifyUser = fields[1]
@@ -155,7 +154,6 @@ type wecomConnection struct {
 // weComChannel sends replies and proactive owner messages over the long
 // connection that also receives callbacks.
 type weComChannel struct {
-	cfg  *WeComConfig
 	s    *Service
 	url  string
 	conn *wecomConnection // guarded by s.mu
@@ -168,7 +166,7 @@ func (c *weComChannel) connected() bool {
 }
 
 func (c *weComChannel) owner() (string, bool) {
-	w := c.cfg
+	w := c.s.cfg.WeCom
 	return "wecom-owner:" + stableID(w.BotID) + ":" + w.Owner, !w.DiscoveryOnly && w.Owner != ""
 }
 
@@ -177,7 +175,7 @@ func (c *weComChannel) deliver(ctx context.Context, n Notification) string {
 	if s.cfg.Permissions["send_message"] != "allow" {
 		return "failed"
 	}
-	chat := c.cfg.Owner
+	chat := s.cfg.WeCom.Owner
 	content := strings.ReplaceAll(n.Content, "<@", "＜@")
 	if n.Target == s.ownerTarget() {
 		if !s.canMessageOwner() {
@@ -189,8 +187,8 @@ func (c *weComChannel) deliver(ctx context.Context, n Notification) string {
 			return "failed"
 		}
 		chat = r.ConversationID
-		lead := c.cfg.GroupLeads[chat]
-		if r.Sender == c.cfg.Owner && validMention(r.NotifyUser) {
+		lead := s.cfg.WeCom.GroupLeads[chat]
+		if r.Sender == s.cfg.WeCom.Owner && validMention(r.NotifyUser) {
 			lead = r.NotifyUser
 		}
 		if r.team() && lead != "" && (strings.HasPrefix(n.Key, "reply:") || strings.HasPrefix(n.Key, "message:")) {
@@ -229,64 +227,63 @@ func (c *weComChannel) deliver(ctx context.Context, n Notification) string {
 	}
 }
 
-func writeWeCom(conn *websocket.Conn, cmd, id string, body any) error {
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	frame := map[string]any{"cmd": cmd, "headers": map[string]string{"req_id": id}}
-	if body != nil {
-		frame["body"] = body
+func (c *weComChannel) run(ctx context.Context) {
+	s := c.s
+	backoff := time.Second
+	for ctx.Err() == nil {
+		conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, nil)
+		if err == nil {
+			start := time.Now()
+			err = c.serve(ctx, conn)
+			if time.Since(start) > time.Minute {
+				backoff = time.Second
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		s.log.Warn("wecom disconnected", "retry_in", backoff, "error", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff = min(30*time.Second, backoff*2)
 	}
-	return conn.WriteJSON(frame)
 }
 
-// connect opens the long connection and subscribes with the bot credentials.
-func (c *weComChannel) connect(ctx context.Context) (imSession, error) {
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, nil)
-	if err != nil {
-		return nil, errors.New("无法连接企业微信，请检查服务器网络")
-	}
-	stop := context.AfterFunc(ctx, func() { conn.Close() })
-	defer stop()
-	if err := c.subscribe(conn); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	return weComSession{c, conn}, nil
-}
-
-type weComSession struct {
-	c    *weComChannel
-	conn *websocket.Conn
-}
-
-func (w weComSession) serve(ctx context.Context) error { return w.c.serve(ctx, w.conn) }
-func (w weComSession) Close() error                    { return w.conn.Close() }
-func (c *weComChannel) subscribe(conn *websocket.Conn) error {
-	conn.SetReadLimit(1 << 20)
-	sub := randomID()
-	if err := writeWeCom(conn, "aibot_subscribe", sub, map[string]string{"bot_id": c.cfg.BotID, "secret": c.cfg.Secret}); err != nil {
-		return err
-	}
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	var auth wecomFrame
-	if err := conn.ReadJSON(&auth); err != nil {
-		return errors.New("未收到企业微信认证回执")
-	}
-	if auth.Headers.ReqID != sub || auth.Code == nil || *auth.Code != 0 {
-		return errors.New("企业微信拒绝订阅，请核对 Bot ID 和应用密钥")
-	}
-	conn.SetReadDeadline(time.Time{})
-	return nil
-}
 func (c *weComChannel) serve(ctx context.Context, conn *websocket.Conn) error {
 	s := c.s
 	stopClose := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stopClose()
 	defer conn.Close()
+	conn.SetReadLimit(1 << 20)
+	write := func(cmd, id string, body any) error {
+		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		frame := map[string]any{"cmd": cmd, "headers": map[string]string{"req_id": id}}
+		if body != nil {
+			frame["body"] = body
+		}
+		return conn.WriteJSON(frame)
+	}
+	sub := randomID()
+	if err := write("aibot_subscribe", sub, map[string]string{"bot_id": s.cfg.WeCom.BotID, "secret": s.cfg.WeCom.Secret}); err != nil {
+		return err
+	}
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	var auth wecomFrame
+	if err := conn.ReadJSON(&auth); err != nil {
+		return err
+	}
+	if auth.Headers.ReqID != sub || auth.Code == nil || *auth.Code != 0 {
+		return errors.New("wecom subscription rejected")
+	}
+	conn.SetReadDeadline(time.Time{})
 	session := &wecomConnection{send: make(chan wecomSend), done: make(chan struct{})}
 	s.mu.Lock()
 	c.conn = session
 	s.mu.Unlock()
-	s.log.Info("wecom connected", "discovery_only", c.cfg.DiscoveryOnly)
+	s.log.Info("wecom connected", "discovery_only", s.cfg.WeCom.DiscoveryOnly)
 	frames := make(chan wecomFrame)
 	readerDone := make(chan struct{})
 	go func() {
@@ -325,13 +322,13 @@ func (c *weComChannel) serve(ctx context.Context, conn *websocket.Conn) error {
 				return errors.New("missing wecom heartbeat")
 			}
 			ping = randomID()
-			if err := writeWeCom(conn, "ping", ping, nil); err != nil {
+			if err := write("ping", ping, nil); err != nil {
 				return err
 			}
 		case req := <-session.send:
 			pending = randomID()
 			ack = req.ack
-			if err := writeWeCom(conn, "aibot_send_msg", pending, req.body); err != nil {
+			if err := write("aibot_send_msg", pending, req.body); err != nil {
 				return err
 			}
 		case f, ok := <-frames:

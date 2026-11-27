@@ -145,13 +145,12 @@ func (s *Service) acceptDingTalk(ctx context.Context, f dingTalkFrame) dingTalkA
 	if json.Unmarshal([]byte(f.Data), &m) != nil || m.MsgID == "" {
 		return ack
 	}
-	cfg := s.imConfig()
-	c := cfg.DingTalk
+	c := s.cfg.DingTalk
 	if c.Enabled && c.DiscoveryOnly {
 		s.log.Info("dingtalk discovery (no task accepted)", "sender_staff_id", m.Sender, "conversation_id", m.ConversationID, "conversation_type", m.ConversationType)
 		return ack
 	}
-	if cfg.provider() != "dingtalk" || !c.permits(m.Sender, m.ConversationID, m.ConversationType, m.Mentioned) {
+	if s.cfg.provider() != "dingtalk" || !c.permits(m.Sender, m.ConversationID, m.ConversationType, m.Mentioned) {
 		if m.ConversationType == "2" && c.Enabled && m.Sender == c.AllowedSender {
 			s.log.Info("dingtalk group message filtered", "conversation_id", m.ConversationID, "mentioned", m.Mentioned, "allowlisted", slices.Contains(c.AllowedConversations, m.ConversationID), "allow_all_groups", c.AllowAllGroups)
 		}
@@ -215,8 +214,7 @@ func (s *Service) acceptDingTalk(ctx context.Context, f dingTalkFrame) dingTalkA
 // dingTalkChannel replies through the expiring session webhook of the incoming
 // message and sends proactive owner messages through the robot API.
 type dingTalkChannel struct {
-	cfg *DingTalkConfig
-	s   *Service
+	s *Service
 	// Only the serial Outbox dispatcher accesses this short-lived token.
 	token      string
 	tokenUntil time.Time
@@ -224,7 +222,7 @@ type dingTalkChannel struct {
 }
 
 func (c *dingTalkChannel) owner() (string, bool) {
-	d := c.cfg
+	d := c.s.cfg.DingTalk
 	return "dingtalk-owner:" + d.AllowedSender, d.Enabled && !d.DiscoveryOnly && d.AllowedSender != ""
 }
 
@@ -275,34 +273,28 @@ func (c *dingTalkChannel) deliverReply(ctx context.Context, n Notification) stri
 	return "sent"
 }
 
-// connect exchanges the app credentials for a stream ticket and opens the
-// stream. A disabled app has nothing to serve.
-func (c *dingTalkChannel) connect(ctx context.Context) (imSession, error) {
-	if !c.cfg.Enabled {
-		return idleIM{}, nil
-	}
-	s := c.s
-	body, _ := json.Marshal(map[string]any{"clientId": c.cfg.ClientID, "clientSecret": c.cfg.ClientSecret, "ua": "agentd/1.0", "subscriptions": []map[string]string{{"type": "CALLBACK", "topic": dingTalkTopic}}})
+func (s *Service) dingTalkConnect(ctx context.Context) (*websocket.Conn, error) {
+	body, _ := json.Marshal(map[string]any{"clientId": s.cfg.DingTalk.ClientID, "clientSecret": s.cfg.DingTalk.ClientSecret, "ua": "agentd/1.0", "subscriptions": []map[string]string{{"type": "CALLBACK", "topic": dingTalkTopic}}})
 	req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.dingtalk.com/v1.0/gateway/connections/open", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, e := s.client.Do(req)
 	if e != nil {
-		return nil, errors.New("无法连接钉钉，请检查服务器网络")
+		return nil, errors.New("dingtalk endpoint request failed")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("钉钉拒绝连接请求（HTTP %d），请核对应用凭据和平台配置", resp.StatusCode)
+		return nil, fmt.Errorf("dingtalk endpoint status %d", resp.StatusCode)
 	}
 	var endpoint struct {
 		Endpoint string `json:"endpoint"`
 		Ticket   string `json:"ticket"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&endpoint) != nil {
-		return nil, errors.New("钉钉返回了无效的接入信息")
+		return nil, errors.New("invalid dingtalk endpoint response")
 	}
 	u, e := url.Parse(endpoint.Endpoint)
 	if e != nil || u.Scheme != "wss" || u.Hostname() != "wss-open-connection.dingtalk.com" || (u.Port() != "" && u.Port() != "443") || u.User != nil || u.Fragment != "" || endpoint.Ticket == "" {
-		return nil, errors.New("钉钉返回了不受信任的连接地址")
+		return nil, errors.New("untrusted dingtalk stream endpoint")
 	}
 	q := u.Query()
 	q.Set("ticket", endpoint.Ticket)
@@ -313,31 +305,9 @@ func (c *dingTalkChannel) connect(ctx context.Context) (imSession, error) {
 		if r != nil && r.Body != nil {
 			r.Body.Close()
 		}
-		return nil, errors.New("钉钉消息通道握手失败")
+		return nil, errors.New("dingtalk websocket handshake failed")
 	}
-	return dingTalkSession{c, conn}, nil
-}
-
-type dingTalkSession struct {
-	c    *dingTalkChannel
-	conn *websocket.Conn
-}
-
-func (d dingTalkSession) Close() error { return d.conn.Close() }
-
-// serve marks the stream online while it runs. Transport errors can carry the
-// secret ticket, so none is returned for logging.
-func (d dingTalkSession) serve(ctx context.Context) error {
-	s := d.c.s
-	s.mu.Lock()
-	d.c.online = true
-	s.mu.Unlock()
-	s.log.Info("dingtalk stream connected", "discovery_only", d.c.cfg.DiscoveryOnly)
-	_ = s.serveDingTalk(ctx, d.conn)
-	s.mu.Lock()
-	d.c.online = false
-	s.mu.Unlock()
-	return nil
+	return conn, nil
 }
 func (s *Service) serveDingTalk(ctx context.Context, conn *websocket.Conn) error {
 	defer conn.Close()
@@ -388,8 +358,47 @@ func (c *dingTalkChannel) connected() bool {
 	return c.online
 }
 
+func (c *dingTalkChannel) run(ctx context.Context) {
+	s := c.s
+	if !s.cfg.DingTalk.Enabled {
+		return
+	}
+	delay := time.Second
+	for ctx.Err() == nil {
+		conn, e := s.dingTalkConnect(ctx)
+		if e == nil {
+			s.mu.Lock()
+			c.online = true
+			s.mu.Unlock()
+			s.log.Info("dingtalk stream connected", "discovery_only", s.cfg.DingTalk.DiscoveryOnly)
+			since := time.Now()
+			_ = s.serveDingTalk(ctx, conn) // Don't log transport errors containing secret tickets.
+			s.mu.Lock()
+			c.online = false
+			s.mu.Unlock()
+			if time.Since(since) > time.Minute {
+				delay = time.Second
+			}
+		} else if ctx.Err() == nil {
+			s.logErr("dingtalk connect", e)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		s.log.Warn("dingtalk stream disconnected; reconnect scheduled", "delay", delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		delay = min(delay*2, 30*time.Second)
+	}
+}
+
 func (ch *dingTalkChannel) deliverOwner(ctx context.Context, n Notification) string {
-	s, c := ch.s, ch.cfg
+	s, c := ch.s, ch.s.cfg.DingTalk
 	if !s.canMessageOwner() || n.Target != s.ownerTarget() {
 		return "failed"
 	}

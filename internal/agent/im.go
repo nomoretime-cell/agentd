@@ -5,11 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
-	"sync/atomic"
-	"time"
 )
 
 type IMRoute struct {
@@ -33,51 +30,20 @@ type imChannel interface {
 	// owner returns the target for proactive messages to the owner and
 	// whether the platform is configured to send them.
 	owner() (target string, enabled bool)
-	// connect opens and authenticates one platform connection. The session
-	// receives no callbacks until it is served, so a failed switch can drop it.
-	connect(ctx context.Context) (imSession, error)
+	// run keeps the platform connection open until ctx ends.
+	run(ctx context.Context)
 	// connected reports whether the platform connection is open now.
 	connected() bool
 }
 
-// imSession is one authenticated platform connection. serve handles its
-// callbacks until ctx ends or the connection fails, then releases it. Close
-// releases a session that is never served.
-type imSession interface {
-	serve(ctx context.Context) error
-	Close() error
-}
-
-// imLifecycle runs and replaces the IM connection. ctx and stop are used
-// under imConfigMu; holding and sending under Service.mu.
-type imLifecycle struct {
-	factory func(*Service, *Config) imChannel // tests substitute local platforms
-	ctx     context.Context                   // set by Start
-	stop    func()
-	// holding keeps Inbox, Timers and Outbox from starting work while the
-	// channel is replaced.
-	holding bool
-	// sending marks an IM delivery in flight; the channel is not replaced under it.
-	sending bool
-	attempt atomic.Pointer[imAttempt] // latest immediate apply, shown on the workbench
-	secrets atomic.Pointer[[]string]  // every IM credential this process has used
-}
-
-type imRuntime struct {
-	cfg     *Config
-	channel imChannel
-}
-
-func (s *Service) imConfig() *Config { return s.im.Load().cfg }
-
-func newIMChannel(s *Service, cfg *Config) imChannel {
-	if cfg.provider() == "none" {
+func newIMChannel(s *Service) imChannel {
+	if s.cfg.provider() == "none" {
 		return disabledIM{}
 	}
-	if cfg.provider() == "wecom" {
-		return &weComChannel{s: s, cfg: &cfg.WeCom, url: "wss://openws.work.weixin.qq.com"}
+	if s.cfg.provider() == "wecom" {
+		return &weComChannel{s: s, url: "wss://openws.work.weixin.qq.com"}
 	}
-	return &dingTalkChannel{s: s, cfg: &cfg.DingTalk}
+	return &dingTalkChannel{s: s}
 }
 
 // imRoutes is the part of an Inbox payload that records where an IM message
@@ -89,70 +55,8 @@ type imRoutes struct {
 
 func (r imRoutes) fromIM() bool { return r.DingTalk != nil || r.WeCom != nil }
 
-// startIM serves the current channel, beginning with first when a handover
-// has already authenticated it. stopIM waits for its callbacks to finish
-// before the active identity can change.
-func (s *Service) startIM(first imSession) {
-	ctx, cancel := context.WithCancel(s.imLife.ctx)
-	done := make(chan struct{})
-	s.imLife.stop = func() { cancel(); <-done }
-	live := s.im.Load()
-	go func() { defer close(done); s.keepIM(ctx, live.cfg.provider(), live.channel, first) }()
-}
-func (s *Service) stopIM() {
-	if s.imLife.stop != nil {
-		s.imLife.stop()
-		s.imLife.stop = nil
-	}
-}
-
-// keepIM serves the channel until ctx ends and reconnects with backoff. A
-// connection that stayed up for a minute resets the backoff.
-func (s *Service) keepIM(ctx context.Context, provider string, channel imChannel, session imSession) {
-	delay := time.Second
-	for {
-		var err error
-		if session == nil {
-			session, err = channel.connect(ctx)
-		}
-		if err == nil {
-			since := time.Now()
-			err = session.serve(ctx)
-			session = nil
-			if time.Since(since) > time.Minute {
-				delay = time.Second
-			}
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		s.log.Warn("IM disconnected; reconnect scheduled", "provider", provider, "delay", delay, "error", err)
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-		delay = min(delay*2, 30*time.Second)
-	}
-}
 func (s *Service) teamPrompt() string {
-	return "你是群内团队助手。结合团队资料和当前可用工具回答问题。需要实时信息时使用可用的联网搜索并注明来源，没有依据时明确说明。团队资料：\n" + s.imConfig().WeCom.TeamKnowledge
-}
-
-// Credentials replaced during this process can still occur in historical text.
-func (s *Service) rememberIMSecrets(cfg Config) {
-	var values []string
-	if old := s.imLife.secrets.Load(); old != nil {
-		values = slices.Clone(*old)
-	}
-	for _, secret := range []string{cfg.DingTalk.ClientSecret, cfg.WeCom.Secret} {
-		if secret != "" && !slices.Contains(values, secret) {
-			values = append(values, secret)
-		}
-	}
-	s.imLife.secrets.Store(&values)
+	return "你是群内团队助手。结合团队资料和当前可用工具回答问题。需要实时信息时使用可用的联网搜索并注明来源，没有依据时明确说明。团队资料：\n" + s.cfg.WeCom.TeamKnowledge
 }
 
 // redactIM removes IM credentials and session webhooks from text leaving the host.
@@ -162,7 +66,7 @@ func (s *Service) redactIM(v string, mask func(value, label string) string) stri
 		return prefix + mask(field[len(prefix):len(field)-1], "[redacted]") + `"`
 	})
 	v = dingTalkSecretURL.ReplaceAllStringFunc(v, func(url string) string { return mask(url, "[dingtalk-webhook-redacted]") })
-	for _, secret := range *s.imLife.secrets.Load() {
+	for _, secret := range []string{s.cfg.DingTalk.ClientSecret, s.cfg.WeCom.Secret} {
 		for _, spelling := range secretSpellings(secret) {
 			v = strings.ReplaceAll(v, spelling, mask(spelling, "[redacted]"))
 		}
@@ -184,16 +88,10 @@ func imOwnerTarget(target string) bool {
 
 type disabledIM struct{}
 
-func (disabledIM) connect(context.Context) (imSession, error)   { return idleIM{}, nil }
+func (disabledIM) run(context.Context)                          {}
 func (disabledIM) connected() bool                              { return false }
 func (disabledIM) owner() (string, bool)                        { return "", false }
 func (disabledIM) deliver(context.Context, Notification) string { return "offline" }
-
-// idleIM is the session of a channel with nothing to serve.
-type idleIM struct{}
-
-func (idleIM) serve(ctx context.Context) error { <-ctx.Done(); return nil }
-func (idleIM) Close() error                    { return nil }
 
 // Disabled providers keep their work in the ordinary queues for a later restart.
 func (c Config) parkedProviders() (string, string) {
@@ -207,10 +105,10 @@ func (c Config) parkedProviders() (string, string) {
 	}
 }
 
-func (s *Service) ownerTarget() string { t, _ := s.im.Load().channel.owner(); return t }
+func (s *Service) ownerTarget() string { t, _ := s.im.owner(); return t }
 
 func (s *Service) canMessageOwner() bool {
-	_, enabled := s.im.Load().channel.owner()
+	_, enabled := s.im.owner()
 	return enabled && s.cfg.Permissions["send_message"] == "allow"
 }
 
@@ -241,12 +139,11 @@ func (r *IMRoute) group() bool {
 // imScope names the principal and conversation of an IM run. A group is one
 // principal whoever speaks in it; a private chat belongs to its sender.
 func (s *Service) imScope(r *IMRoute) runScope {
-	cfg := s.imConfig()
-	provider := cfg.provider()
+	provider := s.cfg.provider()
 	sc := runScope{Role: defaultRole, Conversation: stableID(provider + "\x00conversation\x00" + r.ConversationID)}
-	owner := cfg.DingTalk.AllowedSender
+	owner := s.cfg.DingTalk.AllowedSender
 	if provider == "wecom" {
-		owner = cfg.WeCom.Owner
+		owner = s.cfg.WeCom.Owner
 	}
 	switch {
 	case r.group():
@@ -274,7 +171,7 @@ type rowQuery interface {
 
 func (s *Service) imRoute(ctx context.Context, q rowQuery, target string) (*IMRoute, error) {
 	provider, rawID, _ := strings.Cut(target, ":")
-	if provider != s.imConfig().provider() {
+	if provider != s.cfg.provider() {
 		return nil, ErrDenied
 	}
 	id, e := strconv.ParseInt(rawID, 10, 64)
@@ -331,24 +228,23 @@ func (s *Service) replyTarget(ctx context.Context, ev Event) (string, error) {
 }
 
 func (s *Service) permitsIM(p Payload) bool {
-	cfg := s.imConfig()
-	if r := p.DingTalk; r != nil && cfg.provider() == "dingtalk" {
-		return cfg.DingTalk.permits(r.Sender, r.ConversationID, r.ConversationType, r.Mentioned)
+	if r := p.DingTalk; r != nil && s.cfg.provider() == "dingtalk" {
+		return s.cfg.DingTalk.permits(r.Sender, r.ConversationID, r.ConversationType, r.Mentioned)
 	}
-	return p.WeCom != nil && cfg.provider() == "wecom" && cfg.WeCom.permits(p.WeCom)
+	return p.WeCom != nil && s.cfg.provider() == "wecom" && s.cfg.WeCom.permits(p.WeCom)
 }
 func (s *Service) progressFor(p Payload) bool {
 	if !s.permitsIM(p) {
 		return false
 	}
 	if p.WeCom != nil {
-		return s.imConfig().WeCom.ProgressMessages
+		return s.cfg.WeCom.ProgressMessages
 	}
-	return s.imConfig().DingTalk.ProgressMessages
+	return s.cfg.DingTalk.ProgressMessages
 }
 
 func (s *Service) restrictTeamTools(ctx context.Context) bool {
-	return isTeamTurn(ctx) && !s.imConfig().WeCom.GroupOwnerTools
+	return isTeamTurn(ctx) && !s.cfg.WeCom.GroupOwnerTools
 }
 
 func (s *Service) turnTools(ctx context.Context) []Tool {

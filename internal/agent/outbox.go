@@ -79,12 +79,12 @@ func (s *Service) quietUntil(now time.Time) time.Time {
 func (s *Service) deliverOne(ctx context.Context) error {
 	s.mu.Lock()
 	now := time.Now()
-	if s.halted() || ctx.Err() != nil || now.Before(s.lastSend.Add(time.Duration(s.cfg.DeliveryIntervalMS)*time.Millisecond)) {
+	if s.paused || ctx.Err() != nil || now.Before(s.lastSend.Add(time.Duration(s.cfg.DeliveryIntervalMS)*time.Millisecond)) {
 		s.mu.Unlock()
 		return nil
 	}
 	var n Notification
-	parked, other := s.imConfig().parkedProviders()
+	parked, other := s.cfg.parkedProviders()
 	e := s.db.QueryRowContext(ctx, "SELECT id,dedup_key,target,content,deliver_at,status,retries FROM outbox WHERE status='pending' AND deliver_at<=? AND target NOT GLOB ? AND target NOT GLOB ? AND target NOT GLOB ? AND target NOT GLOB ? ORDER BY id LIMIT 1", now.UnixMilli(), parked+":*", parked+"-owner:*", other+":*", other+"-owner:*").Scan(&n.ID, &n.Key, &n.Target, &n.Content, &n.DeliverAt, &n.Status, &n.Retries)
 	if errors.Is(e, sql.ErrNoRows) {
 		s.mu.Unlock()
@@ -127,8 +127,6 @@ func (s *Service) deliverOne(ctx context.Context) error {
 		}
 	}
 	_, e = s.db.ExecContext(ctx, "UPDATE outbox SET status='sending' WHERE id=? AND status='pending'", n.ID)
-	// The IM channel stays in place until this delivery records its result.
-	s.imLife.sending = e == nil && target.Kind == "im"
 	s.lastSend = now
 	s.mu.Unlock()
 	if e != nil {
@@ -139,8 +137,8 @@ func (s *Service) deliverOne(ctx context.Context) error {
 	due := n.DeliverAt
 	switch target.Kind {
 	case "im":
-		status = s.im.Load().channel.deliver(ctx, n)
-		s.log.Info("IM delivery result", "provider", s.imConfig().provider(), "outbox_id", n.ID, "target", n.Target, "status", status)
+		status = s.im.deliver(ctx, n)
+		s.log.Info("IM delivery result", "provider", s.cfg.provider(), "outbox_id", n.ID, "target", n.Target, "status", status)
 		if status == "offline" {
 			status = "pending"
 			due = time.Now().Add(time.Second * 5).UnixMilli()
@@ -187,7 +185,6 @@ func (s *Service) deliverOne(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.imLife.sending = false
 	saveCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, e = s.db.ExecContext(saveCtx, "UPDATE outbox SET status=?,retries=?,deliver_at=? WHERE id=? AND status='sending'", status, retries, due, n.ID)

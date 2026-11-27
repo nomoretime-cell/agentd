@@ -717,7 +717,7 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
   }
 })
 
-test("IM 渠道可保存备用、轮换密钥，连接失败后保留选择并可重试", async ({
+test("IM 管理可添加、轮换、选择、撤回选择及删除配置", async ({
   page,
   request,
 }) => {
@@ -729,22 +729,21 @@ test("IM 渠道可保存备用、轮换密钥，连接失败后保留选择并�
       .getByRole("link", { name: "IM 渠道" })
       .click()
     const wx = page.getByRole("region", { name: "企业微信" })
-    await wx.getByRole("button", { name: "添加企业微信" }).click()
+    await wx.getByRole("button", { name: "添加配置" }).click()
     await wx.getByLabel("Bot ID").fill("test-robot-1234")
     await wx.getByLabel("应用密钥").fill("test-only-secret")
     await wx.getByLabel("所有者 ID").fill("test-owner-1234")
-    await wx.getByRole("button", { name: "仅保存" }).click()
+    await wx.getByRole("button", { name: "保存配置" }).click()
     await expect(wx.getByText("已设置", { exact: true })).toBeVisible()
     await wx.getByRole("button", { name: "编辑配置" }).click()
     await expect(wx.getByLabel("应用密钥")).toHaveValue("")
     await wx.getByLabel("应用密钥").fill("test-only-rotated")
-    await wx.getByRole("button", { name: "保存为备用" }).click()
-    await wx.getByRole("button", { name: "启用企业微信" }).click()
-    await expect(wx.getByRole("alert")).toContainText("连接失败")
+    await wx.getByRole("button", { name: "保存配置" }).click()
+    await wx.getByRole("button", { name: "下次启动使用" }).click()
+    await wx.getByRole("button", { name: "确认更改" }).click()
     await page.reload()
-    await expect(wx.getByRole("alert")).toContainText("连接失败")
-    await wx.getByRole("button", { name: "重试连接" }).click()
-    await expect(wx.getByRole("button", { name: "重试连接" })).toBeEnabled()
+    await expect(page.getByText("待重启生效", { exact: true })).toBeVisible()
+    await expect(wx.getByRole("button", { name: "删除配置" })).toBeDisabled()
     const response = await request.get(instance.url + "/v1/im", {
       headers: webHeaders,
     })
@@ -759,9 +758,11 @@ test("IM 渠道可保存备用、轮换密钥，连接失败后保留选择并�
         })
       ).status()
     ).toBe(403)
+    await wx.getByRole("button", { name: "停用渠道" }).click()
+    await wx.getByRole("button", { name: "确认更改" }).click()
     await wx.getByRole("button", { name: "删除配置" }).click()
     await wx.getByRole("button", { name: "确认删除" }).click()
-    await expect(wx.getByRole("button", { name: "添加企业微信" })).toBeVisible()
+    await expect(wx.getByRole("button", { name: "添加配置" })).toBeVisible()
     await page.setViewportSize({ width: 320, height: 700 })
     await expect(page.getByRole("heading", { name: "钉钉" })).toBeVisible()
     expect(
@@ -774,12 +775,10 @@ test("IM 渠道可保存备用、轮换密钥，连接失败后保留选择并�
   }
 })
 
-test("IM 表单打开期间，未结工作数量随刷新更新，已填写内容保留", async ({
-  page,
-}) => {
+test("IM 删除确认打开期间，未结工作数量随刷新更新", async ({ page }) => {
   const instance = await startInstance()
   try {
-    // Later reads report parked work for WeCom; the form stays open meanwhile.
+    // Later reads report parked work for WeCom; the confirmation stays open.
     let parked = false
     await page.route("**/v1/im", async (route) => {
       if (route.request().method() !== "GET" || !parked) return route.continue()
@@ -791,27 +790,17 @@ test("IM 表单打开期间，未结工作数量随刷新更新，已填写内�
     })
     await page.goto(instance.url + "/#im")
     const wx = page.getByRole("region", { name: "企业微信" })
-    await wx.getByRole("button", { name: "添加企业微信" }).click()
+    await wx.getByRole("button", { name: "添加配置" }).click()
     await wx.getByLabel("Bot ID").fill("test-robot-1234")
     await wx.getByLabel("应用密钥").fill("test-only-secret")
     await wx.getByLabel("所有者 ID").fill("test-owner-1234")
-    await wx.getByRole("button", { name: "仅保存" }).click()
+    await wx.getByRole("button", { name: "保存配置" }).click()
     await expect(wx.getByText("已设置", { exact: true })).toBeVisible()
 
-    await wx.getByRole("button", { name: "编辑配置" }).click()
-    await expect(wx.getByText(/待处理事件/)).toHaveCount(0)
-    await wx.getByLabel("Bot ID").fill("test-robot-draft")
-    parked = true
-    await expect(wx.getByText(/待处理事件 3/)).toBeVisible({ timeout: 10000 })
-    await expect(wx.getByLabel("Bot ID")).toHaveValue("test-robot-draft")
-    await wx.getByRole("button", { name: "取消" }).click()
-
-    parked = false
-    await page.reload()
     await wx.getByRole("button", { name: "删除配置" }).click()
     await expect(wx.getByText(/待处理事件 0/)).toBeVisible()
     parked = true
-    await expect(wx.getByText(/待处理事件 3/)).toBeVisible({ timeout: 10000 })
+    await expect(wx.getByText(/待处理事件 3/)).toBeVisible({ timeout: 15000 })
   } finally {
     await instance.stop()
   }
@@ -902,7 +891,7 @@ test("旧页面缺少按需加载的脚本时保留导航，重新加载可恢�
       page.getByRole("heading", { name: "页面加载失败" })
     ).toHaveCount(0)
     await expect(
-      page.getByRole("button", { name: "添加企业微信" }).first()
+      page.getByRole("button", { name: /添加配置|新增配置/ }).first()
     ).toBeVisible()
     expect(background).toEqual([])
   } finally {

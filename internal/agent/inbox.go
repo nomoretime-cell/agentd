@@ -17,7 +17,6 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 	if key == "" || len(key) > 256 {
 		return 0, false, errors.New("key must contain 1..256 bytes")
 	}
-	admittedBy := s.im.Load()
 	business, err := s.admitBusiness(&p, &key)
 	if err != nil {
 		return 0, false, err
@@ -54,10 +53,6 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Admission and insertion must agree on the owner when a channel changes.
-	if business && (s.imLife.holding || admittedBy != s.im.Load()) {
-		return 0, false, ErrConflict
-	}
 	err = transaction(ctx, s.db, func(tx *sql.Tx) error {
 		now := time.Now().UnixMilli()
 		due := now
@@ -85,7 +80,7 @@ func (s *Service) Append(ctx context.Context, key string, p Payload) (id int64, 
 func (s *Service) claim(ctx context.Context) (batch []Event, err error) {
 	// Caller holds s.mu. Dead heads deliberately block until an authenticated operator resolves them.
 	err = transaction(ctx, s.db, func(tx *sql.Tx) error {
-		parked, other := s.imConfig().parkedProviders()
+		parked, other := s.cfg.parkedProviders()
 		// An outstanding approval belongs to the channel that created its action.
 		// Keep old-channel work queued until that provider is selected again.
 		rows, e := tx.QueryContext(ctx, `SELECT id,dedup_key,payload,available_at,status,retries FROM inbox AS i
@@ -172,7 +167,7 @@ func (s *Service) workerLoop(ctx context.Context) {
 		}
 		var batch []Event
 		var err error
-		if !s.halted() && len(s.starts) < s.cfg.Limits.MaxRunsPerHour {
+		if !s.paused && len(s.starts) < s.cfg.Limits.MaxRunsPerHour {
 			batch, err = s.claim(ctx)
 		}
 		var runCtx context.Context

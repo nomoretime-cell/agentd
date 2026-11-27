@@ -560,7 +560,7 @@ func TestDingTalkEndpointValidation(t *testing.T) {
 			b, _ := json.Marshal(map[string]string{"endpoint": endpoint, "ticket": "secret-ticket"})
 			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(b)))}, nil
 		})
-		conn, e := s.im.Load().channel.connect(context.Background())
+		conn, e := s.dingTalkConnect(context.Background())
 		if e == nil || conn != nil || strings.Contains(e.Error(), "secret-ticket") {
 			t.Fatal("untrusted endpoint accepted or ticket exposed")
 		}
@@ -692,15 +692,15 @@ func TestScheduledOwnerNewsReceipt(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
 	n := Notification{Target: s.ownerTarget(), Content: "AI news"}
-	if got := s.im.Load().channel.deliver(context.Background(), n); got != "sent" {
+	if got := s.im.deliver(context.Background(), n); got != "sent" {
 		t.Fatal(got)
 	}
 	limited = true
-	if got := s.im.Load().channel.deliver(context.Background(), n); got != "pending" {
+	if got := s.im.deliver(context.Background(), n); got != "pending" {
 		t.Fatal(got)
 	}
 	n.Target = "group"
-	if s.im.Load().channel.deliver(context.Background(), n) != "failed" || authCalls != 1 || sendCalls != 2 {
+	if s.im.deliver(context.Background(), n) != "failed" || authCalls != 1 || sendCalls != 2 {
 		t.Fatal("recipient restriction or token cache failed")
 	}
 }

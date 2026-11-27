@@ -70,10 +70,6 @@
 .im-card input[type="checkbox"] {
   margin-right: 0.45rem;
 }
-.im-card form .im-controls button:not(:first-child) {
-  background: var(--background);
-  color: var(--foreground);
-}
 .im-card button:disabled {
   opacity: 0.48;
   cursor: default;

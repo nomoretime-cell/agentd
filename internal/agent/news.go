@@ -41,13 +41,11 @@ func (s *Service) admitBusiness(p *Payload, key *string) (bool, error) {
 	if p.Kind != "news_test" {
 		return false, nil
 	}
-	live := s.im.Load()
-	target, enabled := live.channel.owner()
-	if live.cfg.provider() == "wecom" {
-		p.NewsTarget = target
+	if s.cfg.provider() == "wecom" {
+		p.NewsTarget = s.ownerTarget()
 		*key = "wecom:" + stableID(p.NewsTarget+"\x00"+*key)
 	}
-	if !enabled || s.cfg.Permissions["send_message"] != "allow" {
+	if !s.canMessageOwner() {
 		return true, ErrDenied
 	}
 	if _, ok := s.testNewsFeed(p.Name); !ok {
@@ -400,13 +398,11 @@ func (s *Service) translateHeadlines(ctx context.Context, items []newsItem) erro
 func (s *Service) eventScope() string {
 	// Use the same selection as parking and the workbench: a configured but
 	// disabled DingTalk keeps its news queued rather than running it unsent.
-	live := s.im.Load()
-	if live.cfg.selectedIM() == "none" {
+	if s.cfg.selectedIM() == "none" {
 		return "none"
 	}
-	if live.cfg.provider() == "wecom" {
-		target, _ := live.channel.owner()
-		return target
+	if s.cfg.provider() == "wecom" {
+		return s.ownerTarget()
 	}
 	return ""
 }
