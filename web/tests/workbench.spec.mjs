@@ -326,7 +326,9 @@ test("会话、历史版本和投递回执可双向追溯", async ({ page, reque
           ).days.at(-1).replies
       )
       .toBe(1)
-    await page.goto(demo.url + "/#runs?view=conversations")
+    await page.goto(demo.url + "/#runs?view=conversations&status=done")
+    await page.getByRole("link", { name: "清除筛选" }).click()
+    await expect(page).toHaveURL(/#runs\?view=conversations$/)
     await expect(page.getByRole("heading", { name: "按对话查看" })).toBeVisible()
     await page.getByRole("link", { name: /本地对话/ }).click()
     await page.getByRole("link", { name: /已记录处理结果/ }).click()

@@ -78,6 +78,10 @@ const states: Record<string, string> = {
 function runLink(params: URLSearchParams) {
   return params.size ? "#runs?" + params.toString() : "#runs"
 }
+function viewLink(view: string) {
+  return view === "runs" ? "#runs" : "#runs?view=" + view
+}
+
 export function RunHistory({ search }: { search: URLSearchParams }) {
   const params = new URLSearchParams(search)
   const id = params.get("run")
@@ -116,7 +120,7 @@ export function RunHistory({ search }: { search: URLSearchParams }) {
           <a
             key={key}
             aria-current={view === key ? "page" : undefined}
-            href={key === "runs" ? "#runs" : "#runs?view=" + key}
+            href={viewLink(key)}
           >
             {title}
           </a>
@@ -191,7 +195,7 @@ export function RunHistory({ search }: { search: URLSearchParams }) {
             <Search size={15} />
             查询
           </button>
-          {filter && <a href="#runs">清除筛选</a>}
+          {filter && <a href={viewLink(view)}>清除筛选</a>}
           <details
             className="scope-filters"
             open={[
