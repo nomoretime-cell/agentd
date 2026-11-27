@@ -8,6 +8,15 @@ import { board, entryLink, labels, when, type Board, type Delta } from "./data"
 import { MemoryDocument } from "./MemoryDocument"
 import { VersionDiff } from "./VersionDiff"
 import "./evolution.css"
+
+const reviewActions = {
+  promote: "采用候选版本",
+  discard: "丢弃候选版本",
+  rollback: "回滚至上一版记忆",
+  approve: "批准发布",
+  reject: "驳回草稿",
+}
+
 function Changes({ changes }: { changes: Delta[] }) {
   return changes.map((c) => (
     <details key={c.path}>
@@ -44,24 +53,24 @@ function Review({ data }: { data: Board }) {
       void client.invalidateQueries({ queryKey: ["evolution"] })
     },
   })
-  function decide(name: string, decision: string, token: string) {
-    if (window.confirm("确认" + (labels[decision] ?? decision) + "？"))
+  function decide(name: string, decision: keyof typeof reviewActions, token: string) {
+    if (window.confirm("确认" + reviewActions[decision] + "？"))
       action.mutate({ name, decision, token, reason: reason[name] || "" })
   }
   const c = data.candidate
   return (
     <section className="panel">
-      <h2>候选与审核</h2>
+      <h2>候选版本与草稿审核</h2>
       {c.stage ? (
         <>
           <p>
-            {data.checking ? "检查候选" : labels[c.stage]}
+            {data.checking ? "检查候选版本" : labels[c.stage]}
             {c.stale ? " · 和当前基线不一致" : ""}
           </p>
           <Changes changes={c.changes} />
         </>
       ) : (
-        <p className="muted">当前没有整理候选。</p>
+        <p className="muted">当前没有待审核的候选版本。</p>
       )}
       <div className="evo-actions">
         {c.stage === "held" && (
@@ -70,14 +79,14 @@ function Review({ data }: { data: Board }) {
               disabled={data.working || c.stale || action.isPending}
               onClick={() => decide("", "promote", c.token)}
             >
-              提升候选
+              {reviewActions.promote}
             </Button>
             <Button
               variant="outline"
               disabled={data.working || action.isPending}
               onClick={() => decide("", "discard", c.token)}
             >
-              丢弃候选
+              {reviewActions.discard}
             </Button>
           </>
         )}
@@ -87,7 +96,7 @@ function Review({ data }: { data: Board }) {
             disabled={data.working || action.isPending}
             onClick={() => decide("", "rollback", c.token)}
           >
-            回滚至上一版记忆
+            {reviewActions.rollback}
           </Button>
         )}
       </div>
@@ -110,7 +119,7 @@ function Review({ data }: { data: Board }) {
               disabled={!!d.problem || action.isPending || data.working}
               onClick={() => decide(d.name, "approve", d.token)}
             >
-              批准发布
+              {reviewActions.approve}
             </Button>
             <Button
               variant="outline"
@@ -119,7 +128,7 @@ function Review({ data }: { data: Board }) {
               }
               onClick={() => decide(d.name, "reject", d.token)}
             >
-              驳回草稿
+              {reviewActions.reject}
             </Button>
           </div>
         </div>
@@ -175,7 +184,7 @@ function Dreaming({ data }: { data: Board }) {
   }
   return (
     <section className="panel">
-      <h2>Dreaming 记忆整理</h2>
+      <h2>记忆整理（Dreaming）</h2>
       {selected ? (
         <>
           <label>
@@ -194,7 +203,7 @@ function Dreaming({ data }: { data: Board }) {
           </label>
           <p className="muted">
             本次由 {selected.host}{" "}
-            处理。可读取当前记忆、规则、知识资料，以及符合外发范围的所有者私聊和本地运行记录。
+            处理。可读取当前记忆、规则、知识资料，以及符合外发范围的所有者私聊和本地任务处理记录。
           </p>
         </>
       ) : (
@@ -228,7 +237,7 @@ function Dreaming({ data }: { data: Board }) {
             {labels[r.state] ?? r.state} · {when(r.ts)}
           </span>
           {r.run && (
-            <a href={"#runs?run=" + encodeURIComponent(r.run)}>查看运行依据</a>
+            <a href={"#runs?run=" + encodeURIComponent(r.run)}>查看处理依据</a>
           )}
           {r.error && <small>{r.error}</small>}
         </div>
@@ -312,7 +321,7 @@ export function Evolution({
       id: r.id,
       ts: r.ts,
       group: "文件修订",
-      title: r.actor === "owner" ? "人工修订" : "运行写入",
+      title: r.actor === "owner" ? "人工修订" : "任务写入",
       detail: r.path + " · " + r.version.slice(0, 12),
       href:
         r.event && r.attempt
@@ -390,7 +399,7 @@ export function Evolution({
               aria-pressed={g === group}
               onClick={() => onFilter({ group: g === "全部" ? "" : g })}
             >
-              {g} ·{" "}
+              {g === "需核对" ? "待核对" : g} ·{" "}
               {history.filter((r) => g === "全部" || r.group === g).length}
             </Button>
           ))}

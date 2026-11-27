@@ -63,7 +63,7 @@ export function RunEvidence({
   )
   return (
     <section className="evidence">
-      <h3>上下文依据</h3>
+      <h3>处理依据</h3>
       {!sources.length && (
         <p>
           {data
@@ -124,7 +124,7 @@ export function RunEvidence({
       })}
       {sources.length > 0 && (
         <p>
-          回答中明确出现的来源路径 ·{" "}
+          回复正文中出现的来源路径 ·{" "}
           {Array.from(new Set(mentioned.map((s) => s.name))).join("、") ||
             "未发现"}
         </p>

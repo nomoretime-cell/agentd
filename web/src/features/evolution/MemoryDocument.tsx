@@ -125,7 +125,7 @@ export function MemoryDocument({
                     new URLSearchParams({ from: session[1], to: session[1] })
                   }
                 >
-                  {ev.source} · 浏览当天运行
+                  {ev.source} · 查看当天的任务处理记录
                 </a>
               ) : (
                 ev.source
@@ -151,7 +151,7 @@ export function MemoryDocument({
           <option value="">选择版本</option>
           {d.history.toReversed().map((v) => (
             <option key={v} value={v}>
-              {v === "builtin" ? "发布内置版" : v}
+              {v === "builtin" ? "随程序发布的内置版本" : v}
             </option>
           ))}
           {edits
@@ -236,8 +236,8 @@ export function MemoryDocument({
             </p>
           )
       )}
-      <h3>近 30 天使用依据</h3>
-      {!uses.data?.length && <p className="muted">暂无可关联的运行记录。</p>}
+      <h3>近 30 天使用记录</h3>
+      {!uses.data?.length && <p className="muted">暂无可关联的任务处理记录。</p>}
       {uses.data?.map((u) => (
         <p key={u.run + u.kind + u.version}>
           <a href={"#runs?run=" + encodeURIComponent(u.run)}>

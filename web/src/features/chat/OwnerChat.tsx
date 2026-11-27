@@ -33,9 +33,9 @@ const events = z.object({
 })
 const receipt = z.object({ id: z.number() })
 const stateNames: Record<string, string> = {
-  pending: "已入队",
+  pending: "已排队",
   running: "处理中",
-  dead: "执行失败",
+  dead: "处理失败",
   done: "已完成",
 }
 function link(id: string) {
@@ -58,16 +58,16 @@ export function OwnerChat({ id, paused }: { id: string; paused: boolean }) {
   const selected = entries.find((c) => c.id === id)
   return (
     <div className="chat-layout panel">
-      <aside className="chat-index" aria-label="网页会话">
+      <aside className="chat-index" aria-label="网页对话">
         <div className="chat-head">
-          <h2>我的会话</h2>
+          <h2>我的对话</h2>
           <button
             className="outline-btn"
             onClick={() => create.mutate()}
             disabled={create.isPending}
           >
             <Plus size={15} />
-            新建会话
+            新建对话
           </button>
         </div>
         {create.error && <p role="alert">{create.error.message}</p>}
@@ -77,12 +77,12 @@ export function OwnerChat({ id, paused }: { id: string; paused: boolean }) {
             <button onClick={() => void list.refetch()}>重试</button>
           </p>
         )}
-        {list.isPending && <p role="status">正在读取会话…</p>}
+        {list.isPending && <p role="status">正在读取对话…</p>}
         <nav aria-label="对话列表">
           {id && !selected && (
             <a href={link(id)} aria-current="page">
               <MessageSquare size={15} />
-              当前会话
+              当前对话
             </a>
           )}
           {entries.map((c) => (
@@ -97,7 +97,7 @@ export function OwnerChat({ id, paused }: { id: string; paused: boolean }) {
           ))}
         </nav>
         {!id && !entries.length && list.isSuccess && (
-          <p className="muted">尚无已发送的对话</p>
+          <p className="muted">尚无对话</p>
         )}
         {list.hasNextPage && (
           <button
@@ -105,7 +105,7 @@ export function OwnerChat({ id, paused }: { id: string; paused: boolean }) {
             disabled={list.isFetching}
             onClick={() => void list.fetchNextPage()}
           >
-            更多会话
+            更多对话
           </button>
         )}
       </aside>
@@ -114,14 +114,14 @@ export function OwnerChat({ id, paused }: { id: string; paused: boolean }) {
           key={id}
 
           id={id}
-          title={selected?.title || "新会话"}
+          title={selected?.title || "新对话"}
           paused={paused}
         />
       ) : (
         <div className="chat-empty">
           <MessagesSquare size={30} />
           <h2>与数字员工对话</h2>
-          <p>选择已有会话，或新建会话发送第一条消息。</p>
+          <p>选择已有对话，或新建对话发送第一条消息。</p>
         </div>
       )}
     </div>
@@ -299,9 +299,9 @@ function Thread({
               </div>
             )}
             <div className="chat-meta">
-              {e.kind === "approval" ? "审批续跑 · " : ""}
+              {e.kind === "approval" ? "审批后继续处理 · " : ""}
               {e.state === "done" && e.action_status === "pending_approval"
-                ? "等待决定"
+                ? "等待审批决定"
                 : stateNames[e.state] || e.state}
               {e.state === "pending" && e.retries > 0 ? " · 等待重试" : ""} · #
               {e.id}
@@ -330,7 +330,7 @@ function Thread({
                 className="history-link"
                 href={"#runs?" + new URLSearchParams({ run: e.run })}
               >
-                查看运行依据
+                查看处理依据
               </a>
             )}
           </article>
@@ -347,10 +347,10 @@ function Thread({
         {unconfirmed && !send.isPending && (
           <p className="muted" role="status">
             {verified.isPending
-              ? "正在核对上次发送…"
+              ? "正在核对上次提交结果…"
               : verified.data?.id
-                ? "上次发送已入队，请查看会话记录。"
-                : "尚未取得发送回执，可重新提交原文。"}
+                ? "上次提交的消息已接收，请查看对话记录。"
+                : "尚未确认提交结果，可重新提交原文。"}
           </p>
         )}
         {unconfirmed &&
@@ -359,7 +359,7 @@ function Thread({
           draft.trim() !== original && (
             <p className="muted" role="status">
               再次发送仍会提交原文「{original}」；修改后的内容会保留在输入框，
-              确认回执后可另行发送。
+              核对提交结果后可另行发送。
             </p>
           )}
         <textarea
@@ -392,7 +392,7 @@ function Thread({
             }
           >
             <ArrowUp size={15} />
-            {send.isPending ? "发送中" : accepted ? "确认回执" : "发送"}
+            {send.isPending ? "发送中" : accepted ? "核对提交结果" : "发送"}
           </button>
         </div>
       </form>

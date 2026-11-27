@@ -100,7 +100,7 @@ export function UploadPanel({
       const receipt = await transmit(id, rows, controller.signal, setPercent)
       client.setQueryData(["knowledge", "receipt", id], receipt)
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "上传未成功，请核对回执。")
+      setMessage(e instanceof Error ? e.message : "上传未成功，请核对上传结果。")
     } finally {
       flight.current = null
       setPercent(null)
@@ -112,7 +112,7 @@ export function UploadPanel({
     <section className="panel">
       <h2>上传文件</h2>
       <p className="muted">
-        从这台电脑选择资料，原件将保存到服务器，入库后即可检索。
+        选择要上传的文件，原件将保存到服务器，入库后即可检索。
       </p>
       {cfg && (
         <p className="knowledge-limits">
@@ -131,7 +131,7 @@ export function UploadPanel({
         }}
       >
         <label>
-          从这台电脑上传
+          选择文件
           <input
             type="file"
             multiple
@@ -180,7 +180,7 @@ export function UploadPanel({
                         .slice(0, i)
                         .some((other) => other.file.name === r.file.name)) && (
                       <label>
-                        同名处理
+                        同名文件处理
                         <select
                           value={r.mode === "update" ? r.target : r.mode}
                           onChange={(e) => {
@@ -235,7 +235,7 @@ export function UploadPanel({
             disabled={current.isFetching || percent !== null}
             onClick={() => void current.refetch()}
           >
-            重新核对回执
+            核对上传结果
           </Button>
         )}
         {(!submitted || current.isError) && (

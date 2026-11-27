@@ -8,6 +8,7 @@ import { request } from "@/api"
 import { RunEvidence, evidenceSchema } from "./RunEvidence"
 import { ConversationList, DeliveryList, MessageDetail } from "./TraceBrowser"
 import { deliveryStatus } from "@/lib/status"
+import { conversationLabel, recordViews } from "@/lib/work-records"
 
 const scope = z.object({
   ts: z.string(),
@@ -66,29 +67,16 @@ const runSchema = scope.extend({
     .nullable(),
 })
 const states: Record<string, string> = {
-  running: "运行中",
+  running: "处理中",
   interrupted: "重启时中断",
-  done: "完成",
-  failed: "运行失败",
+  done: "已完成",
+  failed: "处理失败",
   commit_failed: "提交失败",
   aborted: "已中断",
   skipped: "已跳过",
 }
 function runLink(params: URLSearchParams) {
   return params.size ? "#runs?" + params.toString() : "#runs"
-}
-function conversationLabel(value: string) {
-  return (
-    (
-      {
-        local: "本地运行",
-        unknown: "来源未知",
-        maintenance: "记忆整理",
-      } as Record<string, string>
-    )[value] ||
-    value ||
-    "历史未记录"
-  )
 }
 export function RunHistory({ search }: { search: URLSearchParams }) {
   const params = new URLSearchParams(search)
@@ -122,13 +110,9 @@ export function RunHistory({ search }: { search: URLSearchParams }) {
   const first = pages?.[0]
   const rows = pages?.flatMap((p) => p.items) ?? []
   return (
-    <section className="panel history-panel" aria-label="历史运行">
-      <nav className="history-tabs" aria-label="记录视图">
-        {[
-          ["runs", "运行记录"],
-          ["conversations", "会话列表"],
-          ["deliveries", "通知投递"],
-        ].map(([key, title]) => (
+    <section className="panel history-panel" aria-label="工作记录">
+      <nav className="history-tabs" aria-label="工作记录视图">
+        {Object.entries(recordViews).map(([key, title]) => (
           <a
             key={key}
             aria-current={view === key ? "page" : undefined}
@@ -172,12 +156,12 @@ export function RunHistory({ search }: { search: URLSearchParams }) {
             <input
               name="q"
               defaultValue={params.get("q") || ""}
-              placeholder="输入、回答或通知"
+              placeholder="输入、回复或通知"
               type="search"
             />
           </label>
           <label>
-            运行状态
+            处理状态
             <select name="status" defaultValue={params.get("status") || ""}>
               <option value="">全部状态</option>
               {Object.entries(states).map(([v, t]) => (
@@ -223,7 +207,7 @@ export function RunHistory({ search }: { search: URLSearchParams }) {
             <div>
               {" "}
               <label>
-                会话标识
+                对话 ID
                 <input
                   name="conversation"
                   defaultValue={
@@ -231,7 +215,7 @@ export function RunHistory({ search }: { search: URLSearchParams }) {
                     params.get("match_conversation") ??
                     ""
                   }
-                  placeholder="所有会话"
+                  placeholder="所有对话"
                 />
               </label>
               {[
@@ -281,7 +265,7 @@ export function RunHistory({ search }: { search: URLSearchParams }) {
         <>
           <div className="section-head">
             <div>
-              <h2>运行记录</h2>
+              <h2>{recordViews.runs}</h2>
               <p className="muted">
                 {first
                   ? first.from + " 至 " + first.to + " · " + first.timezone
@@ -323,7 +307,7 @@ export function RunHistory({ search }: { search: URLSearchParams }) {
                   <li key={row.id}>
                     <a data-run-id={row.id} href={runLink(next)}>
                       <span className="history-copy">
-                        <strong>{row.excerpt || "查看运行记录"}</strong>
+                        <strong>{row.excerpt || "查看任务处理记录"}</strong>
                         <small>
                           {serverTime(row.ts)} ·{" "}
                           {conversationLabel(row.conversation)}
@@ -411,8 +395,8 @@ function RunDetail({ id, filters }: { id: string; filters: URLSearchParams }) {
           }}
         >
           <div className="section-head">
-            <Dialog.Title>运行详情</Dialog.Title>
-            <Dialog.Close className="icon-button" aria-label="关闭运行详情">
+            <Dialog.Title>任务处理详情</Dialog.Title>
+            <Dialog.Close className="icon-button" aria-label="关闭任务处理详情">
               <X size={17} />
             </Dialog.Close>
           </div>
@@ -449,12 +433,12 @@ function RunDetail({ id, filters }: { id: string; filters: URLSearchParams }) {
                 )}
                 {r.conversation && (
                   <a className="history-link" href={runLink(byConversation)}>
-                    查看同一会话的记录
+                    查看同一对话的记录
                   </a>
                 )}
               </section>
               <section>
-                <h3>批次输入</h3>
+                <h3>本次处理的输入</h3>
                 {r.inputs?.length ? (
                   r.inputs.map((i) => (
                     <div key={i.event}>
@@ -469,8 +453,8 @@ function RunDetail({ id, filters }: { id: string; filters: URLSearchParams }) {
                 )}
               </section>
               <section>
-                <h3>记录中的回答</h3>
-                <pre>{r.answer || "历史未记录回答正文"}</pre>
+                <h3>记录中的回复</h3>
+                <pre>{r.answer || "历史未记录回复正文"}</pre>
                 {r.reply_ids?.map((reply) => (
                   <p key={reply}>
                     <a className="history-link" href={messageLink(reply)}>
@@ -495,7 +479,7 @@ function RunDetail({ id, filters }: { id: string; filters: URLSearchParams }) {
               )}
               {r.error && (
                 <section>
-                  <h3>运行错误</h3>
+                  <h3>处理错误</h3>
                   <pre>{r.error}</pre>
                 </section>
               )}
@@ -508,7 +492,7 @@ function RunDetail({ id, filters }: { id: string; filters: URLSearchParams }) {
                 </section>
               )}
               <section>
-                <h3>通知与投递</h3>
+                <h3>关联消息与发送回执</h3>
                 {r.notifications?.length ? (
                   r.notifications.map((n, i) => (
                     <div key={i}>
@@ -516,7 +500,7 @@ function RunDetail({ id, filters }: { id: string; filters: URLSearchParams }) {
                         {n.target} ·{" "}
                         {deliveryStatus[n.delivery_status] ||
                           n.delivery_status ||
-                          "无对应投递回执"}{" "}
+                          "没有对应的发送回执"}{" "}
                         {n.delivery_id > 0 && "#" + n.delivery_id}
                       </p>
                       <pre>{n.content}</pre>
@@ -525,13 +509,13 @@ function RunDetail({ id, filters }: { id: string; filters: URLSearchParams }) {
                           className="history-link"
                           href={messageLink("delivery:" + n.delivery_id)}
                         >
-                          查看投递回执
+                          查看发送回执
                         </a>
                       )}
                     </div>
                   ))
                 ) : (
-                  <p>本条运行记录未列出通知</p>
+                  <p>本次处理没有关联的消息发送记录</p>
                 )}
               </section>
               <section>
@@ -547,7 +531,7 @@ function RunDetail({ id, filters }: { id: string; filters: URLSearchParams }) {
                   ))
                 ) : (
                   <p>
-                    {r.calls ? "该次运行没有已登记调用" : "历史未采集调用用量"}
+                    {r.calls ? "本次处理未记录模型调用" : "历史未采集调用用量"}
                   </p>
                 )}
               </section>

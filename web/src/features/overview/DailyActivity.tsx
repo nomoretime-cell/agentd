@@ -5,7 +5,8 @@ import { Activity, Inbox, MessageSquare, Newspaper, X } from "lucide-react"
 import { z } from "zod"
 import { serverTime } from "@/lib/server-time"
 import { request } from "@/api"
-import { deliveryStatus } from "@/lib/status"
+import { confirmationSource, deliveryStatus } from "@/lib/status"
+import { conversationLabel } from "@/lib/work-records"
 
 const daySchema = z.object({
   date: z.string(),
@@ -64,9 +65,9 @@ function coverage(day: Day, metric: Metric) {
     return day.reported + " / " + day.calls + " 次调用已报告"
   if (day.coverage === "partial") return "从开始采集时计"
   return metric === "news"
-    ? "已确认的正式推送"
+    ? "已确认发送的正式新闻推送"
     : metric === "replies"
-      ? "已提交的会话回答"
+      ? "已提交的对话回复"
       : "已报告的调用用量"
 }
 type Selection = { metric: Metric; date: string }
@@ -137,7 +138,7 @@ export function DailyActivity({
         })}
         <a className="stat" href="#queue">
           <span className="stat-label">
-            当前待处理
+            当前待办
             <Inbox size={16} />
           </span>
           <strong className="stat-value">
@@ -229,7 +230,7 @@ export function DailyActivity({
                       })
                     }
                   >
-                    查看今日活跃会话
+                    查看今日活跃对话
                   </a>{" "}
                   ·{" "}
                 </>
@@ -331,24 +332,16 @@ function ActivityDetails({
           {items.map((it) => (
             <section className="activity-item" key={it.id}>
               <h3>
-                {metric === "tokens"
-                  ? it.label
-                  : metric === "news"
-                    ? it.label
-                    : it.label === "local"
-                      ? "本地会话"
-                      : it.label}
+                {metric === "replies" ? conversationLabel(it.label) : it.label}
               </h3>
               <small>
                 {serverTime(it.local_at ?? new Date(it.at).toISOString(), true)}{" "}
                 ·{" "}
                 {metric === "news"
-                  ? it.status === "owner"
-                    ? "人工核对"
-                    : "渠道回执"
+                  ? confirmationSource(it.status)
                   : metric === "tokens"
                     ? it.status
-                    : deliveryStatus[it.status] || "本地提交"}
+                    : deliveryStatus[it.status || "committed"] ?? it.status}
               </small>
               {metric === "tokens" ? (
                 <p>
@@ -367,11 +360,12 @@ function ActivityDetails({
                   href={
                     "#runs?" +
                     new URLSearchParams({
+                      ...(metric === "news" && { view: "deliveries" }),
                       message: metric === "news" ? "delivery:" + it.id : it.id,
                     })
                   }
                 >
-                  查看消息与回执
+                  {metric === "news" ? "查看发送回执" : "查看回复详情"}
                 </a>
               )}
               {it.attempt && (
@@ -394,7 +388,7 @@ function ActivityDetails({
                     )
                   }
                 >
-                  查看事件 #{it.event} 的运行记录
+                  查看事件 #{it.event} 的任务处理记录
                 </a>
               )}
             </section>

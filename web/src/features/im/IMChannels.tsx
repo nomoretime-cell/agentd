@@ -44,7 +44,7 @@ type Action = {
 
 function impactText(slot: Slot) {
   const { events, actions, deliveries } = slot.impact
-  return `待处理事件 ${events} · 待核对动作 ${actions} · 未结投递 ${deliveries}`
+  return `待处理事件 ${events} · 待核对动作 ${actions} · 未结发送记录 ${deliveries}`
 }
 function errorMessage(body: unknown) {
   const result = z.object({ error: z.string() }).safeParse(body)
@@ -357,7 +357,7 @@ function Restart({
       <p>新配置已保存，重启 agentd 后生效。</p>
       {confirming && (
         <p>
-          重启约需几秒，期间网页和 IM
+          重启约需几秒，期间网页和消息渠道
           暂时无法使用。正在执行的任务会中止，重启后重新执行；待发送的消息和待审批的动作都会保留。
         </p>
       )}
@@ -450,7 +450,7 @@ function EditFields({ slot }: { slot: Slot }) {
         允许所有群
       </label>
       <label>
-        {slot.provider === "wecom" ? "开放的群 ID" : "开放的会话 ID"}
+        {slot.provider === "wecom" ? "开放的群 ID" : "开放的钉钉会话 ID"}
         （每行一个）
         <textarea
           name="groups"
@@ -470,7 +470,7 @@ function Confirmation({ action, data }: { action: Action; data: Settings }) {
     return (
       <>
         <p>
-          将移除本地身份、密钥和渠道设置。会话、审批和投递记录将保留；如需撤销密钥，请在平台后台操作。
+          将移除本地身份、密钥和渠道设置。对话、审批和发送记录将保留；如需撤销密钥，请在平台后台操作。
         </p>
         <p>{impactText(slot)}</p>
       </>

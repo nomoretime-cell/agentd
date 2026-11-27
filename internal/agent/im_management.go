@@ -300,7 +300,7 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 	}
 	p := req.Provider
 	if p != "wecom" && p != "dingtalk" && !(p == "none" && req.Operation == "select") {
-		return errors.New("未知的 IM 渠道")
+		return errors.New("未知的消息渠道")
 	}
 	var doc yaml.Node
 	documents := yaml.NewDecoder(bytes.NewReader(raw))
@@ -338,7 +338,7 @@ func (s *Service) saveIM(ctx context.Context, req imChange) error {
 				return err
 			}
 			if impact != (imImpact{}) {
-				return errors.New("该渠道还有未结事件、动作或投递，请先用原身份完成核对")
+				return errors.New("该渠道还有未处理的事件、待核对的动作或未结的发送记录，请先用原身份完成核对")
 			}
 		}
 		if strings.TrimSpace(req.Secret) == "" {

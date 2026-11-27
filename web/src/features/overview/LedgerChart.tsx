@@ -1,10 +1,12 @@
 import type { ServiceStatus } from "@/api"
 
+import { recordViews } from "@/lib/work-records"
+
 const labels = {
   inbox: "收件事件",
   timers: "定时计划",
   actions: "动作记录",
-  outbox: "通知投递",
+  outbox: recordViews.deliveries,
 } satisfies Record<keyof ServiceStatus["counts"], string>
 
 export function LedgerChart({ counts }: { counts?: ServiceStatus["counts"] }) {

@@ -69,7 +69,7 @@ export function Dashboard({
     ? "已暂停"
     : service?.active
       ? "正在执行"
-      : "待命中"
+      : "待命"
   const channelName = service?.im_provider === "wecom" ? "企业微信" : "钉钉"
   const connection = !channel?.enabled
     ? "未启用"
@@ -105,13 +105,13 @@ export function Dashboard({
         <h1>{runtime ? "运行状态" : "工作概览"}</h1>
         <div className="head-actions">
           <a className="outline-btn" href="#knowledge">
-            上传知识
+            上传文件
           </a>
           {!runtime && service && (
             <a href="#im" className="outline-btn" aria-label="管理消息渠道">
               {channel?.enabled
                 ? channelName + " · " + connection
-                : "IM 未启用"}
+                : "消息渠道未启用"}
             </a>
           )}
           {service && (
@@ -153,7 +153,7 @@ export function Dashboard({
             <div className="section-head">
               <div>
                 <h2>{categories[kind]}</h2>
-                <p className="muted">当前待处理事项</p>
+                <p className="muted">当前待办</p>
               </div>
               <span className="counter">
                 {work.data ? selectedCount : "—"} 项

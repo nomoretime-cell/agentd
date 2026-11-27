@@ -4,7 +4,8 @@ import { X } from "lucide-react"
 import { z } from "zod"
 import { request } from "@/api"
 import { viewerInstant } from "@/lib/server-time"
-import { deliveryStatus } from "@/lib/status"
+import { confirmationSource, deliveryStatus } from "@/lib/status"
+import { conversationLabel, recordViews } from "@/lib/work-records"
 
 const message = z.object({
   id: z.string(),
@@ -43,17 +44,13 @@ const kinds: Record<string, string> = {
   approval: "动作等待审批",
   failure: "事件达到重试上限",
   "action-result": "动作处理结果",
-  reply: "会话回答",
+  reply: "对话回复",
   message: "调用发送消息工具",
-  drafts: "草稿待审",
+  drafts: "待审草稿",
   "memory-held": "记忆整理待审",
-  news: "定时新闻推送",
-  "news-test": "手动新闻测试",
+  news: "新闻推送",
+  "news-test": "新闻推送测试",
   notification: "业务通知",
-}
-const states: Record<string, string> = {
-  ...deliveryStatus,
-  committed: "本地已提交",
 }
 
 function href(params: URLSearchParams, fields: Record<string, string>) {
@@ -117,15 +114,15 @@ export function ConversationList({ filter }: { filter: string }) {
     <>
       <div className="section-head">
         <div>
-          <h2>会话列表</h2>
+          <h2>{recordViews.conversations}</h2>
           <p className="muted">
-            {day && day.from + " 至 " + day.to + " · "}按已读取的运行汇总
+            {day && day.from + " 至 " + day.to + " · "}按对话汇总已读取的任务处理记录
           </p>
         </div>
       </div>
       {q.isPending && (
         <p className="empty" role="status">
-          正在读取会话…
+          正在读取对话…
         </p>
       )}
       {q.error && (
@@ -137,7 +134,7 @@ export function ConversationList({ filter }: { filter: string }) {
       {q.data?.pages.some((p) => p.incomplete) && (
         <p className="history-note">部分历史记录不完整。</p>
       )}
-      {day && !groups.size && <p className="empty">当前范围内尚未找到会话</p>}
+      {day && !groups.size && <p className="empty">当前范围内尚未找到对话</p>}
       <ul className="history-list">
         {Array.from(groups, ([key, row]) => (
           <li key={key}>
@@ -150,17 +147,15 @@ export function ConversationList({ filter }: { filter: string }) {
             >
               <span className="history-copy">
                 <strong>
-                  {row.conversation === "local"
-                    ? "本地会话"
-                    : row.conversation || "会话未记录"}
+                  {conversationLabel(row.conversation)}
                 </strong>
                 <small>
                   {row.role || "角色未记录"} ·{" "}
                   {row.principal || "服务对象未记录"} ·{" "}
-                  {row.active ? "有用户交互" : "后台运行"}
+                  {row.active ? "有用户交互" : "后台任务"}
                 </small>
               </span>
-              <span className="pill">{row.count} 次运行</span>
+              <span className="pill">{row.count} 次处理</span>
             </a>
           </li>
         ))}
@@ -184,23 +179,23 @@ export function DeliveryList() {
   return (
     <>
       <div className="section-head">
-        <h2>通知投递</h2>
+        <h2>{recordViews.deliveries}</h2>
         <button
           className="icon-button"
           disabled={q.isFetching}
           onClick={() => void q.refetch()}
         >
-          刷新回执
+          刷新发送记录
         </button>
       </div>
       {q.isPending && (
         <p className="empty" role="status">
-          正在读取投递…
+          正在读取发送记录…
         </p>
       )}
       {q.error && <p role="alert">{q.error.message}</p>}
       {q.data?.pages[0].items.length === 0 && (
-        <p className="empty">尚无投递记录</p>
+        <p className="empty">尚无发送记录</p>
       )}
       <ul className="history-list">
         {q.data?.pages
@@ -218,7 +213,7 @@ export function DeliveryList() {
                     {kinds[m.kind] ?? m.kind} · {m.target}
                   </small>
                 </span>
-                <span className="pill">{states[m.status] || m.status}</span>
+                <span className="pill">{deliveryStatus[m.status] || m.status}</span>
               </a>
             </li>
           ))}
@@ -279,16 +274,12 @@ export function MessageDetail({
                 <small>{m.id}</small>
               </section>
               <section>
-                <h3>接收与回执</h3>
+                <h3>消息状态</h3>
                 <p>
-                  {m.target} · {states[m.status] || m.status}
+                  {m.target} · {deliveryStatus[m.status] || m.status}
                 </p>
                 <p>
-                  {m.confirmed_by === "owner"
-                    ? "所有者人工核对"
-                    : m.confirmed_by === "adapter"
-                      ? "投递适配器确认"
-                      : ""}{" "}
+                  {m.status === "sent" && confirmationSource(m.confirmed_by)}{" "}
                   {m.at > 0 && viewerInstant(m.at)}
                 </p>
                 <code>{m.key}</code>
@@ -304,7 +295,7 @@ export function MessageDetail({
                     className="history-link"
                     href={href(destination, { run: m.run })}
                   >
-                    打开生成这条消息的运行
+                    查看这条消息的任务处理记录
                   </a>
                 ) : m.related_runs?.length ? (
                   m.related_runs.map((r) => (
@@ -313,7 +304,7 @@ export function MessageDetail({
                         className="history-link"
                         href={href(destination, { run: r })}
                       >
-                        查看事件的运行尝试 {r}
+                        查看事件的处理记录 {r}
                       </a>
                     </p>
                   ))
@@ -326,10 +317,10 @@ export function MessageDetail({
                       to: m.event_day,
                     })}
                   >
-                    在事件日期查找历史运行
+                    查看事件当天的任务处理记录
                   </a>
                 ) : (
-                  <p>没有留存运行关联。</p>
+                  <p>没有关联的任务处理记录。</p>
                 )}
               </section>
             </>

@@ -60,7 +60,7 @@ test("所有者审批、回执与刷新后直接读回", async ({ page, request 
     await expect(page.getByRole("heading", { name: "账本概览" })).toBeVisible()
     await nav.getByRole("link", { name: "工作概览" }).click()
     await expect(page.getByLabel("统计范围")).toBeVisible()
-    await page.getByRole("link", { name: /当前待处理/ }).click()
+    await page.getByRole("link", { name: /当前待办/ }).click()
     await expect(page).toHaveURL(/#queue$/)
     const first = page.getByRole("button", { name: /create_ticket/ }).first()
     // The visiting computer and the Go server may have different clocks.
@@ -80,13 +80,13 @@ test("所有者审批、回执与刷新后直接读回", async ({ page, request 
     await expect(dialog).toHaveCount(0)
     await page.setViewportSize({ width: 375, height: 760 })
     await expect(nav.getByRole("link")).toHaveCount(7)
-    const runs = nav.getByRole("link", { name: "会话与运行" })
+    const runs = nav.getByRole("link", { name: "工作记录" })
     await runs.click()
     await expect(runs).toHaveAttribute("aria-current", "page")
-    await page.getByRole("link", { name: "通知投递", exact: true }).click()
+    await page.getByRole("link", { name: "消息发送记录", exact: true }).click()
     await expect(runs).toHaveAttribute("aria-current", "page")
     await nav.getByRole("link", { name: "工作概览" }).click()
-    await page.getByRole("button", { name: /异常投递/ }).click()
+    await page.getByRole("button", { name: /发送异常/ }).click()
     await expect(page.getByText("当前没有此类待办")).toBeVisible()
     expect(
       await page.evaluate(
@@ -212,7 +212,7 @@ test("单一服务直接进入工作台，刷新可继续查看", async ({ page,
   }
 })
 
-test("历史运行可筛选、深链接、刷新并返回原列表", async ({ page, request }) => {
+test("任务处理记录可筛选、深链接、刷新并返回原列表", async ({ page, request }) => {
   const demo = await startInstance()
   try {
     const prompt = "请记录本次交接结果"
@@ -228,7 +228,7 @@ test("历史运行可筛选、深链接、刷新并返回原列表", async ({ pa
     await page.goto(demo.url)
     await page
       .getByRole("navigation", { name: "工作台导航" })
-      .getByRole("link", { name: "会话与运行" })
+      .getByRole("link", { name: "工作记录" })
       .click()
     await page.getByLabel("关键词").fill(prompt)
     await page.getByRole("button", { name: "查询", exact: true }).click()
@@ -236,7 +236,7 @@ test("历史运行可筛选、深链接、刷新并返回原列表", async ({ pa
       .getByRole("link", { name: new RegExp(prompt) })
       .first()
       .click()
-    const detail = page.getByRole("dialog", { name: "运行详情" })
+    const detail = page.getByRole("dialog", { name: "任务处理详情" })
     await expect(
       detail.getByText("已记录处理结果。", { exact: true })
     ).toBeVisible()
@@ -278,7 +278,7 @@ test("首页的按日用量能核对到调用及相应运行", async ({ page, re
     await summary.getByRole("button", { name: /今日Token 用量/ }).click()
     const detail = page.getByRole("dialog", { name: "Token 用量明细" })
     await expect(detail.getByText(/输入 24 · 输出 8 · 总量 32/)).toBeVisible()
-    await detail.getByRole("link", { name: /的运行记录/ }).click()
+    await detail.getByRole("link", { name: /的任务处理记录/ }).click()
     await expect(
       page.getByRole("dialog").getByText(/输入 24 · 输出 8 · 总量 32/)
     ).toBeVisible()
@@ -292,13 +292,13 @@ test("首页的按日用量能核对到调用及相应运行", async ({ page, re
       page.getByRole("group", { name: "每日趋势" }).getByRole("button")
     ).toHaveCount(30)
     // Filters live in the URL, so a refreshed or shared link restores them.
-    await page.getByRole("button", { name: /异常投递/ }).click()
+    await page.getByRole("button", { name: /发送异常/ }).click()
     await expect(page).toHaveURL(/#.*days=30/)
     await expect(page).toHaveURL(/type=outbox/)
     await page.reload()
     await expect(page.getByLabel("统计范围")).toHaveValue("30")
     await expect(
-      page.getByRole("button", { name: /异常投递/ })
+      page.getByRole("button", { name: /发送异常/ })
     ).toHaveAttribute("aria-pressed", "true")
     await page.setViewportSize({ width: 375, height: 760 })
     expect(
@@ -327,9 +327,11 @@ test("会话、历史版本和投递回执可双向追溯", async ({ page, reque
       )
       .toBe(1)
     await page.goto(demo.url + "/#runs?view=conversations")
-    await page.getByRole("link", { name: /本地会话/ }).click()
+    await expect(page.getByRole("heading", { name: "按对话查看" })).toBeVisible()
+    await page.getByRole("link", { name: /本地对话/ }).click()
     await page.getByRole("link", { name: /已记录处理结果/ }).click()
-    const run = page.getByRole("dialog", { name: "运行详情" })
+    const run = page.getByRole("dialog", { name: "任务处理详情" })
+    await expect(run.getByRole("heading", { name: "处理依据" })).toBeVisible()
     const snapshot = run
       .getByRole("group")
       .filter({ has: page.getByText("文档 · MEMORY.md", { exact: true }) })
@@ -339,10 +341,10 @@ test("会话、历史版本和投递回执可双向追溯", async ({ page, reque
     const msg = page.getByRole("dialog", { name: "消息详情" })
     await expect(msg.getByText(/本地已提交/)).toBeVisible()
     await page.reload()
-    await msg.getByRole("link", { name: "打开生成这条消息的运行" }).click()
-    await expect(run.getByRole("heading", { name: "批次输入" })).toBeVisible()
+    await msg.getByRole("link", { name: "查看这条消息的任务处理记录" }).click()
+    await expect(run.getByRole("heading", { name: "本次处理的输入" })).toBeVisible()
     await page.keyboard.press("Escape")
-    await page.getByRole("link", { name: "通知投递", exact: true }).click()
+    await page.getByRole("link", { name: "消息发送记录", exact: true }).click()
     await page
       .getByRole("link", { name: /动作等待审批/ })
       .first()
@@ -350,7 +352,7 @@ test("会话、历史版本和投递回执可双向追溯", async ({ page, reque
     await expect(
       msg.getByRole("heading", { name: "动作等待审批" })
     ).toBeVisible()
-    await msg.getByRole("link", { name: "打开生成这条消息的运行" }).click()
+    await msg.getByRole("link", { name: "查看这条消息的任务处理记录" }).click()
     await expect(run.getByRole("link", { name: /查看动作/ })).toBeVisible()
     await page.setViewportSize({ width: 375, height: 760 })
     expect(
@@ -363,7 +365,7 @@ test("会话、历史版本和投递回执可双向追溯", async ({ page, reque
   }
 })
 
-test("对话跨会话、刷新与审批续跑", async ({ page, request }) => {
+test("对话跨会话、刷新与审批后继续处理", async ({ page, request }) => {
   const instance = await startInstance()
   try {
     const { url, token } = instance
@@ -388,13 +390,13 @@ test("对话跨会话、刷新与审批续跑", async ({ page, request }) => {
       await page.getByRole("button", { name: "发送", exact: true }).click()
     }
     const thread = page.getByRole("region", { name: "对话内容" })
-    await page.getByRole("button", { name: "新建会话" }).click()
+    await page.getByRole("button", { name: "新建对话" }).click()
     await send("蓝鲸计划")
     await expect(
       thread.getByText("收到，蓝鲸计划", { exact: true })
     ).toBeVisible({ timeout: 10000 })
     const first = page.url()
-    await page.getByRole("button", { name: "新建会话" }).click()
+    await page.getByRole("button", { name: "新建对话" }).click()
     await expect(page).not.toHaveURL(first)
     await send("金鱼计划")
     await expect(
@@ -438,7 +440,7 @@ test("发送回执中断后，刷新可恢复且不会重复入队", async ({ pa
   const demo = await startInstance()
   try {
     await page.goto(demo.url + "/#chat")
-    await page.getByRole("button", { name: "新建会话" }).click()
+    await page.getByRole("button", { name: "新建对话" }).click()
     await expect(page.getByLabel("消息内容")).toBeVisible()
     const id = new URLSearchParams(new URL(page.url()).hash.slice(6)).get("id")
     await page.route("**/v1/chats/*/messages", async (route) => {
@@ -449,11 +451,11 @@ test("发送回执中断后，刷新可恢复且不会重复入队", async ({ pa
     })
     await page.getByLabel("消息内容").fill("只创建一次")
     await page.getByRole("button", { name: "发送", exact: true }).click()
-    await expect(page.getByRole("button", { name: "确认回执" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "核对提交结果" })).toBeVisible()
     await page.reload()
     // The unconfirmed text survives the reload with its key.
     await expect(page.getByLabel("消息内容")).toHaveValue("只创建一次")
-    await page.getByRole("button", { name: "确认回执" }).click()
+    await page.getByRole("button", { name: "核对提交结果" }).click()
     await expect(
       page.getByText("收到，只创建一次", { exact: true })
     ).toBeVisible({ timeout: 10000 })
@@ -481,7 +483,7 @@ test("会话存储不可写时，直接回执和中断后核对都能清空已�
       }
     })
     await page.goto(demo.url + "/#chat")
-    await page.getByRole("button", { name: "新建会话" }).click()
+    await page.getByRole("button", { name: "新建对话" }).click()
     const input = page.getByLabel("消息内容")
     const send = page.getByRole("button", { name: "发送", exact: true })
     await input.fill("正常取得回执")
@@ -495,7 +497,7 @@ test("会话存储不可写时，直接回执和中断后核对都能清空已�
     })
     await input.fill("传输回执中断")
     await send.click()
-    await page.getByRole("button", { name: "确认回执" }).click()
+    await page.getByRole("button", { name: "核对提交结果" }).click()
     await expect(input).toHaveValue("")
     await expect(send).toBeDisabled()
   } finally {
@@ -507,7 +509,7 @@ test("发送未到达服务器时，改动正文会提示重发的是原文", as
   const demo = await startInstance()
   try {
     await page.goto(demo.url + "/#chat")
-    await page.getByRole("button", { name: "新建会话" }).click()
+    await page.getByRole("button", { name: "新建对话" }).click()
     const input = page.getByLabel("消息内容")
     await page.route("**/v1/chats/*/messages", (route) =>
       route.request().method() === "POST" ? route.abort() : route.continue()
@@ -540,8 +542,8 @@ test("从访问电脑上传，另一个浏览器能检索服务器原件的正�
     await writeFile(source, "# 跨机资料\n鹭岛交接编号321")
     await writeFile(invalid, Buffer.from([0, 0, 0]))
     await page.goto(instance.url)
-    await page.getByRole("link", { name: "上传知识" }).click()
-    await page.getByLabel("从这台电脑上传").setInputFiles([source, invalid])
+    await page.getByRole("link", { name: "上传文件" }).click()
+    await page.getByLabel("选择文件").setInputFiles([source, invalid])
     await page.getByRole("button", { name: "开始上传" }).click()
     await expect(page.getByRole("button", { name: "重试失败项" })).toBeVisible()
     await page.getByRole("button", { name: "重试失败项" }).click()
@@ -707,10 +709,10 @@ test("记忆可追溯地修订，过期编辑保留，技能审批后生效，�
     })
     await page.reload()
     await page
-      .getByRole("link", { name: "查看运行依据", exact: true })
+      .getByRole("link", { name: "查看处理依据", exact: true })
       .first()
       .click()
-    await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible()
+    await expect(page.getByRole("dialog", { name: "任务处理详情" })).toBeVisible()
   } finally {
     await context.close()
     await instance.stop()
@@ -726,7 +728,7 @@ test("IM 管理可添加、轮换、选择、撤回选择及删除配置", async
     await page.goto(instance.url)
     await page
       .getByRole("navigation", { name: "工作台导航" })
-      .getByRole("link", { name: "IM 渠道" })
+      .getByRole("link", { name: "消息渠道" })
       .click()
     const wx = page.getByRole("region", { name: "企业微信" })
     await wx.getByRole("button", { name: "添加配置" }).click()
@@ -864,19 +866,19 @@ test("上传收到无效回执后可按原批次核对并重试", async ({ page 
       return route.continue()
     })
     await page.goto(instance.url + "/#knowledge")
-    await page.getByLabel("从这台电脑上传").setInputFiles({
+    await page.getByLabel("选择文件").setInputFiles({
       name: "批次核对.md",
       mimeType: "text/markdown",
       buffer: Buffer.from("# 批次核对"),
     })
     await page.getByRole("button", { name: "开始上传" }).click()
-    const verify = page.getByRole("button", { name: "重新核对回执" })
+    const verify = page.getByRole("button", { name: "核对上传结果" })
     const retry = page.getByRole("button", { name: "按原批次重试" })
-    await expect(page.getByText("服务器未返回有效的批次回执。")).toBeVisible()
+    await expect(page.getByText("服务器未返回有效的上传结果。")).toBeVisible()
     await verify.click()
     await retry.click()
     await expect.poll(() => keys.length).toBe(2)
-    await expect(page.getByText("服务器未返回有效的批次回执。")).toBeVisible()
+    await expect(page.getByText("服务器未返回有效的上传结果。")).toBeVisible()
     await retry.click()
     await expect(
       page.getByRole("button", { name: "批次核对", exact: true })
@@ -893,7 +895,7 @@ test("服务器使用 Local 时按服务器偏移显示统计和运行时间", a
   try {
     await page.goto(instance.url)
     await expect(page.getByText(/采集始于/)).toContainText(/UTC-0[45]:00/)
-    await page.getByRole("link", { name: "会话与运行" }).click()
+    await page.getByRole("link", { name: "工作记录" }).click()
     await expect(page.getByText(/UTC-0[45]:00/).first()).toBeVisible()
   } finally {
     await instance.stop()
@@ -913,14 +915,14 @@ test("旧页面缺少按需加载的脚本时保留导航，重新加载可恢�
     await page.route("**/assets/IMChannels-*.js", (route) =>
       route.fulfill({ status: 404, body: "missing" })
     )
-    await page.getByRole("link", { name: "IM 渠道" }).click()
+    await page.getByRole("link", { name: "消息渠道" }).click()
     await expect(page.getByRole("alert")).toContainText("页面加载失败")
     await expect(
       page.getByRole("navigation", { name: "工作台导航" })
     ).toBeVisible()
     await page.getByRole("link", { name: "知识库", exact: true }).click()
     await expect(page.getByLabel("检索正文")).toBeVisible()
-    await page.getByRole("link", { name: "IM 渠道" }).click()
+    await page.getByRole("link", { name: "消息渠道" }).click()
     await page.unroute("**/assets/IMChannels-*.js")
     await page.getByRole("button", { name: "重新加载工作台" }).click()
     await expect(

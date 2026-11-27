@@ -23,12 +23,12 @@ const navigation = [
     icon: LayoutDashboard,
     group: "工作台",
   },
-  { page: "runs", label: "会话与运行", icon: History },
+  { page: "runs", label: "工作记录", icon: History },
   { page: "chat", label: "对话", icon: MessagesSquare },
   { page: "knowledge", label: "知识库", icon: BookOpenCheck },
   { page: "evolution", label: "记忆与技能", icon: Brain },
   { page: "runtime", label: "运行状态", icon: Radio, group: "运行管理" },
-  { page: "im", label: "IM 渠道", icon: Cable },
+  { page: "im", label: "消息渠道", icon: Cable },
 ]
 export function Workbench() {
   const { pathname, searchStr } = useLocation()

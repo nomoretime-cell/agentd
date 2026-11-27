@@ -215,7 +215,7 @@ export function Knowledge({
         )}
       </section>
       <details className="panel">
-        <summary>从服务器路径导入</summary>
+        <summary>从服务器导入文件</summary>
         <p>
           文件或目录须位于服务器状态根目录的 data/knowledge/incoming/
           下。填写相对路径，整个目录填「.」。
@@ -238,10 +238,10 @@ export function Knowledge({
               !path.trim() || importer.isPending || docs.data?.importing
             }
           >
-            导入服务器资料
+            从服务器导入
           </Button>
         </form>
-        {docs.data?.importing && <p role="status">正在导入资料…</p>}
+        {docs.data?.importing && <p role="status">正在导入文件…</p>}
         {docs.data?.last_import?.map((r, i) => (
           <p key={i}>
             {r.source} · {statuses[r.status] ?? r.status} {r.error}

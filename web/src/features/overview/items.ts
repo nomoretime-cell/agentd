@@ -3,7 +3,7 @@ import { actionStatus, deliveryStatus, label } from "@/lib/status"
 export const categories = {
   actions: "动作审批与核对",
   inbox: "异常事件",
-  outbox: "异常投递",
+  outbox: "发送异常",
   drafts: "待审草稿",
 } as const
 export type Kind = keyof typeof categories

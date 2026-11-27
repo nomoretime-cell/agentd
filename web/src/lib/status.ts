@@ -11,13 +11,21 @@ export const actionStatus: Record<string, string> = {
 }
 
 export const deliveryStatus: Record<string, string> = {
-  pending: "待投递",
-  sending: "投递中",
-  sent: "投递已确认",
-  failed: "投递失败",
+  pending: "待发送",
+  sending: "发送中",
+  sent: "已确认发送",
+  committed: "本地已提交",
+  failed: "发送失败",
   unknown: "待核对",
 }
 
 export function label(names: Record<string, string>, code: string) {
   return names[code] ?? code
+}
+
+// A receipt records who confirmed the send. Older records may omit its source.
+export function confirmationSource(source: string) {
+  if (source === "owner") return "人工核对"
+  if (source === "adapter") return "系统确认"
+  return source || "确认来源未记录"
 }

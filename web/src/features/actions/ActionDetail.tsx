@@ -115,12 +115,12 @@ export function ActionDetail({
                 <pre>{formatArguments(action.tool_args)}</pre>
               </section>
               <section>
-                <h3>审批截止</h3>
+                <h3>审批截止时间</h3>
                 <p>{viewerInstant(action.expires_at)}</p>
               </section>
               {action.result && (
                 <section>
-                  <h3>服务端回执</h3>
+                  <h3>动作结果</h3>
                   <pre>{action.result}</pre>
                 </section>
               )}

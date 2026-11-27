@@ -93,17 +93,17 @@ export function transmit(
       if (xhr.status >= 200 && xhr.status < 300) {
         const parsed = receiptFor(id).safeParse(xhr.response)
         if (parsed.success) resolve(parsed.data)
-        else reject(new Error("服务器未返回有效的批次回执。"))
+        else reject(new Error("服务器未返回有效的上传结果。"))
         return
       }
       const error = z.object({ error: z.string() }).safeParse(xhr.response)
       reject(
         new Error(
-          error.success ? error.data.error : "上传未成功，请核对批次记录。"
+          error.success ? error.data.error : "上传未成功，请核对上传结果。"
         )
       )
     }
-    xhr.onerror = () => reject(new Error("传输中断，请核对服务器回执后重试。"))
+    xhr.onerror = () => reject(new Error("传输中断，请核对上传结果后重试。"))
     xhr.onabort = () => reject(new Error("已取消传输。"))
     xhr.onloadend = () => signal.removeEventListener("abort", abort)
     signal.addEventListener("abort", abort, { once: true })
