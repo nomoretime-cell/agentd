@@ -760,6 +760,49 @@ test("IM 渠道可保存备用、轮换密钥，连接失败后保留选择并�
   }
 })
 
+test("IM 表单打开期间，未结工作数量随刷新更新，已填写内容保留", async ({
+  page,
+}) => {
+  const instance = await startInstance()
+  try {
+    // Later reads report parked work for WeCom; the form stays open meanwhile.
+    let parked = false
+    await page.route("**/v1/im", async (route) => {
+      if (route.request().method() !== "GET" || !parked) return route.continue()
+      const response = await route.fetch()
+      const body = await response.json()
+      for (const slot of body.channels)
+        if (slot.provider === "wecom") slot.impact.events = 3
+      return route.fulfill({ response, json: body })
+    })
+    await page.goto(instance.url + "/#im")
+    const wx = page.getByRole("region", { name: "企业微信" })
+    await wx.getByRole("button", { name: "添加企业微信" }).click()
+    await wx.getByLabel("Bot ID").fill("test-robot-1234")
+    await wx.getByLabel("应用密钥").fill("test-only-secret")
+    await wx.getByLabel("所有者 ID").fill("test-owner-1234")
+    await wx.getByRole("button", { name: "仅保存" }).click()
+    await expect(wx.getByText("已设置", { exact: true })).toBeVisible()
+
+    await wx.getByRole("button", { name: "编辑配置" }).click()
+    await expect(wx.getByText(/待处理事件/)).toHaveCount(0)
+    await wx.getByLabel("Bot ID").fill("test-robot-draft")
+    parked = true
+    await expect(wx.getByText(/待处理事件 3/)).toBeVisible({ timeout: 10000 })
+    await expect(wx.getByLabel("Bot ID")).toHaveValue("test-robot-draft")
+    await wx.getByRole("button", { name: "取消" }).click()
+
+    parked = false
+    await page.reload()
+    await wx.getByRole("button", { name: "删除配置" }).click()
+    await expect(wx.getByText(/待处理事件 0/)).toBeVisible()
+    parked = true
+    await expect(wx.getByText(/待处理事件 3/)).toBeVisible({ timeout: 10000 })
+  } finally {
+    await instance.stop()
+  }
+})
+
 test("上传收到无效回执后可按原批次核对并重试", async ({ page }) => {
   const instance = await startInstance()
   try {

@@ -76,6 +76,12 @@ function submitChoices(action: Action, data: Settings) {
   return idle && !slot.configured ? [enable, backup] : [backup, enable]
 }
 
+// The channel as the latest query reports it, for counts that change while a
+// form stays open.
+function latestSlot(opened: Slot, data: Settings) {
+  return data.channels.find((c) => c.provider === opened.provider) ?? opened
+}
+
 function impactText(slot: Slot) {
   const { events, actions, deliveries } = slot.impact
   return `待处理事件 ${events} · 待核对动作 ${actions} · 未结投递 ${deliveries}`
@@ -393,7 +399,10 @@ function ChannelForm({
   change: (change: Change, apply: boolean, fields?: object) => Promise<void>
   cancel: () => void
 }) {
-  const slot = action.slot
+  // What the owner fills in edits the settings as opened. Unfinished work
+  // and the running channel follow every refresh.
+  const opened = action.slot
+  const slot = latestSlot(opened, data)
   const name = names[slot.provider]
   const current = data.running === slot.provider
   const currentSlot = data.channels.find((c) => c.provider === data.running)
@@ -437,7 +446,7 @@ function ChannelForm({
         </legend>
         {action.type === "save" ? (
           <>
-            <EditFields slot={slot} />
+            <EditFields slot={opened} />
             {events + actions + deliveries > 0 && (
               <p>
                 {impactText(slot)}。更换身份前可
@@ -457,7 +466,7 @@ function ChannelForm({
             )}
           </>
         ) : (
-          <Confirmation action={action} data={data} />
+          <Confirmation action={action} slot={slot} data={data} />
         )}
         <div className="im-controls">
           {choices.map(({ label, apply }) => (
@@ -548,15 +557,23 @@ function EditFields({ slot }: { slot: Slot }) {
     </>
   )
 }
-function Confirmation({ action, data }: { action: Action; data: Settings }) {
+function Confirmation({
+  action,
+  slot,
+  data,
+}: {
+  action: Action
+  slot: Slot
+  data: Settings
+}) {
   if (action.type === "remove")
     return (
       <>
         <p>
-          {action.slot.provider === data.running && "将先停止该渠道收发。"}
+          {slot.provider === data.running && "将先停止该渠道收发。"}
           将移除本地身份、密钥和渠道设置。会话、审批和投递记录将保留；如需撤销密钥，请在平台后台操作。
         </p>
-        <p>{impactText(action.slot)}</p>
+        <p>{impactText(slot)}</p>
       </>
     )
   const current = data.channels.find((c) => c.provider === data.running)
