@@ -6,13 +6,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>在岗 · 数字员工工作台</title>
     <!-- Apply the saved theme before first paint; the server allows this script by hash.
-         Light themes end in "light", the same rule as ThemeMenu.tsx. -->
+         Keep the light-theme check in sync with ThemeMenu.tsx. -->
     <script>
       try {
         var theme = localStorage.getItem("agentd-theme")
         if (theme) document.documentElement.dataset.theme = theme
         if (
-          (theme && theme.endsWith("light")) ||
+          theme === "light" ||
+          theme === "cyberpunk-light" ||
           (theme === "system" &&
             !matchMedia("(prefers-color-scheme: dark)").matches)
         )

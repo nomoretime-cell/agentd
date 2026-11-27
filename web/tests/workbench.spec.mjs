@@ -201,8 +201,14 @@ test("保存的主题在首屏前生效，CSP 只放行页面自带的脚本", a
       await trigger.click()
       await expect(choice(name)).toBeChecked()
     }
-    // An unknown saved value falls back to the default.
-    await page.evaluate(() => localStorage.setItem("agentd-theme", "unknown"))
+    // A retired light theme must fall back to dark even before React loads.
+    await page.evaluate(() =>
+      localStorage.setItem("agentd-theme", "retired-light")
+    )
+    await page.route("**/assets/*.js", (route) => route.abort())
+    await page.reload()
+    await expect(html).toHaveCSS("color-scheme", "dark")
+    await page.unroute("**/assets/*.js")
     await page.reload()
     await trigger.click()
     await expect(choice("深色")).toBeChecked()
