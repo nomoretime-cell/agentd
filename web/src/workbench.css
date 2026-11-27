@@ -7,8 +7,10 @@
   --tint: var(--muted);
   --brand: var(--primary);
 
+  /* Themes pick a typeface by setting --theme-font and --theme-mono. */
   font-family:
-    "Geist Variable", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    var(--theme-font, "Geist Variable"), system-ui, "PingFang SC",
+    "Microsoft YaHei", sans-serif;
 }
 body {
   margin: 0;
@@ -44,11 +46,8 @@ h3 {
 }
 code,
 pre {
-  font-family: ui-monospace, monospace;
+  font-family: var(--theme-mono, ui-monospace), monospace;
   overflow-wrap: anywhere;
-}
-:is([data-theme="cyberpunk"], [data-theme="cyberpunk-light"]) :is(code, pre) {
-  font-family: var(--font-mono);
 }
 .workspace {
   min-height: 100svh;

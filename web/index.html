@@ -5,12 +5,17 @@
     <link rel="icon" href="data:," />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>在岗 · 数字员工工作台</title>
-    <!-- Apply the saved theme before first paint; the server allows this script by hash. -->
+    <!-- Apply the saved theme before first paint; the server allows this script by hash.
+         Light themes end in "light", the same rule as ThemeMenu.tsx. -->
     <script>
       try {
         var theme = localStorage.getItem("agentd-theme")
         if (theme) document.documentElement.dataset.theme = theme
-        if (theme === "light" || theme === "cyberpunk-light" || (theme === "system" && !matchMedia("(prefers-color-scheme: dark)").matches))
+        if (
+          (theme && theme.endsWith("light")) ||
+          (theme === "system" &&
+            !matchMedia("(prefers-color-scheme: dark)").matches)
+        )
           document.documentElement.classList.remove("dark")
       } catch (e) {}
     </script>

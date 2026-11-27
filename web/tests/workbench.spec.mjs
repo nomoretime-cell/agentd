@@ -187,6 +187,10 @@ test("保存的主题在首屏前生效，CSP 只放行页面自带的脚本", a
         /oklch\(0\.6726 0\.2904 341\./
       )
       await expect(refresh).toHaveCSS("color", /oklch\(0\.1649 0\.0352 281\./)
+      await expect(page.locator("body")).toHaveCSS(
+        "font-family",
+        /^"Outfit Variable"/
+      )
       // Without the app bundle only the inline script can apply the theme.
       await page.route("**/assets/*.js", (route) => route.abort())
       await page.reload()
@@ -197,19 +201,15 @@ test("保存的主题在首屏前生效，CSP 只放行页面自带的脚本", a
       await trigger.click()
       await expect(choice(name)).toBeChecked()
     }
-    for (const retired of ["aurora", "tech-blue"]) {
-      await page.evaluate(
-        (id) => localStorage.setItem("agentd-theme", id),
-        retired
-      )
-      await page.reload()
-      await trigger.click()
-      await expect(choice("深色")).toBeChecked()
-      await expect(page.locator("body")).toHaveCSS(
-        "background-color",
-        darkBackground
-      )
-    }
+    // An unknown saved value falls back to the default.
+    await page.evaluate(() => localStorage.setItem("agentd-theme", "unknown"))
+    await page.reload()
+    await trigger.click()
+    await expect(choice("深色")).toBeChecked()
+    await expect(page.locator("body")).toHaveCSS(
+      "background-color",
+      darkBackground
+    )
     await choice("跟随系统").click()
     await page.emulateMedia({ colorScheme: "dark" })
     await expect(page.locator("body")).toHaveCSS(

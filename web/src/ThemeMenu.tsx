@@ -2,6 +2,7 @@ import { useLayoutEffect, useState } from "react"
 import { Check, Moon, Sun } from "lucide-react"
 import { DropdownMenu } from "radix-ui"
 
+// Light themes end in "light"; index.html applies the same rule before first paint.
 const themes = {
   dark: "深色",
   light: "浅色",
@@ -34,9 +35,7 @@ export function ThemeMenu() {
     document.documentElement.dataset.theme = theme
     const apply = () => {
       const light =
-        theme === "light" ||
-        theme === "cyberpunk-light" ||
-        (theme === "system" && !media.matches)
+        theme.endsWith("light") || (theme === "system" && !media.matches)
       classes.toggle("dark", !light)
     }
     apply()

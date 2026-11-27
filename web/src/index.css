@@ -167,10 +167,8 @@
   --chart-4: var(--accent);
   --chart-5: oklch(0.9168 0.1915 101.407);
   --radius: 0.5rem;
-  --font-sans:
-    "Outfit Variable", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-mono: "Fira Code Variable", ui-monospace, monospace;
-  font-family: var(--font-sans);
+  --theme-font: "Outfit Variable";
+  --theme-mono: "Fira Code Variable";
 }
 
 @layer base {
