@@ -16,6 +16,7 @@ import {
 import { z } from "zod"
 import { requestKey, pendingKey } from "@/lib/request-key"
 import { request } from "@/api"
+import { ReplyMarkdown } from "./ReplyMarkdown"
 import { actionStatus } from "@/lib/status"
 
 const chat = z.object({ id: z.string(), title: z.string() })
@@ -341,7 +342,7 @@ function Thread({
             {e.reply_id && (
               <div className="bubble">
                 <small>数字员工</small>
-                <p>{e.reply}</p>
+                <ReplyMarkdown text={e.reply} />
               </div>
             )}
             {e.error && <p className="history-note">{e.error}</p>}

@@ -474,6 +474,94 @@ test("对话跨会话、刷新与审批后继续处理", async ({ page, request 
   }
 })
 
+test("对话回复渲染 Markdown，保留历史原文并限制外部内容", async ({ page }) => {
+  const instance = await startInstance()
+  try {
+    const image = "https://example.invalid/report.png"
+    const code = "  return " + "a + ".repeat(40) + "b"
+    const markdown = [
+      "周报内容",
+      "",
+      "## 本周进展",
+      "第一行",
+      "第二行包含 **重点** 和 `命令`。",
+      "",
+      "- 已交付",
+      "",
+      "| 数据列 | 状态 |",
+      "| --- | --- |",
+      "| " + "LongColumn".repeat(16) + " | 已完成 |",
+      "",
+      "```text",
+      code,
+      "```",
+      "",
+      `[来源](https://example.org/) ![周报图](${image})`,
+      `[![封面](${image})](https://example.org/cover)`,
+      "[无效链接](data:text/plain,example) <mark>普通文字</mark>",
+    ].join("\n")
+    let imageRequests = 0
+    await page.route(image, (route) => {
+      imageRequests++
+      return route.abort()
+    })
+    await page.goto(instance.url + "/#chat")
+    await page.getByRole("button", { name: "新建对话" }).click()
+    await page.getByRole("textbox", { name: "消息内容" }).fill(markdown)
+    await page.getByRole("button", { name: "发送", exact: true }).click()
+
+    const reply = page.locator(".reply-markdown")
+    await expect(reply.getByRole("heading", { name: "本周进展" })).toBeVisible()
+    await page.reload()
+    await expect(reply.getByRole("listitem")).toHaveText("已交付")
+    await expect(reply.locator("strong")).toHaveText("重点")
+    const paragraph = reply.getByText(/第一行/)
+    await expect(paragraph).toHaveCSS("white-space", "pre-wrap")
+    expect(await paragraph.textContent()).toContain("第一行\n第二行")
+    await expect(
+      reply.getByRole("columnheader", { name: "数据列" })
+    ).toBeVisible()
+    expect(await reply.locator("pre code").textContent()).toBe(code + "\n")
+    await expect(
+      reply.getByRole("link", { name: "来源", exact: true })
+    ).toHaveAttribute("href", "https://example.org/")
+    await expect(
+      reply.getByRole("link", { name: "图片：周报图" })
+    ).toHaveAttribute("href", image)
+    await expect(
+      reply.getByRole("link", { name: "图片：封面" })
+    ).toHaveAttribute("href", "https://example.org/cover")
+    await expect(reply.getByText("无效链接", { exact: false })).toBeVisible()
+    await expect(reply.getByRole("link", { name: "无效链接" })).toHaveCount(0)
+    await expect(reply.locator("img, mark, a a")).toHaveCount(0)
+    expect(imageRequests).toBe(0)
+    expect(await page.locator(".bubble.mine p").textContent()).toBe(markdown)
+
+    await page.setViewportSize({ width: 375, height: 760 })
+    for (const block of [reply.locator("pre"), reply.locator(".reply-table")]) {
+      expect(
+        await block.evaluate((el) => el.scrollWidth > el.clientWidth)
+      ).toBe(true)
+    }
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth
+      )
+    ).toBe(true)
+    await page.getByRole("link", { name: /^处理依据 #/ }).click()
+    await page
+      .getByRole("dialog", { name: "任务处理详情" })
+      .getByRole("link", { name: /查看完整回复/ })
+      .click()
+    const original = page
+      .getByRole("dialog", { name: "消息详情" })
+      .locator("pre")
+    await expect(original).toHaveJSProperty("textContent", "收到，" + markdown)
+  } finally {
+    await instance.stop()
+  }
+})
+
 test("发送回执中断后，刷新可恢复且不会重复入队", async ({ page, request }) => {
   const demo = await startInstance()
   try {

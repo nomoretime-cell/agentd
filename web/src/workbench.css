@@ -888,7 +888,7 @@ small,
   background: var(--muted);
 }
 .chat-index nav span,
-.chat-thread h2 {
+.chat-thread > .chat-head h2 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -948,7 +948,7 @@ small,
   align-self: flex-end;
   background: var(--muted);
 }
-.bubble p {
+.bubble.mine p {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 0.9rem;

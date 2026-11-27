@@ -1,0 +1,61 @@
+.reply-markdown {
+  margin-top: 3px;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.reply-markdown > * + * {
+  margin-block-start: 0.6em;
+}
+.reply-markdown :is(h1, h2, h3, h4, h5, h6) {
+  font-size: 1em;
+  font-weight: 650;
+  letter-spacing: normal;
+}
+.reply-markdown :is(h1, h2) {
+  font-size: 1.12em;
+}
+.reply-markdown p {
+  white-space: pre-wrap;
+}
+.reply-markdown :is(ul, ol) {
+  padding-inline-start: 1.5em;
+}
+.reply-markdown ul {
+  list-style: disc;
+}
+.reply-markdown ol {
+  list-style: decimal;
+}
+.reply-markdown a {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+.reply-markdown blockquote {
+  border-inline-start: 3px solid var(--line);
+  padding-inline-start: 0.8em;
+  color: var(--muted-ink);
+}
+.reply-markdown :not(pre) > code,
+.reply-markdown pre {
+  background: var(--tint);
+  border-radius: 4px;
+}
+.reply-markdown :not(pre) > code {
+  padding: 0.1em 0.3em;
+}
+.reply-markdown pre,
+.reply-table {
+  overflow-x: auto;
+}
+.reply-markdown pre {
+  padding: 0.7em;
+  white-space: pre;
+}
+.reply-table {
+  overflow-wrap: normal;
+}
+.reply-table :is(th, td) {
+  border: 1px solid var(--line);
+  padding: 0.25em 0.6em;
+}
